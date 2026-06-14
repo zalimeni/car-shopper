@@ -17,13 +17,12 @@ Dashboard → SQL editor. The migrations are idempotent, so re-running is safe.
 
 ## Migrations
 
+- `20260614170000_baseline_app_state.sql` — baseline schema: the per-user
+  `app_state` table + per-user RLS. Idempotent (`if not exists`), so it's a
+  no-op on the existing database and lets a fresh project be built from zero.
 - `20260614180900_user_allowlist.sql` — server-enforced user allowlist:
   `allowed_emails` table, `is_allowed()` helper, and `app_state` RLS policies
-  requiring allowlist membership. See the file header for details.
+  tightened to also require allowlist membership. See the file header for details.
 
-## Note
-
-The `app_state` table predates these migrations (it was created when Supabase
-storage was first wired up), so there's no baseline migration for it here. The
-allowlist migration rebuilds `app_state`'s RLS policies but assumes the table
-exists. Ask if you want a baseline migration added for from-scratch setup.
+Both are idempotent and ordered by filename, so applying the full set against an
+existing database is safe.
