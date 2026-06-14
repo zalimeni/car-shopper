@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import storage from "./storage";
 import { signOut } from "./Auth";
+import { fetchListings, reconcile } from "./sync";
+
+var AUTO_SYNC_HOURS = 12; // sync-on-open debounce
 
 var STORAGE_KEY = "car-search-data";
 var VERSION = 4;
@@ -216,6 +219,8 @@ export default function App() {
   var init = useRef(false);
 
   var [exportJson, setExportJson] = useState("");
+  var [syncing, setSyncing] = useState(false);
+  var [syncMsg, setSyncMsg] = useState(null);
 
   useEffect(function () {
     if (init.current) return;
@@ -256,6 +261,49 @@ export default function App() {
     nd.listings = recalcAll(nd.listings, nd.criteria);
     await save(nd);
   }, [save]);
+
+  // Pull dealer inventory via the proxy and reconcile. New VINs flow into the
+  // candidate queue (same review path as Import); known VINs get price/last-seen
+  // updates written to the blob. opts.auto = background sync-on-open (quiet on error).
+  var doSync = useCallback(async function (opts) {
+    if (!data || syncing) return;
+    var auto = opts && opts.auto;
+    setSyncing(true);
+    if (!auto) setSyncMsg(null);
+    try {
+      var active = data.profiles.filter(function (p) { return p.active; });
+      if (!active.length) {
+        if (!auto) setSyncMsg({ ok: false, error: "No active profiles to sync." });
+        setSyncing(false);
+        return;
+      }
+      var res = await fetchListings(active, HUBS, opts);
+      var rec = reconcile(data.listings, res.listings, today());
+      var decorated = rec.candidates.map(function (c) {
+        return Object.assign({}, c, { compositeScore: calcScore(c.scores, data.criteria), _candidate: true });
+      });
+      setCandidates(function (prev) {
+        var seen = {};
+        prev.forEach(function (c) { if (c.vin) seen[c.vin] = true; });
+        return prev.concat(decorated.filter(function (c) { return !c.vin || !seen[c.vin]; }));
+      });
+      await save(Object.assign({}, data, { listings: rec.listings, lastSynced: new Date().toISOString() }));
+      setSyncMsg({ ok: true, summary: rec.summary, errors: res.errors, mock: res.mock });
+    } catch (e) {
+      console.error("Sync:", e);
+      if (!auto) setSyncMsg({ ok: false, error: e.message });
+    }
+    setSyncing(false);
+  }, [data, syncing, save]);
+
+  // Sync-on-open: once per load, if it's been a while since the last sync.
+  var didAutoSync = useRef(false);
+  useEffect(function () {
+    if (loading || !data || didAutoSync.current) return;
+    didAutoSync.current = true;
+    var last = data.lastSynced ? new Date(data.lastSynced).getTime() : 0;
+    if (Date.now() - last > AUTO_SYNC_HOURS * 3600 * 1000) doSync({ auto: true });
+  }, [loading, data, doSync]);
 
   var genQueries = useCallback(function () {
     if (!data) return;
@@ -415,7 +463,8 @@ export default function App() {
             candidates={candidates} approveCand={approveCand}
             approveAll={approveAll} dismissCand={dismissCand}
             importText={importText} setImportText={setImportText} doImport={doImport} importResult={importResult} setImportResult={setImportResult}
-            filterProf={filterProf} setFilterProf={setFilterProf} />
+            filterProf={filterProf} setFilterProf={setFilterProf}
+            doSync={doSync} syncing={syncing} syncMsg={syncMsg} lastSynced={data.lastSynced} />
         )}
       </main>
       <footer style={S.footer}>
@@ -729,7 +778,7 @@ function QueriesTab({ queries, gen }) {
 function ResultsTab({ data, addListing, updListing, delListing, edListing, setEdListing, markChk,
   candidates, approveCand, approveAll, dismissCand,
   importText, setImportText, doImport, importResult, setImportResult,
-  filterProf, setFilterProf }) {
+  filterProf, setFilterProf, doSync, syncing, syncMsg, lastSynced }) {
   var [showAdd, setShowAdd] = useState(false);
   var [showImport, setShowImport] = useState(false);
   var [filterRole, setFilterRole] = useState("all");
@@ -783,10 +832,13 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       <div style={S.secH}>
         <h2 style={S.secT}>Listings</h2>
         <div style={{ display: "flex", gap: 6 }}>
+          <button style={Object.assign({}, S.secBtn, syncing ? { opacity: 0.6 } : {})} disabled={syncing} onClick={function () { doSync(); }}>{syncing ? "Syncing…" : "↻ Sync"}</button>
           <button style={S.secBtn} onClick={function () { setShowImport(!showImport); setShowAdd(false); }}>{showImport ? "Close" : "Import"}</button>
           <button style={S.priBtn} onClick={function () { setShowAdd(!showAdd); setShowImport(false); setEdListing(null); }}>{showAdd ? "Cancel" : "+ Add"}</button>
         </div>
       </div>
+
+      <SyncStatus syncing={syncing} syncMsg={syncMsg} lastSynced={lastSynced} />
 
       {/* Filter & Sort bar */}
       {totalAll > 0 && (
@@ -894,6 +946,37 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       )}
     </div>
   );
+}
+
+function SyncStatus({ syncing, syncMsg, lastSynced }) {
+  function fmtWhen(iso) {
+    if (!iso) return "never";
+    var d = new Date(iso);
+    var mins = Math.floor((Date.now() - d.getTime()) / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return mins + "m ago";
+    if (mins < 1440) return Math.floor(mins / 60) + "h ago";
+    return d.toISOString().split("T")[0];
+  }
+  var text, color = "#6b6b76";
+  if (syncing) {
+    text = "Fetching dealer inventory…";
+  } else if (syncMsg && !syncMsg.ok) {
+    text = "⚠ " + syncMsg.error;
+    color = "#c44";
+  } else if (syncMsg && syncMsg.ok) {
+    var s = syncMsg.summary || {};
+    var parts = [];
+    if (s.newCount) parts.push(s.newCount + " new");
+    if (s.priceUpdates) parts.push(s.priceUpdates + " price change" + (s.priceUpdates > 1 ? "s" : ""));
+    if (s.notSeen) parts.push(s.notSeen + " not seen");
+    var detail = parts.length ? parts.join(" · ") : "no changes";
+    text = (syncMsg.mock ? "Mock sync" : "Synced") + " — " + detail + " (from " + (s.fetched || 0) + " found)";
+    if (syncMsg.errors && syncMsg.errors.length) { text += " · " + syncMsg.errors.length + " query error(s)"; color = "#d4a017"; }
+  } else {
+    text = "Last synced: " + fmtWhen(lastSynced);
+  }
+  return (<div style={{ fontSize: 11, color: color, marginBottom: 10 }}>{text}</div>);
 }
 
 function CandCard({ cand, onApprove, onDismiss, data }) {
@@ -1048,6 +1131,11 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
       })()}
       <div style={{ fontSize: 12, color: "#6b9edd", marginBottom: 4 }}>Left for {profRole === "SUV" ? "commuter" : "SUV"}: <strong>${rem.toLocaleString()}</strong></div>
       {l.lastChecked && <div style={{ fontSize: 11, color: "#555" }}>Checked: {l.lastChecked}</div>}
+      {l.source === "marketcheck" && l.lastSeen && (
+        <div style={{ fontSize: 11, color: l.lastSeen === today() ? "#555" : "#d4a017" }}>
+          {l.lastSeen === today() ? "Seen in sync today" : "Last seen in sync: " + l.lastSeen + " (may be sold)"}
+        </div>
+      )}
       {l.notes && <div style={{ fontSize: 12, color: "#6b6b76", fontStyle: "italic", marginTop: 4 }}>{l.notes}</div>}
       {l.rejectReason && <div style={{ fontSize: 12, color: "#c44", marginTop: 4 }}>Rejected: {l.rejectReason}</div>}
 

@@ -131,9 +131,11 @@ Per sync run, build a set of discovered VINs and compare to stored listings:
   (`"Price: $X → $Y on <date>"`), refresh `lastChecked`. Keep its status
   (watch/candidate) and `compositeScore` (recomputed).
 - **Known VIN, unchanged** → refresh `lastChecked` only.
-- **Watched/candidate VIN absent from results** → mark `status: "sold"` (new
-  terminal state) rather than deleting, so history is retained. Manual listings
-  (no VIN, or `source: "manual"`) are **never** auto-purged.
+- **Watched VIN absent from results** → **non-destructive flag only** (v1):
+  `lastSeen` is left unchanged so the card shows "Last seen in sync: <date> (may
+  be sold)". No status change, no deletion. Auto-marking `sold` is deferred to
+  the §4a follow-up. Manual listings (no `source: "marketcheck"`) are never
+  touched by reconcile.
 
 Reuses the existing `dedupInsert` (lowest-price-wins on VIN) and `daysSince`
 staleness logic. Provenance: tag pipeline-created listings with
@@ -141,26 +143,31 @@ staleness logic. Provenance: tag pipeline-created listings with
 
 ## 7. Data model decision
 
-**Keep the single JSON-blob model (`app_state.data`) for v1.** The function does
-a read-modify-write of the blob and reuses all current array logic. Two small
-changes:
+**Keep the single JSON-blob model (`app_state.data`) for v1.** Reconcile does a
+read-modify-write of the blob and reuses all current array logic (`dedupInsert`,
+`daysSince`, `calcScore`). Minimal additions:
 
-- Persist discovered listings with `status: "candidate"` (today candidates live
-  only in React state) so review survives across sessions; `App.jsx` renders
-  persisted candidates in addition to in-memory import candidates.
-- Add a `"sold"` status and a `source` field.
+- **No new persisted "candidate" status.** New VINs flow into the existing
+  in-memory candidate queue — the same review path as Import (`CandCard`,
+  `approveCand`/`approveAll`). Unreviewed matches aren't persisted; because
+  sync-on-open re-runs each visit, anything still on the market simply
+  re-surfaces. Only *approved* listings are written (as `watch`).
+- New fields on synced listings: `source: "marketcheck"`, `lastSeen` (date last
+  present in a sync), and `dom` (days on market, shown in notes). A
+  `lastSynced` timestamp on the root blob drives the sync-on-open debounce.
 
-Concurrency: single-user, infrequent cron → last-write-wins is acceptable; guard
-with the row's `updated_at` (re-read and merge if it changed mid-run). Normalized
-per-listing tables (`listings`, `price_history`) remain a backlog item, justified
-only if the blob gets large or we want real query history.
+Normalized per-listing tables (`listings`, `price_history`) remain a backlog
+item, justified only if the blob gets large or we want real query history.
 
-## 8. UI changes (minimal)
+## 8. UI changes (shipped in v1)
 
-- Results tab: show persisted candidates (currently only in-memory ones show).
-- A "Last synced: <date>" line + manual "Sync now" button (calls `/api/sync`
-  with the secret, or a thin authed wrapper).
-- Surface price-change notes and the `sold` state in `LCard`.
+- Results tab: a **↻ Sync** button + a status line (`SyncStatus`) summarizing the
+  last run (new / price-changes / not-seen / query errors), and "Last synced
+  <ago>" when idle.
+- Sync-on-open: auto-runs once per load if it's been > `AUTO_SYNC_HOURS` (12)
+  since `lastSynced`; quiet on error for the background run.
+- `LCard` shows the `lastSeen` line for `marketcheck` listings (amber "may be
+  sold" when it's not today's date). Price changes append a note via reconcile.
 
 ## 9. Cost, limits, failure modes
 
