@@ -1,13 +1,18 @@
--- Server-enforced user allowlist at the database (RLS) layer.
+-- Migration: user allowlist (server-enforced access control)
 --
--- Run this ONCE in the Supabase SQL editor (Dashboard → SQL) or via
--- `supabase db` against the project. It is safe to re-run (idempotent).
+-- Apply with the Supabase CLI (`supabase db push`, after `supabase link
+-- --project-ref <ref>`) or by pasting into the Dashboard → SQL editor.
+-- Idempotent and safe to re-run.
 --
--- After this runs, only emails present in public.allowed_emails can read or
--- write app_state — no matter how they authenticate. Manage access by
--- inserting/deleting rows in that table. The /api proxy reads the same list
--- through is_allowed(), so this table is the single source of truth for both
--- the data layer and the serverless endpoints.
+-- After this runs, only emails in public.allowed_emails can read or write
+-- app_state — no matter how they authenticate. Manage access by inserting/
+-- deleting rows. The /api proxy reads the same list through is_allowed(), so
+-- this table is the shared source of truth for the data layer and the
+-- serverless endpoints.
+--
+-- NOTE: assumes the pre-existing public.app_state table (created when Supabase
+-- storage was set up). It rebuilds that table's RLS policies; it does not create
+-- the table itself.
 
 -- 1) Allowlist table. RLS enabled with NO client policies => not readable or
 --    writable by anon/authenticated clients; manage it from the SQL editor.

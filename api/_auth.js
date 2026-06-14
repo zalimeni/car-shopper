@@ -10,7 +10,7 @@
 // bypass it.
 //
 // Allowlist sources (a user is allowed if EITHER grants access):
-//   1. the public.allowed_emails table (see db/allowlist.sql), read via the
+//   1. the public.allowed_emails table (see supabase/migrations), read via the
 //      is_allowed() RPC — also what RLS uses, so it's the shared source of truth;
 //   2. the ALLOWED_EMAILS env var (comma-separated), which always applies and is
 //      handy for granting access without a DB write (and works before the

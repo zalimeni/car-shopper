@@ -72,7 +72,7 @@ unattended. See §4 for the background-cron variant that lifts that limitation.
   - `ALLOWED_EMAILS` (optional) — comma-separated allowlist; always applies, in
     addition to the DB table. See "Access control" below.
 - **Access control (two layers, allow if EITHER source grants):**
-  - **Data layer (`db/allowlist.sql`):** RLS on `app_state` requires both
+  - **Data layer (`supabase/migrations/*_user_allowlist.sql`):** RLS on `app_state` requires both
     `auth.uid() = user_id` *and* `public.is_allowed()`. The `public.allowed_emails`
     table backs `is_allowed()`; non-allowlisted accounts can sign up but can't
     read or write any data.
