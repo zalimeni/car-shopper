@@ -384,7 +384,7 @@ export default function App() {
       <header style={S.header}>
         <div style={S.hRow}>
           <h1 style={S.title}>Car Search Tracker</h1>
-          <span style={S.badge}>{saving ? "Saving..." : "v5.0 ✓"}</span>
+          <span style={S.badge}>{saving ? "Saving..." : "Saved ✓"}</span>
         </div>
         <p style={S.sub}>2-car · Boston + Durham · ≤$40K</p>
         <nav style={S.nav}>
@@ -699,7 +699,7 @@ function QueriesTab({ queries, gen }) {
     <div>
       <div style={S.secH}><h2 style={S.secT}>Search Queries</h2><button style={S.secBtn} onClick={gen}>Regen</button></div>
       <div style={S.card}>
-        <p style={S.help}>Use AI Search on Dashboard for automatic results. Or copy these queries to search manually.</p>
+        <p style={S.help}>Copy these queries to search each source manually, then import results as JSON on the Results tab.</p>
         <p style={S.help}>Sources: {SOURCES.join(", ")}</p>
       </div>
       {Object.entries(grp).map(function (entry) {
@@ -888,7 +888,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       )}
 
       {!data.listings.length && !candidates.length && !showAdd && !showImport && (
-        <div style={S.card}><p style={S.empty}>No listings. Use AI Search on Dashboard or Import above.</p></div>
+        <div style={S.card}><p style={S.empty}>No listings yet. Use Import above, or + Add to enter one manually.</p></div>
       )}
     </div>
   );
