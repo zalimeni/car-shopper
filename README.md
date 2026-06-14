@@ -52,16 +52,16 @@ npm run preview  # serve the production build locally
 
 ## Deployment
 
-Pushes to `main` trigger `.github/workflows/deploy.yml`, which builds the app
-and publishes `dist/` to **GitHub Pages**. The site is served at:
+Deployed on **Vercel**. The repo is connected as a Vercel project, so every push
+to `main` triggers a production deploy (and pushes to other branches get preview
+deployments). Settings live in `vercel.json`:
 
-```
-https://zalimeni.github.io/car-shopper/
-```
+- `buildCommand`: `npm run build`
+- `outputDirectory`: `dist`
+- a catch-all rewrite to `index.html` so the single-page app serves on any path
 
-The production base path is set to `/car-shopper/` in `vite.config.js`. To host
-under a different path (or a custom domain at the root), update `base`
-accordingly.
+To set up from scratch: in the Vercel dashboard, **Add New Project → Import**
+this repo. Vercel auto-detects Vite; no extra configuration is required.
 
 ## Data storage
 
