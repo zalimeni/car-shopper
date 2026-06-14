@@ -7,6 +7,7 @@ import { supabase } from "./supabaseClient";
 export default function AuthGate({ children }) {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [authorized, setAuthorized] = useState(null); // null = checking | true | false
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -19,9 +20,57 @@ export default function AuthGate({ children }) {
     return () => sub.subscription.unsubscribe();
   }, []);
 
+  // Ask the server whether this account is on the allowlist (env OR DB). This is
+  // a UX gate only — the data layer (RLS) and the API enforce access regardless —
+  // so on any error (offline, local dev without functions) we fail open and let
+  // the app render; non-allowlisted users simply see empty data + 403 on sync.
+  useEffect(() => {
+    if (!session) { setAuthorized(null); return; }
+    let cancelled = false;
+    setAuthorized(null);
+    (async () => {
+      try {
+        const res = await fetch("/api/me", {
+          headers: { Authorization: "Bearer " + session.access_token },
+        });
+        if (res.status === 403) { if (!cancelled) setAuthorized(false); return; }
+        if (res.ok) {
+          const j = await res.json().catch(() => null);
+          if (!cancelled) setAuthorized(!(j && j.authorized === false));
+          return;
+        }
+        if (!cancelled) setAuthorized(true); // 401/other -> fail open
+      } catch (e) {
+        if (!cancelled) setAuthorized(true); // network / local dev -> fail open
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [session]);
+
   if (loading) return <div style={S.center}>Loading…</div>;
   if (!session) return <SignIn />;
+  if (authorized === null) return <div style={S.center}>Checking access…</div>;
+  if (authorized === false) return <NotAuthorized email={session.user && session.user.email} />;
   return children;
+}
+
+function NotAuthorized({ email }) {
+  return (
+    <div style={S.center}>
+      <div style={S.card}>
+        <h1 style={S.title}>Access not enabled</h1>
+        <p style={S.sub}>
+          {email ? "The account " : "This account "}
+          {email && <strong>{email}</strong>}
+          {email ? " isn’t on the allowlist for this app." : " isn’t on the allowlist for this app."}
+        </p>
+        <p style={{ ...S.sub, marginTop: 0 }}>
+          If you think this is a mistake, ask the owner to add you, then sign in again.
+        </p>
+        <button style={S.button} onClick={() => signOut()}>Sign out</button>
+      </div>
+    </div>
+  );
 }
 
 function SignIn() {

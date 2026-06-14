@@ -9,11 +9,12 @@
 // any future server endpoints). Enforced here, server-side; the client cannot
 // bypass it.
 //
-// Allowlist source: the public.allowed_emails table (see db/allowlist.sql),
-// read via the is_allowed() RPC so the database is the single source of truth
-// for both RLS and these endpoints. If that function isn't present yet (before
-// the migration is applied), it falls back to the ALLOWED_EMAILS env var
-// (comma-separated), defaulting to the owner's email.
+// Allowlist sources (a user is allowed if EITHER grants access):
+//   1. the public.allowed_emails table (see db/allowlist.sql), read via the
+//      is_allowed() RPC — also what RLS uses, so it's the shared source of truth;
+//   2. the ALLOWED_EMAILS env var (comma-separated), which always applies and is
+//      handy for granting access without a DB write (and works before the
+//      migration is applied). Defaults to the owner's email.
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -54,14 +55,14 @@ export async function authorize(req) {
 
   const email = (data.user.email || "").toLowerCase();
 
-  // Prefer the DB allowlist (single source of truth); fall back to env if the
-  // migration hasn't been applied yet (RPC missing/errors).
-  let allowed = null;
-  try {
-    const rpc = await supabase.rpc("is_allowed");
-    if (!rpc.error && typeof rpc.data === "boolean") allowed = rpc.data;
-  } catch (e) { /* fall back */ }
-  if (allowed === null) allowed = email !== "" && envAllowlist().indexOf(email) > -1;
+  // Allowed if the env list grants it OR the DB allowlist (is_allowed RPC) does.
+  let allowed = email !== "" && envAllowlist().indexOf(email) > -1;
+  if (!allowed) {
+    try {
+      const rpc = await supabase.rpc("is_allowed");
+      if (!rpc.error && rpc.data === true) allowed = true;
+    } catch (e) { /* RPC missing/unreachable — env list already checked */ }
+  }
 
   if (!allowed) return { error: "This account is not authorized to use this app", status: 403 };
   return { user: data.user };

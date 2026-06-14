@@ -69,22 +69,27 @@ unattended. See §4 for the background-cron variant that lifts that limitation.
   - `MARKETCHECK_API_KEY` — the aggregator key. A data-API credential, fully
     separate from the user's personal Anthropic/Claude account. **This is the
     only server-held secret.**
-  - `ALLOWED_EMAILS` (optional) — comma-separated allowlist *fallback*, used only
-    until `db/allowlist.sql` is applied. See "Access control" below.
-- **Access control (two layers, one source of truth):**
+  - `ALLOWED_EMAILS` (optional) — comma-separated allowlist; always applies, in
+    addition to the DB table. See "Access control" below.
+- **Access control (two layers, allow if EITHER source grants):**
   - **Data layer (`db/allowlist.sql`):** RLS on `app_state` requires both
     `auth.uid() = user_id` *and* `public.is_allowed()`. The `public.allowed_emails`
-    table is the single source of truth; non-allowlisted accounts can sign up but
-    can't read or write any data.
+    table backs `is_allowed()`; non-allowlisted accounts can sign up but can't
+    read or write any data.
   - **API layer (`api/_auth.js` → `authorize()`):** the sync proxy requires a
-    valid Supabase token and checks the same list via the `is_allowed()` RPC
-    (falling back to `ALLOWED_EMAILS` before the migration is applied). The
-    browser attaches its session token (`Authorization: Bearer`) on every sync;
-    401 = not signed in, 403 = not allowlisted.
+    valid Supabase token and is allowed if the email is in `ALLOWED_EMAILS` **or**
+    the DB table (`is_allowed()` RPC). The browser attaches its session token
+    (`Authorization: Bearer`) on every sync; 401 = not signed in, 403 = not
+    allowlisted. Note: the env list grants the API, but not DB rows — to also
+    read/write data, an email must be in the `allowed_emails` table (or be added
+    to both).
+  - **Friendly screen:** `AuthGate` calls `GET /api/me` after login; a 403
+    renders a "not authorized" screen (with sign-out) instead of an empty app.
+    This is UX only — it fails open on errors since RLS/the API are the real
+    boundary.
   - Magic-link signup stays open to anyone, so the allowlist — enforced
     server-side in the DB and the proxy, never in the client — is what protects
-    both the data and the MarketCheck quota. Manage access by editing the
-    `allowed_emails` table.
+    both the data and the MarketCheck quota.
 - The browser keeps using the existing **anon key + Supabase session** to read
   and write `app_state`; RLS continues to enforce that the user only touches
   their own row. The reconcile logic (§6) moves client-side.
