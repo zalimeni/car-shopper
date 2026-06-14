@@ -1,0 +1,7 @@
+# Minimal Supabase CLI config. `project_id` is just a local label; CI selects the
+# production project with `supabase link --project-ref <ref>`. Regenerate with
+# `supabase init` if a newer CLI needs additional fields.
+project_id = "car-shopper"
+
+[db]
+major_version = 15

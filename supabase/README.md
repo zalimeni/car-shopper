@@ -26,3 +26,22 @@ Dashboard → SQL editor. The migrations are idempotent, so re-running is safe.
 
 Both are idempotent and ordered by filename, so applying the full set against an
 existing database is safe.
+
+## CI
+
+`.github/workflows/migrations.yml` runs on changes under `supabase/`:
+
+- **validate** (every push / PR, no secrets): applies the CI shim
+  (`ci/shim.sql`, which stubs the Supabase `auth` schema + roles) and then every
+  migration — twice — against a throwaway Postgres to prove they run cleanly and
+  are idempotent.
+- **apply** (merge to `main` only): `supabase db push` to the real project.
+  Dormant until you add the credentials below; without them the job logs a skip
+  and passes.
+
+To enable auto-apply, add in GitHub repo settings:
+
+- Secret `SUPABASE_ACCESS_TOKEN` — Supabase account → Account → Access Tokens.
+- Secret `SUPABASE_DB_PASSWORD` — the project's database password.
+- (optional) Variable `SUPABASE_PROJECT_REF` — defaults to the project ref in
+  `supabaseClient.js`.
