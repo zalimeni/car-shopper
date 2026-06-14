@@ -13,6 +13,8 @@
 // exercising the full sync → candidate → approve flow without calling
 // MarketCheck (and before the live field mapping is confirmed).
 
+import { authorize } from "./_auth.js";
+
 const HOST = process.env.MARKETCHECK_HOST || "https://mc-api.marketcheck.com";
 const ENDPOINT = "/v2/search/car/active";
 // Free tier caps radius at 100mi; override with MARKETCHECK_RADIUS on a paid
@@ -23,6 +25,13 @@ const ROWS = 50; // page size; one page is plenty for a tight watchlist
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Use POST" });
+    return;
+  }
+
+  // Server-side access control: authenticated AND allowlisted, or no inventory.
+  const auth = await authorize(req);
+  if (auth.error) {
+    res.status(auth.status).json({ error: auth.error });
     return;
   }
 

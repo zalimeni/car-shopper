@@ -12,11 +12,18 @@
 //                      that vanishes from results is only flagged, never deleted
 //                      or auto-rejected (auto-sold is a documented follow-up).
 
+import { supabase } from "./supabaseClient";
+
 export async function fetchListings(profiles, hubs, opts) {
   const qs = opts && opts.mock ? "?mock=1" : "";
+  const { data: sess } = await supabase.auth.getSession();
+  const token = sess && sess.session ? sess.session.access_token : "";
   const res = await fetch("/api/marketcheck" + qs, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: token ? "Bearer " + token : "",
+    },
     body: JSON.stringify({
       profiles: (profiles || []).map(function (p) {
         return { id: p.id, name: p.name, params: p.params };
