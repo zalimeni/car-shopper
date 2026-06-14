@@ -39,41 +39,62 @@ automotive-listings aggregator covering US/Canada dealer inventory.
 > verified against the live API** during implementation; the normalization
 > layer (§5) is the single place that depends on them.
 
-## 3. Architecture
+## 3. Architecture — sync-on-open
+
+Reconciliation runs **in the browser while the user is logged in**, so all
+writes go through the normal Supabase session + RLS. The serverless function is
+a thin proxy that holds only the MarketCheck key.
 
 ```
-Vercel Cron  (schedule: every 3 days, < the 5-day staleness threshold)
-   └─> POST /api/sync                      (Vercel serverless function, Node)
-         1. Load the user's app_state blob from Supabase (service-role key)
-         2. For each ACTIVE profile × each hub (Boston 02101, Durham 27701 @ 400mi):
-              query MarketCheck /v2/search/car/active  (paginate)
-         3. Normalize each result → app listing shape (§5)
-         4. Reconcile against existing listings (§6)
-         5. Write the updated blob back to Supabase
-   └─> User reviews new candidates in the existing Results tab
+App opens (user authenticated)  ──or── "Sync now" button
+   └─> GET /api/marketcheck       (Vercel serverless function, Node)
+         For each ACTIVE profile × each hub (Boston 02101, Durham 27701 @ 400mi):
+           query MarketCheck /v2/search/car/active  (paginate)
+         → return normalized listings (§5)        [holds MARKETCHECK_API_KEY only]
+   └─> Browser (authed) reconciles vs. stored listings (§6)
+   └─> Browser writes the updated app_state blob via the user's session (RLS)
 ```
 
-Everything runs **server-side**. No secret ever reaches the browser.
+**No service-role key anywhere.** The only server-held secret is the MarketCheck
+data key (unrelated to the user's accounts). The cost of this approach: listings
+refresh only when the app is open (plus the manual "Sync now" button) — not
+unattended. See §4 for the background-cron variant that lifts that limitation.
 
 ## 4. Runtime & secrets
 
-- **Where:** Vercel serverless function `api/sync.js` + a `vercel.json` cron
-  entry. (Vercel Cron calls the function on a schedule.)
+- **Where:** one Vercel serverless function `api/marketcheck.js` (the proxy).
+  No cron in v1.
 - **Secrets (Vercel env vars only — never committed, never shipped to client):**
   - `MARKETCHECK_API_KEY` — the aggregator key. A data-API credential, fully
-    separate from the user's personal Anthropic/Claude account.
-  - `SUPABASE_SERVICE_ROLE_KEY` — lets the function read/write the user's row
-    without a logged-in session (cron has no user session). Bypasses RLS, so
-    server-side only.
-  - `SUPABASE_URL` — already known.
-  - `SYNC_USER_ID` — the single user's `auth.users` id to scope writes to
-    (single-user tool; avoids guessing).
-  - `CRON_SECRET` — shared secret so only Vercel Cron can invoke `/api/sync`.
+    separate from the user's personal Anthropic/Claude account. **This is the
+    only server-held secret.**
+- The browser keeps using the existing **anon key + Supabase session** to read
+  and write `app_state`; RLS continues to enforce that the user only touches
+  their own row. The reconcile logic (§6) moves client-side.
+- **Why no service-role key:** that key bypasses RLS and would only be needed by
+  a *sessionless* background job. Sync-on-open always has a session, so it
+  doesn't need it. Keeping it out means there is no RLS-bypassing credential
+  anywhere in the system.
 - **Auth note (for the deferred LLM phase):** Anthropic has no third-party
   consumer OAuth; programmatic access is API-key / Workload Identity Federation,
   both server-side. When we add enrichment, the clean path is a small server
   endpoint holding the Claude key, gated behind the existing Supabase login —
   no browser-exposed key, no copy-paste.
+
+### 4a. Follow-up: background cron + email-on-update (planned)
+
+A later phase adds unattended refresh so new matches arrive without opening the
+app. This is the piece that *does* need elevated server credentials:
+
+- Vercel Cron → `POST /api/sync` (shared `CRON_SECRET` so only cron can call it).
+- The function loads/writes the user's row with `SUPABASE_SERVICE_ROLE_KEY`
+  (server-side only) — because cron has no user session — scoped to `SYNC_USER_ID`.
+- On *newly discovered* candidates (or notable price drops), send an email
+  (e.g. Resend/Postmark) summarizing the matches + links.
+- The reconcile logic from §6 is shared between the client (sync-on-open) and
+  this function, so it isn't rewritten.
+
+Shipped only after sync-on-open is solid; it's strictly additive.
 
 ## 5. Normalization (MarketCheck → app listing)
 
@@ -143,9 +164,10 @@ only if the blob gets large or we want real query history.
 
 ## 9. Cost, limits, failure modes
 
-- **Requests/run:** active profiles (≤5) × 2 hubs × pages. With ~5 profiles and
-  modest result counts, low tens of requests every 3 days — comfortably within
-  trial/low-tier limits. Confirm MarketCheck rate limits + per-request cost.
+- **Requests/run:** active profiles (≤5) × 2 hubs × pages — low tens of requests
+  per sync. Sync-on-open could fire often, so **debounce** (skip if synced within
+  the last N hours) to stay within trial/low-tier limits. Confirm MarketCheck
+  rate limits + per-request cost.
 - **Partial failure:** if a profile query fails, skip it and continue; never
   purge based on an incomplete run (only purge VINs for profiles whose query
   succeeded this run).
@@ -161,6 +183,8 @@ only if the blob gets large or we want real query history.
 
 ## 11. Out of scope / deferred
 
+- **Background cron + email-on-update** — planned follow-up, designed in §4a.
+  Needs the service-role key + a `CRON_SECRET`; shipped after sync-on-open.
 - FB Marketplace / private-party sourcing (buyer prefers dealers).
 - LLM enrichment (auto-scoring, history summaries, dealer-question drafting) —
   deferred; will be a separate, server-gated phase (§4 auth note).
@@ -170,8 +194,11 @@ only if the blob gets large or we want real query history.
 
 1. Confirm MarketCheck auth mechanism, exact param names, response schema, and
    trial limits against the live API.
-2. Sync cadence — default every 3 days; acceptable?
-3. "Sync now" trigger — simple shared-secret endpoint, or gate behind the
-   Supabase session?
-4. Auto-purge aggressiveness — mark `sold` after one absent run, or require two
+2. Auto-purge aggressiveness — mark `sold` after one absent run, or require two
    consecutive misses to avoid flapping on transient inventory gaps?
+3. (Follow-up §4a) Email provider for update alerts — Resend vs. Postmark vs.
+   Supabase's built-in — and what threshold triggers a send (any new candidate?
+   price drop ≥ X%?).
+
+*Resolved:* v1 trigger is sync-on-open + a "Sync now" button (no service-role
+key). Unattended refresh + email moves to the §4a follow-up.
