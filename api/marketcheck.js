@@ -15,7 +15,9 @@
 
 const HOST = process.env.MARKETCHECK_HOST || "https://mc-api.marketcheck.com";
 const ENDPOINT = "/v2/search/car/active";
-const RADIUS_MI = 400;
+// Free tier caps radius at 100mi; override with MARKETCHECK_RADIUS on a paid
+// plan. A hub may also carry its own `r` to override per-location.
+const RADIUS_MI = Number(process.env.MARKETCHECK_RADIUS) || 100;
 const ROWS = 50; // page size; one page is plenty for a tight watchlist
 
 export default async function handler(req, res) {
@@ -83,7 +85,7 @@ function buildUrl(apiKey, profile, hub) {
   if (p.maxPrice) q.set("price_range", "0-" + Math.round(p.maxPrice));
   if (p.maxMiles) q.set("miles_range", "0-" + Math.round(p.maxMiles));
   if (hub.z) q.set("zip", hub.z);
-  q.set("radius", String(RADIUS_MI));
+  q.set("radius", String(hub.r || RADIUS_MI));
   q.set("rows", String(ROWS));
   q.set("start", "0");
   return HOST + ENDPOINT + "?" + q.toString();

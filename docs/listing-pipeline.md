@@ -48,7 +48,8 @@ a thin proxy that holds only the MarketCheck key.
 ```
 App opens (user authenticated)  ──or── "Sync now" button
    └─> GET /api/marketcheck       (Vercel serverless function, Node)
-         For each ACTIVE profile × each hub (Boston 02101, Durham 27701 @ 400mi):
+         For each ACTIVE profile × each hub (Boston 02101, Durham 27701 @ radius):
+           # radius = MARKETCHECK_RADIUS, default 100mi (free-tier cap); raise on a paid plan
            query MarketCheck /v2/search/car/active  (paginate)
          → return normalized listings (§5)        [holds MARKETCHECK_API_KEY only]
    └─> Browser (authed) reconciles vs. stored listings (§6)
