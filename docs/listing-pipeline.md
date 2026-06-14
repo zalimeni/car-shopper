@@ -69,14 +69,22 @@ unattended. See §4 for the background-cron variant that lifts that limitation.
   - `MARKETCHECK_API_KEY` — the aggregator key. A data-API credential, fully
     separate from the user's personal Anthropic/Claude account. **This is the
     only server-held secret.**
-  - `ALLOWED_EMAILS` (optional) — comma-separated allowlist; defaults to the
-    owner's email. See "Access control" below.
-- **Access control:** the proxy (`api/_auth.js` → `authorize()`) requires a
-  valid Supabase access token *and* an allowlisted email before serving any
-  inventory. Magic-link signup is open to anyone, so the allowlist — enforced
-  server-side, not in the client — is what actually protects the MarketCheck
-  quota. The browser attaches its session token (`Authorization: Bearer`) on
-  every sync; 401 = not signed in, 403 = not allowlisted.
+  - `ALLOWED_EMAILS` (optional) — comma-separated allowlist *fallback*, used only
+    until `db/allowlist.sql` is applied. See "Access control" below.
+- **Access control (two layers, one source of truth):**
+  - **Data layer (`db/allowlist.sql`):** RLS on `app_state` requires both
+    `auth.uid() = user_id` *and* `public.is_allowed()`. The `public.allowed_emails`
+    table is the single source of truth; non-allowlisted accounts can sign up but
+    can't read or write any data.
+  - **API layer (`api/_auth.js` → `authorize()`):** the sync proxy requires a
+    valid Supabase token and checks the same list via the `is_allowed()` RPC
+    (falling back to `ALLOWED_EMAILS` before the migration is applied). The
+    browser attaches its session token (`Authorization: Bearer`) on every sync;
+    401 = not signed in, 403 = not allowlisted.
+  - Magic-link signup stays open to anyone, so the allowlist — enforced
+    server-side in the DB and the proxy, never in the client — is what protects
+    both the data and the MarketCheck quota. Manage access by editing the
+    `allowed_emails` table.
 - The browser keeps using the existing **anon key + Supabase session** to read
   and write `app_state`; RLS continues to enforce that the user only touches
   their own row. The reconcile logic (§6) moves client-side.
