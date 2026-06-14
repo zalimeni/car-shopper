@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import storage from "./storage";
+import { signOut } from "./Auth";
 
 var STORAGE_KEY = "car-search-data";
 var VERSION = 4;
@@ -430,6 +431,7 @@ export default function App() {
             {confirmReset ? "Tap again to confirm reset" : "Reset All Data"}
           </button>
           {confirmReset && <button onClick={function () { setConfirmReset(false); }} style={S.resetBtn}>Cancel</button>}
+          <button onClick={function () { signOut(); }} style={S.resetBtn}>Sign out</button>
         </div>
         {exportJson && (
           <div style={{ marginTop: 8, padding: 10, background: "#161820", borderRadius: 6, border: "1px solid #1e2028", textAlign: "left", maxHeight: 150, overflowY: "auto" }}>
