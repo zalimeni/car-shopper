@@ -63,25 +63,65 @@ deployments). Settings live in `vercel.json`:
 To set up from scratch: in the Vercel dashboard, **Add New Project → Import**
 this repo. Vercel auto-detects Vite; no extra configuration is required.
 
-## Data storage
+## Auth & data storage
 
-All data lives in `localStorage` under the key `car-search-data`, so it persists
-across sessions and deploys but stays on the device. Use **Export Listings** to
-back up and the **Import** tab to restore or seed data.
+The app is gated by **Supabase email magic-link auth** and stores all state in
+Supabase, so your data syncs across devices: sign in with the same email
+anywhere and you get the same data.
+
+State is kept as a single JSON blob in one row per user (table `app_state`,
+keyed by `user_id`). The `src/storage.js` wrapper exposes an async
+`get/set/delete` API over that row. On first sign-in, any data left in
+`localStorage` from the earlier localStorage-only version is migrated up
+automatically. You can still **Export Listings** for a manual JSON backup and
+use the **Import** tab to restore or seed data.
+
+### Supabase setup
+
+The project URL and publishable (anon) key are baked in as defaults in
+`src/supabaseClient.js` — these are public by design; data is protected by Row
+Level Security. To point at a different project, set `VITE_SUPABASE_URL` and
+`VITE_SUPABASE_ANON_KEY` (see `.env.example`) locally and in Vercel.
+
+For a fresh Supabase project, two one-time steps are required:
+
+1. **Create the table and RLS policy** (SQL editor):
+
+   ```sql
+   create table app_state (
+     user_id uuid primary key references auth.users(id) on delete cascade,
+     data jsonb not null,
+     updated_at timestamptz not null default now()
+   );
+
+   alter table app_state enable row level security;
+
+   create policy "own row" on app_state
+     for all
+     using (auth.uid() = user_id)
+     with check (auth.uid() = user_id);
+   ```
+
+2. **Allow the app's URLs** under Authentication → URL Configuration: set the
+   Site URL to the Vercel production URL and add `http://localhost:3000` (and
+   any preview URLs) to the redirect allowlist so magic links return correctly.
 
 ## Architecture
 
 - `src/App.jsx` — single-file React app: all components, logic, and inline
   styles.
-- `src/storage.js` — `localStorage` wrapper with an async API.
-- `src/main.jsx` — React entry point.
+- `src/Auth.jsx` — Supabase auth gate (magic-link sign-in) and `signOut`.
+- `src/storage.js` — async `get/set/delete` wrapper over the Supabase row.
+- `src/supabaseClient.js` — configured Supabase client.
+- `src/main.jsx` — React entry point (wraps `App` in `AuthGate`).
 - `src/index.css` — minimal global reset.
 
 ## Future work
 
 - [ ] Component decomposition (`App.jsx` is ~1,150 lines)
 - [ ] CSS modules or Tailwind instead of inline styles
-- [ ] Persistent/shared backend for query history and dedup
+- [ ] Normalized tables (per-listing rows) for query history and dedup
+- [ ] Realtime sync across open devices
 - [ ] Automated search via API
 - [ ] Mobile PWA support
 - [ ] Tests
