@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import storage from "./storage";
 import { signOut } from "./Auth";
-import { fetchListings, reconcile } from "./sync";
+import { fetchListings, fetchRawSample, reconcile } from "./sync";
 
 var AUTO_SYNC_HOURS = 12; // sync-on-open debounce
 
@@ -287,6 +287,7 @@ export default function App() {
         prev.forEach(function (c) { if (c.vin) seen[c.vin] = true; });
         return prev.concat(decorated.filter(function (c) { return !c.vin || !seen[c.vin]; }));
       });
+      if (res.errors && res.errors.length) console.warn("Sync query errors:", res.errors);
       await save(Object.assign({}, data, { listings: rec.listings, lastSynced: new Date().toISOString() }));
       setSyncMsg({ ok: true, summary: rec.summary, errors: res.errors, mock: res.mock });
     } catch (e) {
@@ -304,6 +305,17 @@ export default function App() {
     var last = data.lastSynced ? new Date(data.lastSynced).getTime() : 0;
     if (Date.now() - last > AUTO_SYNC_HOURS * 3600 * 1000) doSync({ auto: true });
   }, [loading, data, doSync]);
+
+  // Debug helper: run window.__rawSync() in the browser console (while signed
+  // in) to see the raw MarketCheck response + how it normalizes — for
+  // confirming live field names.
+  useEffect(function () {
+    if (typeof window === "undefined" || !data) return;
+    window.__rawSync = function () {
+      var active = data.profiles.filter(function (p) { return p.active; });
+      return fetchRawSample(active, HUBS).then(function (r) { console.log("[rawSync]", r); return r; });
+    };
+  }, [data]);
 
   var genQueries = useCallback(function () {
     if (!data) return;
@@ -972,7 +984,10 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
     if (s.notSeen) parts.push(s.notSeen + " not seen");
     var detail = parts.length ? parts.join(" · ") : "no changes";
     text = (syncMsg.mock ? "Mock sync" : "Synced") + " — " + detail + " (from " + (s.fetched || 0) + " found)";
-    if (syncMsg.errors && syncMsg.errors.length) { text += " · " + syncMsg.errors.length + " query error(s)"; color = "#d4a017"; }
+    if (syncMsg.errors && syncMsg.errors.length) {
+      text += " · " + syncMsg.errors.length + " query error(s): " + String(syncMsg.errors[0]).slice(0, 120);
+      color = "#d4a017";
+    }
   } else {
     text = "Last synced: " + fmtWhen(lastSynced);
   }
