@@ -17,7 +17,7 @@
 
 import { authorize } from "./_auth.js";
 
-const HOST = process.env.MARKETCHECK_HOST || "https://mc-api.marketcheck.com";
+const HOST = process.env.MARKETCHECK_HOST || "https://api.marketcheck.com";
 const ENDPOINT = "/v2/search/car/active";
 // Free tier caps radius at 100mi; override with MARKETCHECK_RADIUS on a paid
 // plan. A hub may also carry its own `r` to override per-location.
@@ -116,12 +116,13 @@ function buildUrl(apiKey, profile, hub) {
   const p = profile.params || {};
   const q = new URLSearchParams();
   q.set("api_key", apiKey);
-  q.set("car_type", "used");
-  q.set("seller_type", "dealer");
+  q.set("car_type", "used"); // /search/car/active is dealer inventory by default
   if (p.make) q.set("make", p.make);
   if (p.model) q.set("model", p.model);
-  const years = parseYears(p.years);
-  if (years) q.set("year", years);
+  // year_range=min-max (a non-contiguous profile like "2016, 2018" over-fetches
+  // the gap year; harmless — candidates are reviewed before they hit the list).
+  const years = parseYears(p.years).split(",").filter(Boolean);
+  if (years.length) q.set("year_range", years[0] + "-" + years[years.length - 1]);
   if (p.maxPrice) q.set("price_range", "0-" + Math.round(p.maxPrice));
   if (p.maxMiles) q.set("miles_range", "0-" + Math.round(p.maxMiles));
   if (hub.z) q.set("zip", hub.z);

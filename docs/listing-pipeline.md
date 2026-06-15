@@ -22,7 +22,7 @@ No consumer site (CarGurus, Cars.com, Carvana, CarMax) offers a public listings
 API, and self-scraping is fragile + against ToS. We use **MarketCheck**, an
 automotive-listings aggregator covering US/Canada dealer inventory.
 
-- **Endpoint:** `GET https://mc-api.marketcheck.com/v2/search/car/active`
+- **Endpoint:** `GET https://api.marketcheck.com/v2/search/car/active`
 - **Auth:** API key (passed as `api_key` query param — *confirm against live
   docs*). Server-side only.
 - **Filtering:** 100+ params; the ones we need —

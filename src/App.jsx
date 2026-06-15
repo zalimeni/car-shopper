@@ -287,6 +287,7 @@ export default function App() {
         prev.forEach(function (c) { if (c.vin) seen[c.vin] = true; });
         return prev.concat(decorated.filter(function (c) { return !c.vin || !seen[c.vin]; }));
       });
+      if (res.errors && res.errors.length) console.warn("Sync query errors:", res.errors);
       await save(Object.assign({}, data, { listings: rec.listings, lastSynced: new Date().toISOString() }));
       setSyncMsg({ ok: true, summary: rec.summary, errors: res.errors, mock: res.mock });
     } catch (e) {
@@ -983,7 +984,10 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
     if (s.notSeen) parts.push(s.notSeen + " not seen");
     var detail = parts.length ? parts.join(" · ") : "no changes";
     text = (syncMsg.mock ? "Mock sync" : "Synced") + " — " + detail + " (from " + (s.fetched || 0) + " found)";
-    if (syncMsg.errors && syncMsg.errors.length) { text += " · " + syncMsg.errors.length + " query error(s)"; color = "#d4a017"; }
+    if (syncMsg.errors && syncMsg.errors.length) {
+      text += " · " + syncMsg.errors.length + " query error(s): " + String(syncMsg.errors[0]).slice(0, 120);
+      color = "#d4a017";
+    }
   } else {
     text = "Last synced: " + fmtWhen(lastSynced);
   }
