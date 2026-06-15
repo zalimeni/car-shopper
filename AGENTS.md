@@ -92,10 +92,18 @@ npm install
 npm run dev       # Vite dev server (UI only — see caveat below)
 npm run build     # production build to dist/
 npm run preview   # serve the built bundle
+npm test          # Vitest golden tests (see test/)
 ```
 
-There are **no tests or linters** configured. Validate changes by building
-(`npm run build`) and exercising the app.
+**Tests:** Vitest golden tests live in `test/` and cover the deterministic core
+of the sync pipeline — `buildUrl`/`parseYears`/`normalize`/`mapDealerType`
+(`api/marketcheck.js`) and `reconcile` (`src/sync.js`). The `buildUrl` test
+specifically guards against request regressions (host, `year_range`, no
+`seller_type`). Fixtures are in `test/fixtures/` — refresh
+`marketcheck-active-search.json` from a real response via the **Debug raw**
+button when the API shape is confirmed (see `test/README.md`). No linter is
+configured. CI: `.github/workflows/test.yml` runs `npm test` + `npm run build`
+on every push/PR.
 
 ### Local dev caveat (important)
 

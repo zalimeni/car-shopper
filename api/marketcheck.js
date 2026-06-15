@@ -89,9 +89,15 @@ export default async function handler(req, res) {
     for (const hub of hubs) {
       const label = (pr.name || pr.id || "?") + " @ " + (hub.n || hub.z || "?");
       try {
-        const r = await fetch(buildUrl(apiKey, pr, hub), { headers: { Accept: "application/json" } });
+        const url = buildUrl(apiKey, pr, hub);
+        const r = await fetch(url, { headers: { Accept: "application/json" } });
         if (!r.ok) {
-          errors.push(label + ": MarketCheck HTTP " + r.status);
+          // Auto-debug: 4xx bodies name the offending param. Echo it (+ the
+          // sent query, key redacted) so the error itself is actionable.
+          let body = "";
+          try { body = (await r.text()).slice(0, 300); } catch (e) { /* ignore */ }
+          const sent = url.split("?")[1] ? url.split("?")[1].replace(/api_key=[^&]*&?/, "") : "";
+          errors.push(label + ": MarketCheck HTTP " + r.status + (body ? " — " + body : "") + (r.status >= 400 && r.status < 500 ? " [sent: " + sent + "]" : ""));
           continue;
         }
         const json = await r.json();
@@ -112,7 +118,7 @@ export default async function handler(req, res) {
 }
 
 // ── MarketCheck query construction ──
-function buildUrl(apiKey, profile, hub) {
+export function buildUrl(apiKey, profile, hub) {
   const p = profile.params || {};
   const q = new URLSearchParams();
   q.set("api_key", apiKey);
@@ -133,7 +139,7 @@ function buildUrl(apiKey, profile, hub) {
 }
 
 // "2019-2022" -> "2019,2020,2021,2022"; "2016, 2018" -> "2016,2018"
-function parseYears(s) {
+export function parseYears(s) {
   if (!s) return "";
   const out = [];
   String(s).split(",").forEach(function (part) {
@@ -151,7 +157,7 @@ function parseYears(s) {
 }
 
 // ── MarketCheck listing -> app listing shape ──
-function normalize(row, profileId) {
+export function normalize(row, profileId) {
   if (!row || typeof row !== "object") return null;
   const build = row.build || {};
   const dealer = row.dealer || {};
@@ -175,7 +181,7 @@ function normalize(row, profileId) {
   };
 }
 
-function mapDealerType(row, dealer) {
+export function mapDealerType(row, dealer) {
   if (row.cpo === true || row.cpo === "True" || row.cpo === "true") return "CPO";
   const dt = String(dealer.dealer_type || row.seller_type || "").toLowerCase();
   if (dt.indexOf("independ") > -1) return "independent";

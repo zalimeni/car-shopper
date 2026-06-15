@@ -1007,7 +1007,7 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
     var detail = parts.length ? parts.join(" · ") : "no changes";
     text = (syncMsg.mock ? "Mock sync" : "Synced") + " — " + detail + " (from " + (s.fetched || 0) + " found)";
     if (syncMsg.errors && syncMsg.errors.length) {
-      text += " · " + syncMsg.errors.length + " query error(s): " + String(syncMsg.errors[0]).slice(0, 120);
+      text += " · " + syncMsg.errors.length + " query error(s): " + String(syncMsg.errors[0]).slice(0, 240);
       color = "#d4a017";
     }
   } else {
