@@ -35,20 +35,23 @@ existing database is safe.
   (`ci/shim.sql`, which stubs the Supabase `auth` schema + roles) and then every
   migration — twice — against a throwaway Postgres to prove they run cleanly and
   are idempotent.
-- **apply** (merge to `main` only): `supabase db push --db-url "$SUPABASE_DB_URL"`
-  to the real project. Dormant until you add the secret below; without it the job
-  logs a skip and passes.
+- **apply** (merge to `main` only): assembles the session-pooler URL and runs
+  `supabase db push --db-url ...` against the real project. Dormant until the
+  secret below is set; without it the job logs a skip and passes.
 
-To enable auto-apply, add one GitHub Actions **secret**:
+To enable auto-apply, under **Settings → Secrets and variables → Actions** add:
 
-- `SUPABASE_DB_URL` — the **session-mode pooler** connection string (IPv4, which
-  GitHub runners require; the direct host is IPv6-only without the add-on). From
-  Dashboard → Connect → **Session pooler**, e.g.
-  `postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres`
-  (port **5432** = session mode; needed for DDL — transaction mode/6543 won't
-  work). URL-encode any special characters in the password.
+- **Secret** `SUPABASE_DB_PASSWORD` — the project's database password (CI
+  URL-encodes it).
+- **Variable** `SUPABASE_DB_REGION` — the project's region, i.e. the `aws-0-<REGION>`
+  part of the pooler host (e.g. `us-east-1`). Find it in Dashboard → Connect →
+  Session pooler.
+- (optional) **Variable** `SUPABASE_PROJECT_REF` — defaults to the project ref in
+  `supabaseClient.js`.
 
-The DB password (inside that URL) is the right credential for migrations — it
+CI builds the **session-mode pooler** URL (IPv4, which GitHub runners require;
+the direct host is IPv6-only without the add-on; port 5432 = session mode, needed
+for DDL). The DB password is the right credential for migrations — it
 authenticates the direct Postgres connection that runs the DDL. API keys
 (`anon`/`service_role`, `sb_publishable_*`/`sb_secret_*`) are data-API
 credentials and cannot run migrations.
