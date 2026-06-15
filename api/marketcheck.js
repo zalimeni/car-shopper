@@ -69,12 +69,17 @@ export default async function handler(req, res) {
     try {
       const r = await fetch(url, { headers: { Accept: "application/json" } });
       debug.status = r.status;
-      const json = await r.json().catch(function () { return null; });
-      debug.topLevelKeys = json ? Object.keys(json) : [];
+      const text = await r.text();
+      let json = null;
+      try { json = JSON.parse(text); } catch (e) { /* non-JSON body */ }
+      debug.topLevelKeys = json && typeof json === "object" ? Object.keys(json) : [];
       debug.num_found = json && json.num_found != null ? json.num_found : undefined;
       const rows = json && Array.isArray(json.listings) ? json.listings : [];
       debug.rawSample = rows.slice(0, 2);
       debug.normalizedSample = rows.slice(0, 2).map(function (row) { return normalize(row, pr.id); });
+      // Echo the response body on error/empty so 4xx reasons (e.g. HTTP 422) are
+      // visible in the app — key already redacted from `request` above.
+      if (!r.ok || rows.length === 0) debug.body = text.slice(0, 1000);
     } catch (e) {
       debug.error = e && e.message ? e.message : "fetch failed";
     }
