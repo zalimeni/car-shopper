@@ -162,6 +162,20 @@ per environment (Preview vs Production) — set keys in the env you're testing.
 4. To exercise the full candidate/approve flow **without** the API or key, the
    proxy supports `?mock=1` (synthetic listings).
 
+### Headless / agent debugging (no email login)
+If `DEBUG_TOKEN` is set in the server env (a long random secret), call the API
+directly with it as the Bearer token — sidesteps the magic-link flow. It grants
+the **API surface only** (no DB/user-data access; RLS still applies). Example:
+```bash
+curl -X POST "$SITE/api/marketcheck?raw=1" \
+  -H "Authorization: Bearer $DEBUG_TOKEN" -H "Content-Type: application/json" \
+  -d '{"profiles":[{"id":"rav4-hybrid","name":"RAV4 Hybrid","params":{"make":"Toyota","model":"RAV4 Hybrid","years":"2019-2022","maxPrice":25000,"maxMiles":90000}}],"hubs":[{"n":"Boston MA","z":"02101"}]}'
+```
+Use `?mock=1` instead of `?raw=1` to avoid hitting MarketCheck. Rotate
+`DEBUG_TOKEN` to revoke. For a *real user* session (to exercise data/RLS), the
+Supabase-idiomatic route is a dedicated password user via
+`auth.admin.createUser({ email_confirm: true })` + `signInWithPassword`.
+
 ### Auth / allowlist
 - `401` from `/api/*` = not signed in / missing-invalid token. `403` = signed in
   but not allowlisted.
