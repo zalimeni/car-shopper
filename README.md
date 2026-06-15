@@ -116,12 +116,32 @@ For a fresh Supabase project, two one-time steps are required:
 - `src/main.jsx` — React entry point (wraps `App` in `AuthGate`).
 - `src/index.css` — minimal global reset.
 
-## Future work
+## Roadmap
+
+Recently shipped:
+
+- ✅ Supabase-backed storage with email magic-link auth and cross-device sync
+  (replaced per-browser `localStorage`)
+- ✅ Continuous deployment on Vercel
+
+### Next: automated listing pipeline
+
+Turn today's manual JSON import into an end-to-end loop, reusing the existing
+validation, candidate-approval, and VIN-dedup flow:
+
+- [ ] **Discovery** — pull new listings matching the active profiles and stage
+  them as candidates for approval
+- [ ] **Price & availability refresh** — re-check watched listings, record price
+  changes, and refresh `lastChecked`
+- [ ] **Dead-listing purge** — detect sold/removed listings and retire them
+- [ ] **Scheduled runs** feeding the Results tab (aligned with the 5-day
+  staleness threshold)
+
+### Backlog
 
 - [ ] Component decomposition (`App.jsx` is ~1,150 lines)
 - [ ] CSS modules or Tailwind instead of inline styles
 - [ ] Normalized tables (per-listing rows) for query history and dedup
 - [ ] Realtime sync across open devices
-- [ ] Automated search via API
 - [ ] Mobile PWA support
 - [ ] Tests
