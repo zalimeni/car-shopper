@@ -35,13 +35,20 @@ existing database is safe.
   (`ci/shim.sql`, which stubs the Supabase `auth` schema + roles) and then every
   migration — twice — against a throwaway Postgres to prove they run cleanly and
   are idempotent.
-- **apply** (merge to `main` only): `supabase db push` to the real project.
-  Dormant until you add the credentials below; without them the job logs a skip
-  and passes.
+- **apply** (merge to `main` only): `supabase db push --db-url "$SUPABASE_DB_URL"`
+  to the real project. Dormant until you add the secret below; without it the job
+  logs a skip and passes.
 
-To enable auto-apply, add in GitHub repo settings:
+To enable auto-apply, add one GitHub Actions **secret**:
 
-- Secret `SUPABASE_ACCESS_TOKEN` — Supabase account → Account → Access Tokens.
-- Secret `SUPABASE_DB_PASSWORD` — the project's database password.
-- (optional) Variable `SUPABASE_PROJECT_REF` — defaults to the project ref in
-  `supabaseClient.js`.
+- `SUPABASE_DB_URL` — the **session-mode pooler** connection string (IPv4, which
+  GitHub runners require; the direct host is IPv6-only without the add-on). From
+  Dashboard → Connect → **Session pooler**, e.g.
+  `postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres`
+  (port **5432** = session mode; needed for DDL — transaction mode/6543 won't
+  work). URL-encode any special characters in the password.
+
+The DB password (inside that URL) is the right credential for migrations — it
+authenticates the direct Postgres connection that runs the DDL. API keys
+(`anon`/`service_role`, `sb_publishable_*`/`sb_secret_*`) are data-API
+credentials and cannot run migrations.

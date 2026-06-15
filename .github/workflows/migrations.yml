@@ -50,22 +50,21 @@ jobs:
             psql "$PGURL" -v ON_ERROR_STOP=1 -f "$f"
           done
 
-  # Push pending migrations to the real Supabase project on merge to main.
-  # Dormant until the SUPABASE_ACCESS_TOKEN secret is added.
+  # Push pending migrations to the real Supabase project on merge to main, via
+  # the IPv4 session-mode pooler (GitHub runners are IPv4-only; the direct DB
+  # host is IPv6-only without the add-on). Dormant until SUPABASE_DB_URL is set.
   apply:
     needs: validate
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     env:
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-      PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF || 'dispkandrvmycwccavvl' }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
     steps:
       - name: Check for credentials
         id: gate
         run: |
-          if [ -z "${SUPABASE_ACCESS_TOKEN}" ]; then
-            echo "SUPABASE_ACCESS_TOKEN not set — skipping apply (validation already passed)."
+          if [ -z "${SUPABASE_DB_URL}" ]; then
+            echo "SUPABASE_DB_URL not set — skipping apply (validation already passed)."
             echo "ready=false" >> "$GITHUB_OUTPUT"
           else
             echo "ready=true" >> "$GITHUB_OUTPUT"
@@ -76,9 +75,7 @@ jobs:
         if: steps.gate.outputs.ready == 'true'
         with:
           version: latest
-      - name: Link project
-        if: steps.gate.outputs.ready == 'true'
-        run: supabase link --project-ref "$PROJECT_REF"
       - name: Push migrations
         if: steps.gate.outputs.ready == 'true'
-        run: supabase db push
+        run: supabase db push --db-url "$SUPABASE_DB_URL"
+
