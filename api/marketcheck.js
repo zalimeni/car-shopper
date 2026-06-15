@@ -11,7 +11,9 @@
 // (GET /v2/search/car/active) and are isolated in buildUrl()/normalize() so any
 // API drift is a one-file change. Pass ?mock=1 to get synthetic data for
 // exercising the full sync → candidate → approve flow without calling
-// MarketCheck (and before the live field mapping is confirmed).
+// MarketCheck (and before the live field mapping is confirmed). Pass ?raw=1 to
+// run one real query and return the raw MarketCheck response + how normalize()
+// maps it, for confirming live field names (API key redacted from the echo).
 
 import { authorize } from "./_auth.js";
 
@@ -39,6 +41,7 @@ export default async function handler(req, res) {
   const profiles = Array.isArray(body.profiles) ? body.profiles : [];
   const hubs = Array.isArray(body.hubs) ? body.hubs : [];
   const mock = req.query && (req.query.mock === "1" || req.query.mock === "true");
+  const raw = req.query && (req.query.raw === "1" || req.query.raw === "true");
 
   if (mock) {
     res.status(200).json({ listings: mockListings(profiles, hubs), errors: [], mock: true });
@@ -48,6 +51,34 @@ export default async function handler(req, res) {
   const apiKey = process.env.MARKETCHECK_API_KEY;
   if (!apiKey) {
     res.status(500).json({ error: "MARKETCHECK_API_KEY is not configured on the server" });
+    return;
+  }
+
+  // Debug: run one real query (first profile × first hub) and return the raw
+  // MarketCheck response alongside how normalize() maps it — for confirming the
+  // live field names. Key redacted from the echoed URL.
+  if (raw) {
+    const pr = profiles[0];
+    const hub = hubs[0];
+    if (!pr || !hub) {
+      res.status(400).json({ error: "raw mode needs at least one profile and one hub" });
+      return;
+    }
+    const url = buildUrl(apiKey, pr, hub);
+    const debug = { request: url.replace(/(api_key=)[^&]*/, "$1REDACTED"), profile: pr.id, hub: hub };
+    try {
+      const r = await fetch(url, { headers: { Accept: "application/json" } });
+      debug.status = r.status;
+      const json = await r.json().catch(function () { return null; });
+      debug.topLevelKeys = json ? Object.keys(json) : [];
+      debug.num_found = json && json.num_found != null ? json.num_found : undefined;
+      const rows = json && Array.isArray(json.listings) ? json.listings : [];
+      debug.rawSample = rows.slice(0, 2);
+      debug.normalizedSample = rows.slice(0, 2).map(function (row) { return normalize(row, pr.id); });
+    } catch (e) {
+      debug.error = e && e.message ? e.message : "fetch failed";
+    }
+    res.status(200).json(debug);
     return;
   }
 

@@ -43,6 +43,25 @@ export async function fetchListings(profiles, hubs, opts) {
   return { listings: json.listings || [], errors: json.errors || [], mock: !!json.mock };
 }
 
+// Debug helper: POST /api/marketcheck?raw=1 and return the raw MarketCheck
+// response + normalized sample. Wired to window.__rawSync for console use.
+export async function fetchRawSample(profiles, hubs) {
+  const { data: sess } = await supabase.auth.getSession();
+  const token = sess && sess.session ? sess.session.access_token : "";
+  const res = await fetch("/api/marketcheck?raw=1", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: token ? "Bearer " + token : "",
+    },
+    body: JSON.stringify({
+      profiles: (profiles || []).map(function (p) { return { id: p.id, name: p.name, params: p.params }; }),
+      hubs: hubs || [],
+    }),
+  });
+  return res.json();
+}
+
 export function reconcile(existing, fetched, todayStr) {
   const byVin = {};
   (fetched || []).forEach(function (f) {

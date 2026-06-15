@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import storage from "./storage";
 import { signOut } from "./Auth";
-import { fetchListings, reconcile } from "./sync";
+import { fetchListings, fetchRawSample, reconcile } from "./sync";
 
 var AUTO_SYNC_HOURS = 12; // sync-on-open debounce
 
@@ -304,6 +304,17 @@ export default function App() {
     var last = data.lastSynced ? new Date(data.lastSynced).getTime() : 0;
     if (Date.now() - last > AUTO_SYNC_HOURS * 3600 * 1000) doSync({ auto: true });
   }, [loading, data, doSync]);
+
+  // Debug helper: run window.__rawSync() in the browser console (while signed
+  // in) to see the raw MarketCheck response + how it normalizes — for
+  // confirming live field names.
+  useEffect(function () {
+    if (typeof window === "undefined" || !data) return;
+    window.__rawSync = function () {
+      var active = data.profiles.filter(function (p) { return p.active; });
+      return fetchRawSample(active, HUBS).then(function (r) { console.log("[rawSync]", r); return r; });
+    };
+  }, [data]);
 
   var genQueries = useCallback(function () {
     if (!data) return;
