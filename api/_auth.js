@@ -15,7 +15,15 @@
 //   2. the ALLOWED_EMAILS env var (comma-separated), which always applies and is
 //      handy for granting access without a DB write (and works before the
 //      migration is applied). Defaults to the owner's email.
+//
+// Debug bypass: if DEBUG_TOKEN is set (a long, server-only shared secret), a
+// caller presenting it as the Bearer token is authorized for the /api endpoints
+// WITHOUT a Supabase session — for headless/agent debugging of the sync that
+// sidesteps the email magic-link flow. It grants no DB access (no real session,
+// so RLS still blocks any user-data read/write) — only the API surface, i.e.
+// MarketCheck queries. Inert unless DEBUG_TOKEN is set; rotate to revoke.
 
+import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL =
@@ -28,6 +36,7 @@ const SUPABASE_ANON_KEY =
   "sb_publishable_TlJnt8hWo6eeQ1yJV9r0KQ_IbZwbfDk";
 
 const DEFAULT_ALLOW = "mzalimeni@gmail.com";
+const DEBUG_TOKEN = process.env.DEBUG_TOKEN || "";
 
 function envAllowlist() {
   return (process.env.ALLOWED_EMAILS || DEFAULT_ALLOW)
@@ -36,12 +45,26 @@ function envAllowlist() {
     .filter(Boolean);
 }
 
+// Constant-time string compare (avoids leaking the token via timing).
+function safeEqual(a, b) {
+  const ab = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  if (ab.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ab, bb);
+}
+
 // Returns { user } when the caller is authenticated AND allowlisted, otherwise
 // { error, status } (401 unauthenticated, 403 not on the list).
 export async function authorize(req) {
   const header = req.headers.authorization || req.headers.Authorization || "";
   const token = header.indexOf("Bearer ") === 0 ? header.slice(7).trim() : "";
   if (!token) return { error: "Missing authentication token", status: 401 };
+
+  // Debug bypass (server-only shared secret; min length guards against a weak/
+  // empty value enabling access). Grants the API surface only — no DB session.
+  if (DEBUG_TOKEN.length >= 24 && safeEqual(token, DEBUG_TOKEN)) {
+    return { user: { id: "debug", email: "debug@local", debug: true } };
+  }
 
   // Client carries the caller's token so getUser() and the is_allowed() RPC both
   // run in that user's context.
