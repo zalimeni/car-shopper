@@ -1,0 +1,62 @@
+{
+  "_comment": "Representative MarketCheck GET /v2/search/car/active response used by golden tests. Mirrors the documented schema. REPLACE/EXTEND with a real captured response (footer 'Debug raw' button -> rawSample) once available, and update the expected values in test/marketcheck.test.js to match.",
+  "num_found": 2,
+  "listings": [
+    {
+      "id": "abc123",
+      "vin": "JTMRWRFV0KD012345",
+      "heading": "2021 Toyota RAV4 Hybrid XLE",
+      "price": 28998,
+      "miles": 31250,
+      "vdp_url": "https://www.example-toyota-boston.com/used/Toyota/2021-RAV4-Hybrid-abc123.htm",
+      "exterior_color": "Silver",
+      "interior_color": "Black",
+      "dom": 21,
+      "seller_type": "dealer",
+      "inventory_type": "used",
+      "cpo": "False",
+      "dealer": {
+        "id": 1001,
+        "name": "Example Toyota of Boston",
+        "city": "Boston",
+        "state": "MA",
+        "dealer_type": "franchise"
+      },
+      "build": {
+        "year": 2021,
+        "make": "Toyota",
+        "model": "RAV4 Hybrid",
+        "trim": "XLE",
+        "body_type": "SUV",
+        "drivetrain": "AWD",
+        "fuel_type": "Hybrid"
+      }
+    },
+    {
+      "id": "def456",
+      "vin": "1G1FZ6S00L4123456",
+      "heading": "2022 Chevrolet Bolt EUV Premier",
+      "price": 18500,
+      "miles": 28900,
+      "vdp_url": "https://www.example-chevy.com/used/Chevrolet/2022-Bolt-EUV-def456.htm",
+      "exterior_color": "Blue",
+      "dom": 12,
+      "seller_type": "dealer",
+      "inventory_type": "used",
+      "cpo": "True",
+      "dealer": {
+        "id": 1002,
+        "name": "Example Chevrolet",
+        "city": "Cambridge",
+        "state": "MA",
+        "dealer_type": "independent"
+      },
+      "build": {
+        "year": 2022,
+        "make": "Chevrolet",
+        "model": "Bolt EUV",
+        "trim": "Premier"
+      }
+    }
+  ]
+}

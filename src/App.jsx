@@ -219,6 +219,8 @@ export default function App() {
   var init = useRef(false);
 
   var [exportJson, setExportJson] = useState("");
+  var [rawDebug, setRawDebug] = useState("");
+  var [rawBusy, setRawBusy] = useState(false);
   var [syncing, setSyncing] = useState(false);
   var [syncMsg, setSyncMsg] = useState(null);
 
@@ -488,6 +490,16 @@ export default function App() {
               setTab("Results");
             }
           }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>Export Listings</button>
+          <button onClick={async function () {
+            if (!data || rawBusy) return;
+            setRawBusy(true); setRawDebug(""); setTab("Results");
+            try {
+              var active = data.profiles.filter(function (p) { return p.active; });
+              var r = await fetchRawSample(active, HUBS);
+              setRawDebug(JSON.stringify(r, null, 2));
+            } catch (e) { setRawDebug("Error: " + (e && e.message ? e.message : String(e))); }
+            setRawBusy(false);
+          }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>{rawBusy ? "Running…" : "Debug raw"}</button>
           <button onClick={reset} style={Object.assign({}, S.resetBtn, confirmReset ? { color: "#c44" } : {})}>
             {confirmReset ? "Tap again to confirm reset" : "Reset All Data"}
           </button>
@@ -501,6 +513,16 @@ export default function App() {
               <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { setExportJson(""); }}>Close</button>
             </div>
             <textarea readOnly value={exportJson} style={Object.assign({}, S.ta, { width: "100%", minHeight: 80, fontSize: 10, boxSizing: "border-box" })}
+              onClick={function (e) { e.target.select(); }} />
+          </div>
+        )}
+        {(rawBusy || rawDebug) && (
+          <div style={{ marginTop: 8, padding: 10, background: "#161820", borderRadius: 6, border: "1px solid #1e2028", textAlign: "left", maxHeight: 260, overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+              <span style={{ fontSize: 11, color: "#6b6b76" }}>Raw MarketCheck debug (1 live query — rawSample vs normalizedSample)</span>
+              {!rawBusy && <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { setRawDebug(""); }}>Close</button>}
+            </div>
+            <textarea readOnly value={rawBusy ? "Running one live query…" : rawDebug} style={Object.assign({}, S.ta, { width: "100%", minHeight: 140, fontSize: 10, boxSizing: "border-box" })}
               onClick={function (e) { e.target.select(); }} />
           </div>
         )}
@@ -985,7 +1007,7 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
     var detail = parts.length ? parts.join(" · ") : "no changes";
     text = (syncMsg.mock ? "Mock sync" : "Synced") + " — " + detail + " (from " + (s.fetched || 0) + " found)";
     if (syncMsg.errors && syncMsg.errors.length) {
-      text += " · " + syncMsg.errors.length + " query error(s): " + String(syncMsg.errors[0]).slice(0, 120);
+      text += " · " + syncMsg.errors.length + " query error(s): " + String(syncMsg.errors[0]).slice(0, 240);
       color = "#d4a017";
     }
   } else {
