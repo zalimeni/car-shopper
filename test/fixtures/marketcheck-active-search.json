@@ -1,62 +1,38 @@
 {
-  "_comment": "Representative MarketCheck GET /v2/search/car/active response used by golden tests. Mirrors the documented schema. REPLACE/EXTEND with a real captured response (footer 'Debug raw' button -> rawSample) once available, and update the expected values in test/marketcheck.test.js to match.",
+  "_comment": "Real MarketCheck /v2/search/car/active listings (used RAV4 HEV near Boston), captured via the app's Debug raw button and trimmed for the repo: `media`/photo_links removed (their cached URLs embed the API key) and incidental metadata pruned. Golden input for normalize().",
   "num_found": 2,
   "listings": [
     {
-      "id": "abc123",
-      "vin": "JTMRWRFV0KD012345",
-      "heading": "2021 Toyota RAV4 Hybrid XLE",
-      "price": 28998,
-      "miles": 31250,
-      "vdp_url": "https://www.example-toyota-boston.com/used/Toyota/2021-RAV4-Hybrid-abc123.htm",
-      "exterior_color": "Silver",
+      "id": "4T3LWRFV9MU040436-a7ecc822-a64b",
+      "vin": "4T3LWRFV9MU040436",
+      "heading": "Used 2021 Toyota RAV4 Hybrid LE",
+      "price": 23997,
+      "miles": 84755,
+      "vdp_url": "https://www.courtesymitsubishima.com/auto/used-2021-toyota-rav4-hybrid-le-attleboro-ma/121137914/",
+      "exterior_color": "Midnight Black Metallic",
       "interior_color": "Black",
-      "dom": 21,
+      "dom": 18,
       "seller_type": "dealer",
       "inventory_type": "used",
-      "cpo": "False",
-      "dealer": {
-        "id": 1001,
-        "name": "Example Toyota of Boston",
-        "city": "Boston",
-        "state": "MA",
-        "dealer_type": "franchise"
-      },
-      "build": {
-        "year": 2021,
-        "make": "Toyota",
-        "model": "RAV4 Hybrid",
-        "trim": "XLE",
-        "body_type": "SUV",
-        "drivetrain": "AWD",
-        "fuel_type": "Hybrid"
-      }
+      "dealer": { "id": 1074596, "name": "Courtesy Mitsubishi", "dealer_type": "franchise", "city": "Attleboro", "state": "MA", "zip": "02703" },
+      "build": { "year": 2021, "make": "Toyota", "model": "RAV4", "trim": "LE", "version": "Hybrid LE AWD", "body_type": "SUV", "drivetrain": "4WD", "fuel_type": "Unleaded", "powertrain_type": "HEV" },
+      "dist": 35.74
     },
     {
-      "id": "def456",
-      "vin": "1G1FZ6S00L4123456",
-      "heading": "2022 Chevrolet Bolt EUV Premier",
-      "price": 18500,
-      "miles": 28900,
-      "vdp_url": "https://www.example-chevy.com/used/Chevrolet/2022-Bolt-EUV-def456.htm",
-      "exterior_color": "Blue",
-      "dom": 12,
+      "id": "2T3M6RFV4MW014752-4fcf69e3-8936",
+      "vin": "2T3M6RFV4MW014752",
+      "heading": "2021 Toyota RAV4 Hybrid LE",
+      "price": 23990,
+      "miles": 80857,
+      "vdp_url": "https://www.maineautomall.com/cars-for-sale/2021-toyota-rav4-hybrid-le-lisbon-falls-me-11147278/",
+      "exterior_color": "Super White",
+      "interior_color": "Black",
+      "dom": 128,
       "seller_type": "dealer",
       "inventory_type": "used",
-      "cpo": "True",
-      "dealer": {
-        "id": 1002,
-        "name": "Example Chevrolet",
-        "city": "Cambridge",
-        "state": "MA",
-        "dealer_type": "independent"
-      },
-      "build": {
-        "year": 2022,
-        "make": "Chevrolet",
-        "model": "Bolt EUV",
-        "trim": "Premier"
-      }
+      "dealer": { "id": 1086804, "name": "Maine Auto Mall", "dealer_type": "independent", "city": "Biddeford", "state": "ME", "zip": "04005" },
+      "build": { "year": 2021, "make": "Toyota", "model": "RAV4", "trim": "LE", "version": "Hybrid LE AWD", "body_type": "SUV", "drivetrain": "4WD", "fuel_type": "Unleaded", "powertrain_type": "HEV" },
+      "dist": 81.26
     }
   ]
 }

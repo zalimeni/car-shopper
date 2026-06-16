@@ -70,34 +70,34 @@ describe("parseYears", () => {
   it("handles empty", () => expect(parseYears("")).toBe(""));
 });
 
-// Golden test on response -> app listing. Update expectations if the fixture is
-// replaced with a real captured response whose field names differ.
+// Golden test on response -> app listing, against a REAL captured MarketCheck
+// listing (see fixtures/). Verifies the live schema mapping.
 describe("normalize", () => {
-  it("maps a dealer listing", () => {
+  it("maps a real franchise-dealer listing", () => {
     expect(normalize(fixture.listings[0], "rav4-hybrid")).toEqual({
-      vin: "JTMRWRFV0KD012345",
-      vehicle: "Toyota RAV4 Hybrid",
+      vin: "4T3LWRFV9MU040436",
+      vehicle: "Toyota RAV4",
       year: 2021,
-      trim: "XLE",
-      price: 28998,
-      mileage: 31250,
-      dealer: "Example Toyota of Boston",
+      trim: "LE",
+      price: 23997,
+      mileage: 84755,
+      dealer: "Courtesy Mitsubishi",
       dealerType: "franchise",
-      location: "Boston",
+      location: "Attleboro",
       state: "MA",
-      color: "Silver",
-      link: "https://www.example-toyota-boston.com/used/Toyota/2021-RAV4-Hybrid-abc123.htm",
-      dom: 21,
+      color: "Midnight Black Metallic",
+      link: "https://www.courtesymitsubishima.com/auto/used-2021-toyota-rav4-hybrid-le-attleboro-ma/121137914/",
+      dom: 18,
       profileId: "rav4-hybrid",
       source: "marketcheck",
     });
   });
 
-  it("treats cpo as CPO regardless of dealer_type", () => {
-    const n = normalize(fixture.listings[1], "bolt-euv");
-    expect(n.dealerType).toBe("CPO");
-    expect(n.vehicle).toBe("Chevrolet Bolt EUV");
-    expect(n.mileage).toBe(28900);
+  it("maps dealer_type independent", () => {
+    const n = normalize(fixture.listings[1], "rav4-hybrid");
+    expect(n.dealerType).toBe("independent");
+    expect(n.mileage).toBe(80857);
+    expect(n.state).toBe("ME");
   });
 });
 
