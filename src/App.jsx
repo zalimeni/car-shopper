@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import storage from "./storage";
 import { signOut } from "./Auth";
 import { fetchListings, fetchRawSample, reconcile } from "./sync";
+import { getKeyStatus, saveKey, removeKey, scoreSet } from "./score";
 
 var AUTO_SYNC_HOURS = 12; // sync-on-open debounce
 
@@ -71,6 +72,18 @@ function calcScore(scores, crit) {
 function recalcAll(list, crit) {
   return (list || []).map(function (l) {
     return Object.assign({}, l, { compositeScore: calcScore(l.scores, crit) });
+  });
+}
+// Merge an AI scoring result onto a listing/candidate: per-criterion scores feed
+// the existing weighted composite, plus the dedicated AI summary + rationales.
+function applyScore(obj, r, crit) {
+  var scores = Object.assign({}, obj.scores || {}, r.scores || {});
+  return Object.assign({}, obj, {
+    scores: scores,
+    aiSummary: r.summary || obj.aiSummary || "",
+    aiRationales: r.rationales || obj.aiRationales || {},
+    scoredAt: new Date().toISOString(),
+    compositeScore: calcScore(scores, crit),
   });
 }
 
@@ -291,6 +304,88 @@ export default function App() {
     await save(nd);
   }, [save]);
 
+  // Patch listings against the LATEST state (avoids clobbering concurrent sync
+  // writes) and persist. Used by AI scoring, which may resolve after a sync.
+  var patchListings = useCallback(function (updater) {
+    setData(function (prev) {
+      if (!prev) return prev;
+      var nd = Object.assign({}, prev, { listings: updater(prev.listings || []) });
+      storage.set(STORAGE_KEY, JSON.stringify(nd)).catch(function (e) { console.error(e); });
+      return nd;
+    });
+  }, []);
+
+  // ── AI scoring ──
+  var [keyStatus, setKeyStatus] = useState({ configured: false, valid: false, last4: "" });
+  var [scoreBusy, setScoreBusy] = useState(false);
+  var [scoreMsg, setScoreMsg] = useState(null);
+
+  useEffect(function () {
+    var cancelled = false;
+    getKeyStatus().then(function (s) { if (!cancelled) setKeyStatus(s); });
+    return function () { cancelled = true; };
+  }, []);
+
+  var autoScore = data ? data.autoScore !== false : true;
+  var setAutoScore = useCallback(function (v) {
+    setData(function (prev) {
+      if (!prev) return prev;
+      var nd = Object.assign({}, prev, { autoScore: !!v });
+      storage.set(STORAGE_KEY, JSON.stringify(nd)).catch(function (e) { console.error(e); });
+      return nd;
+    });
+  }, []);
+
+  function scoreErr(e) {
+    if (e && e.code === "no_key") {
+      setKeyStatus(function (s) { return Object.assign({}, s, { configured: false, valid: false }); });
+      setScoreMsg({ ok: false, text: "Add your Anthropic API key below to enable AI scoring." });
+    } else if (e && (e.code === "key_rejected" || e.code === "key_unreadable")) {
+      setKeyStatus(function (s) { return Object.assign({}, s, { valid: false }); });
+      setScoreMsg({ ok: false, text: (e.message || "Your Anthropic key was rejected") + " — re-enter it below." });
+    } else {
+      setScoreMsg({ ok: false, text: (e && e.message) || "Scoring failed" });
+    }
+  }
+
+  // Score any mix of candidates (no id) and saved listings (have id), applying
+  // results to the right place. Single entry point for manual + auto scoring.
+  var scoreItems = useCallback(async function (cands, savedItems) {
+    if (!data || scoreBusy) return;
+    var all = (cands || []).concat(savedItems || []);
+    if (!all.length) return;
+    var profileById = {};
+    (data.profiles || []).forEach(function (p) { profileById[p.id] = p; });
+    var ctx = { criteria: data.criteria, globalReqs: data.globalReqs || [], profileById: profileById };
+    setScoreBusy(true);
+    setScoreMsg({ busy: true, text: "Scoring " + all.length + " listing" + (all.length > 1 ? "s" : "") + "…" });
+    try {
+      var pairs = await scoreSet(all, ctx, function (d, t) { setScoreMsg({ busy: true, text: "Scoring " + d + "/" + t + "…" }); });
+      var candRes = new Map();
+      var byId = {};
+      pairs.forEach(function (p) {
+        if (!p.result || !p.result.ok) return;
+        if (p.item.id) byId[p.item.id] = p.result; else candRes.set(p.item, p.result);
+      });
+      if (candRes.size) {
+        setCandidates(function (prev) {
+          return prev.map(function (c) { var r = candRes.get(c); return r ? applyScore(c, r, data.criteria) : c; });
+        });
+      }
+      if (Object.keys(byId).length) {
+        patchListings(function (list) {
+          return list.map(function (l) { return byId[l.id] ? applyScore(l, byId[l.id], data.criteria) : l; });
+        });
+      }
+      var ok = pairs.filter(function (p) { return p.result && p.result.ok; }).length;
+      setScoreMsg({ ok: true, text: "Scored " + ok + "/" + pairs.length + (ok < pairs.length ? " (" + (pairs.length - ok) + " failed)" : "") });
+    } catch (e) {
+      console.error("Score:", e);
+      scoreErr(e);
+    }
+    setScoreBusy(false);
+  }, [data, scoreBusy, patchListings]);
+
   // Pull dealer inventory via the proxy and reconcile. New VINs flow into the
   // candidate queue (same review path as Import); known VINs get price/last-seen
   // updates written to the blob. opts.auto = background sync-on-open (quiet on error).
@@ -317,14 +412,26 @@ export default function App() {
         return prev.concat(decorated.filter(function (c) { return !c.vin || !seen[c.vin]; }));
       });
       if (res.errors && res.errors.length) console.warn("Sync query errors:", res.errors);
+      // Which existing listings had their price change this run — candidates for
+      // a re-score alongside the brand-new candidates.
+      var prevPrice = {};
+      data.listings.forEach(function (l) { if (l.id) prevPrice[l.id] = l.price; });
+      var changed = rec.listings.filter(function (l) { return l.id && prevPrice[l.id] != null && l.price !== prevPrice[l.id]; });
       await save(Object.assign({}, data, { listings: rec.listings, lastSynced: new Date().toISOString() }));
       setSyncMsg({ ok: true, summary: rec.summary, errors: res.errors, mock: res.mock });
+      setSyncing(false);
+      // Auto-score new candidates + price-changed listings (best-effort; quiet
+      // on failure for background syncs). Not awaited — sync is already done.
+      if (autoScore && keyStatus.valid && !scoreBusy && (decorated.length || changed.length)) {
+        scoreItems(decorated, changed);
+      }
+      return;
     } catch (e) {
       console.error("Sync:", e);
       if (!auto) setSyncMsg({ ok: false, error: e.message });
     }
     setSyncing(false);
-  }, [data, syncing, save]);
+  }, [data, syncing, save, autoScore, keyStatus, scoreBusy, scoreItems]);
 
   // Sync-on-open: once per load, if it's been a while since the last sync.
   var didAutoSync = useRef(false);
@@ -518,7 +625,9 @@ export default function App() {
             approveAll={approveAll} dismissCand={dismissCand}
             importText={importText} setImportText={setImportText} doImport={doImport} importResult={importResult} setImportResult={setImportResult}
             filterProf={filterProf} setFilterProf={setFilterProf}
-            doSync={doSync} syncing={syncing} syncMsg={syncMsg} lastSynced={data.lastSynced} />
+            doSync={doSync} syncing={syncing} syncMsg={syncMsg} lastSynced={data.lastSynced}
+            keyStatus={keyStatus} setKeyStatus={setKeyStatus} autoScore={autoScore} setAutoScore={setAutoScore}
+            scoreBusy={scoreBusy} scoreMsg={scoreMsg} scoreItems={scoreItems} />
         )}
       </main>
       <footer style={S.footer}>
@@ -843,7 +952,8 @@ function QueriesTab({ queries, gen }) {
 function ResultsTab({ data, addListing, updListing, delListing, edListing, setEdListing, markChk,
   candidates, approveCand, approveAll, dismissCand,
   importText, setImportText, doImport, importResult, setImportResult,
-  filterProf, setFilterProf, doSync, syncing, syncMsg, lastSynced }) {
+  filterProf, setFilterProf, doSync, syncing, syncMsg, lastSynced,
+  keyStatus, setKeyStatus, autoScore, setAutoScore, scoreBusy, scoreMsg, scoreItems }) {
   var [showAdd, setShowAdd] = useState(false);
   var [showImport, setShowImport] = useState(false);
   var [filterRole, setFilterRole] = useState("all");
@@ -886,7 +996,8 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       onUpd: function (u) { updListing(l.id, u); setEdListing(null); },
       onStatus: function (s) { updListing(l.id, { status: s }); },
       onDel: function () { delListing(l.id); },
-      onChk: function () { markChk(l.id); }, stale: stale };
+      onChk: function () { markChk(l.id); }, stale: stale,
+      onScore: function () { scoreItems([], [l]); }, scoreBusy: scoreBusy, keyOk: keyStatus.valid };
   }
 
   var totalShown = staleW.length + freshW.length + rejL.length + purchL.length;
@@ -904,6 +1015,9 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       </div>
 
       <SyncStatus syncing={syncing} syncMsg={syncMsg} lastSynced={lastSynced} />
+
+      <AiPanel keyStatus={keyStatus} setKeyStatus={setKeyStatus} autoScore={autoScore} setAutoScore={setAutoScore}
+        scoreBusy={scoreBusy} scoreMsg={scoreMsg} />
 
       {/* Filter & Sort bar */}
       {totalAll > 0 && (
@@ -935,10 +1049,17 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
         <div style={S.card}>
           <div style={S.secH}>
             <h3 style={S.cardH}>Candidates ({candidates.length})</h3>
-            {candidates.length > 1 && (<button style={S.priBtn} onClick={approveAll}>Approve All</button>)}
+            <div style={{ display: "flex", gap: 6 }}>
+              {keyStatus.valid && (
+                <button style={Object.assign({}, S.secBtn, scoreBusy ? { opacity: 0.6 } : {})} disabled={scoreBusy}
+                  onClick={function () { scoreItems(candidates, []); }}>{scoreBusy ? "Scoring…" : "✨ Score all"}</button>
+              )}
+              {candidates.length > 1 && (<button style={S.priBtn} onClick={approveAll}>Approve All</button>)}
+            </div>
           </div>
           {candidates.map(function (c, i) {
-            return (<CandCard key={i} cand={c} onApprove={function () { approveCand(c); }} onDismiss={function () { dismissCand(c); }} data={data} />);
+            return (<CandCard key={i} cand={c} onApprove={function () { approveCand(c); }} onDismiss={function () { dismissCand(c); }} data={data}
+              onScore={function () { scoreItems([c], []); }} scoreBusy={scoreBusy} keyOk={keyStatus.valid} />);
           })}
         </div>
       )}
@@ -1047,6 +1168,107 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
   return (<div style={{ fontSize: 11, color: color, marginBottom: 10 }}>{text}</div>);
 }
 
+// AI scoring controls: key status + management, auto-score toggle, live status.
+function AiPanel({ keyStatus, setKeyStatus, autoScore, setAutoScore, scoreBusy, scoreMsg }) {
+  var [open, setOpen] = useState(false);
+  var [keyInput, setKeyInput] = useState("");
+  var [busy, setBusy] = useState(false);
+  var [err, setErr] = useState("");
+  var configured = keyStatus.configured;
+  var valid = keyStatus.valid;
+
+  async function doSave() {
+    if (!keyInput.trim()) return;
+    setBusy(true); setErr("");
+    try { var s = await saveKey(keyInput.trim()); setKeyStatus(s); setKeyInput(""); setOpen(false); }
+    catch (e) { setErr(e.message || "Couldn't save key"); }
+    setBusy(false);
+  }
+  async function doRemove() {
+    setBusy(true); setErr("");
+    try { var s = await removeKey(); setKeyStatus(s); }
+    catch (e) { setErr(e.message || "Couldn't remove key"); }
+    setBusy(false);
+  }
+
+  var statusText = !configured ? "No Anthropic key set"
+    : (valid ? "Key ••••" + (keyStatus.last4 || "") + " active"
+             : "Key ••••" + (keyStatus.last4 || "") + " rejected — re-enter");
+  var statusColor = !configured ? "#888" : (valid ? "#2d8659" : "#c44");
+
+  return (
+    <div style={Object.assign({}, S.card, { padding: 12, marginBottom: 12 })}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 13, color: "#c8c8d0", fontWeight: 600 }}>✨ AI scoring</span>
+          <span style={{ fontSize: 11, color: statusColor }}>{statusText}</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <label style={{ fontSize: 12, color: valid ? "#c8c8d0" : "#555", display: "flex", alignItems: "center", gap: 5, cursor: valid ? "pointer" : "default" }}>
+            <input type="checkbox" checked={autoScore} disabled={!valid} onChange={function (e) { setAutoScore(e.target.checked); }} />
+            Auto-score on sync
+          </label>
+          <button style={S.smBtn} onClick={function () { setOpen(!open); setErr(""); }}>{open ? "Close" : (configured ? "Manage key" : "Add key")}</button>
+        </div>
+      </div>
+      {scoreMsg && (
+        <div style={{ fontSize: 12, marginTop: 6, color: scoreMsg.ok ? "#2d8659" : scoreMsg.busy ? "#6b9edd" : "#c44" }}>
+          {scoreBusy ? "⏳ " : (scoreMsg.ok ? "✓ " : "")}{scoreMsg.text}
+        </div>
+      )}
+      {open && (
+        <div style={{ marginTop: 10, borderTop: "1px solid #1e2028", paddingTop: 10 }}>
+          <p style={S.help}>Your Anthropic API key is validated, then stored encrypted server-side and used only to score your own listings under your own account/quota. It's never displayed again. Create one at console.anthropic.com.</p>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <input style={Object.assign({}, S.inp, { flex: 1, minWidth: 180 })} type="password" autoComplete="off"
+              placeholder="sk-ant-..." value={keyInput} onChange={function (e) { setKeyInput(e.target.value); }} />
+            <button style={Object.assign({}, S.priBtn, { padding: "7px 14px", fontSize: 13 }, busy ? { opacity: 0.6 } : {})} disabled={busy || !keyInput.trim()} onClick={doSave}>{busy ? "Validating…" : "Save"}</button>
+            {configured && <button style={S.secBtn} disabled={busy} onClick={doRemove}>Remove</button>}
+          </div>
+          {err && <div style={{ fontSize: 12, color: "#c44", marginTop: 6 }}>{err}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// AI assessment readout on a card: overall summary + collapsible per-criterion
+// rationales. Renders nothing until a listing has been scored.
+function AiBox({ listing, criteria }) {
+  var [open, setOpen] = useState(false);
+  var summary = listing.aiSummary;
+  var rats = listing.aiRationales || {};
+  var hasRats = Object.keys(rats).length > 0;
+  if (!summary && !hasRats) return null;
+  return (
+    <div style={{ marginTop: 6, marginBottom: 8, padding: "8px 10px", background: "#161a26", border: "1px solid #2a3058", borderRadius: 6 }}>
+      <div style={{ fontSize: 10, color: "#b89edd", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span>✨ AI assessment</span>
+        {listing.scoredAt && <span style={{ color: "#555", textTransform: "none", letterSpacing: 0 }}>{String(listing.scoredAt).slice(0, 10)}</span>}
+      </div>
+      {summary && <div style={{ fontSize: 12, color: "#c8c8d0", lineHeight: 1.5 }}>{summary}</div>}
+      {hasRats && (
+        <button style={{ background: "none", border: "none", color: "#8ab4f8", fontSize: 11, cursor: "pointer", padding: "4px 0 0", fontFamily: "inherit" }}
+          onClick={function () { setOpen(!open); }}>{open ? "Hide per-criterion ▴" : "Per-criterion ▾"}</button>
+      )}
+      {open && hasRats && (
+        <div style={{ marginTop: 4 }}>
+          {(criteria || []).map(function (c) {
+            var r = rats[c.id];
+            var s = listing.scores && listing.scores[c.id];
+            if (!r && s == null) return null;
+            return (
+              <div key={c.id} style={{ fontSize: 11, color: "#9a9aa6", padding: "3px 0", borderTop: "1px solid #1e2028", lineHeight: 1.4 }}>
+                <strong style={{ color: "#c8c8d0" }}>{c.name}{s != null ? " — " + s + "/10" : ""}</strong>{r ? ": " + r : ""}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Thumb({ photo, link, alt }) {
   if (!photo) return null;
   var href = link || photo;
@@ -1059,7 +1281,7 @@ function Thumb({ photo, link, alt }) {
   );
 }
 
-function CandCard({ cand, onApprove, onDismiss, data }) {
+function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk }) {
   var prof = data.profiles.find(function (p) { return p.id === cand.profileId; });
   var scoreColor = cand.compositeScore >= 7 ? "#2d8659" : cand.compositeScore >= 5 ? "#d4a017" : "#c44";
   return (
@@ -1102,8 +1324,13 @@ function CandCard({ cand, onApprove, onDismiss, data }) {
       <div style={{ fontSize: 12, color: "#6b9edd", marginBottom: 8 }}>
         Left for {(prof && prof.role === "SUV") ? "commuter" : "SUV"}: <strong>${calcRem(cand.price).toLocaleString()}</strong>
       </div>
-      <div style={{ display: "flex", gap: 8 }}>
+      <AiBox listing={cand} criteria={data.criteria} />
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <button style={Object.assign({}, S.priBtn, { padding: "6px 14px", fontSize: 12 })} onClick={onApprove}>✓ Add to Watchlist</button>
+        {keyOk && onScore && (
+          <button style={Object.assign({}, S.smBtn, { color: "#b89edd" }, scoreBusy ? { opacity: 0.6 } : {})} disabled={scoreBusy}
+            onClick={onScore}>{scoreBusy ? "Scoring…" : (cand.scoredAt ? "✨ Re-score" : "✨ Score")}</button>
+        )}
         <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={onDismiss}>Skip</button>
       </div>
     </div>
@@ -1158,7 +1385,7 @@ function LForm({ profiles, criteria, onSave, initial }) {
   );
 }
 
-function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, stale }) {
+function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, stale, onScore, scoreBusy, keyOk }) {
   var l = listing;
   var prof = data.profiles.find(function (p) { return p.id === l.profileId; });
   var profRole = prof ? prof.role : "?";
@@ -1221,6 +1448,8 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
       {l.notes && <div style={{ fontSize: 12, color: "#6b6b76", fontStyle: "italic", marginTop: 4 }}>{l.notes}</div>}
       {l.rejectReason && <div style={{ fontSize: 12, color: "#c44", marginTop: 4 }}>Rejected: {l.rejectReason}</div>}
 
+      <AiBox listing={l} criteria={data.criteria} />
+
       {/* Reject inline UI */}
       {showReject && (
         <div style={{ marginTop: 8, padding: 10, background: "#1a1012", borderRadius: 6, border: "1px solid #3d1818" }}>
@@ -1250,6 +1479,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
       {l.status !== "purchased" && !showReject && !confirmDel && (
         <div style={{ display: "flex", gap: 4, marginTop: 8, borderTop: "1px solid #1e2028", paddingTop: 8, flexWrap: "wrap" }}>
           <button style={S.smBtn} onClick={onEdit}>Edit</button>
+          {keyOk && onScore && <button style={Object.assign({}, S.smBtn, { color: "#b89edd" }, scoreBusy ? { opacity: 0.6 } : {})} disabled={scoreBusy} onClick={onScore}>{scoreBusy ? "Scoring…" : (l.scoredAt ? "✨ Re-score" : "✨ Score")}</button>}
           {l.status === "watch" && stale && <button style={Object.assign({}, S.smBtn, { color: "#2d8659" })} onClick={onChk}>Still avail</button>}
           {l.status === "watch" && <button style={Object.assign({}, S.smBtn, { color: "#c44" })} onClick={function () { setShowReject(true); }}>Reject</button>}
           {l.status === "watch" && <button style={Object.assign({}, S.smBtn, { color: "#d4a017" })} onClick={function () { onStatus("purchased"); }}>Bought</button>}
