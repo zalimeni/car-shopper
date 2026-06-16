@@ -265,10 +265,26 @@ export function normalize(row, profileId) {
     state: dealer.state || "",
     color: row.exterior_color || "",
     link: row.vdp_url || "",
+    photo: pickPhoto(row),
     dom: row.dom != null ? Number(row.dom) : null,
     profileId: profileId,
     source: "marketcheck",
   };
+}
+
+// First usable dealer photo (media.photo_links — NOT photo_links_cached, which
+// embeds the API key). Skips "coming soon"/placeholder images and caps the
+// width on Cloudflare-style transform URLs (e.g. ".../w_900/..." -> w_400) so
+// we hotlink a thumbnail, not a full-res image.
+export function pickPhoto(row) {
+  const media = row && row.media;
+  const links = media && Array.isArray(media.photo_links) ? media.photo_links : [];
+  for (const u of links) {
+    if (!u || typeof u !== "string") continue;
+    if (/coming.?soon|no.?image|placeholder/i.test(u)) continue;
+    return u.replace(/([?&/,]w_)(\d+|auto)/i, "$1400");
+  }
+  return "";
 }
 
 export function mapDealerType(row, dealer) {

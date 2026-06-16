@@ -1047,11 +1047,24 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
   return (<div style={{ fontSize: 11, color: color, marginBottom: 10 }}>{text}</div>);
 }
 
+function Thumb({ photo, link, alt }) {
+  if (!photo) return null;
+  var href = link || photo;
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" style={{ display: "block", marginBottom: 8 }}>
+      <img src={photo} alt={alt || ""} loading="lazy"
+        onError={function (e) { e.target.style.display = "none"; }}
+        style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 8, border: "1px solid #1e2028", display: "block" }} />
+    </a>
+  );
+}
+
 function CandCard({ cand, onApprove, onDismiss, data }) {
   var prof = data.profiles.find(function (p) { return p.id === cand.profileId; });
   var scoreColor = cand.compositeScore >= 7 ? "#2d8659" : cand.compositeScore >= 5 ? "#d4a017" : "#c44";
   return (
     <div style={Object.assign({}, S.card, { borderLeft: "3px solid #2563eb", background: "#12141c" })}>
+      <Thumb photo={cand.photo} link={cand.link} alt={cand.year + " " + cand.vehicle} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
         <div>
           <strong style={{ fontSize: 14, color: "#f0f0f3" }}>{cand.year} {cand.vehicle}</strong>
@@ -1162,6 +1175,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
   var sc = l.compositeScore >= 7 ? "#2d8659" : l.compositeScore >= 5 ? "#d4a017" : "#c44";
   return (
     <div style={Object.assign({}, S.card, { borderLeft: "3px solid " + bc })}>
+      <Thumb photo={l.photo} link={l.link} alt={l.year + " " + l.vehicle} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
         <div>
           <strong style={{ fontSize: 15, color: "#f0f0f3" }}>{l.year} {l.vehicle}</strong>
