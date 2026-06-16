@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { buildUrl, parseYears, normalize, mapDealerType } from "../api/marketcheck.js";
+import { buildUrl, parseYears, normalize, mapDealerType, mapPowertrain } from "../api/marketcheck.js";
 
 const fixture = JSON.parse(
   readFileSync(fileURLToPath(new URL("./fixtures/marketcheck-active-search.json", import.meta.url)), "utf8")
@@ -27,7 +27,7 @@ describe("buildUrl", () => {
     expect(params.get("car_type")).toBe("used");
     expect(params.get("make")).toBe("Toyota");
     expect(params.get("model")).toBe("RAV4");
-    expect(params.get("powertrain_type")).toBe("Hybrid");
+    expect(params.get("powertrain_type")).toBe("HEV"); // "Hybrid" -> MarketCheck code
     expect(params.get("year_range")).toBe("2019-2022");
     expect(params.get("price_range")).toBe("0-25000");
     expect(params.get("miles_range")).toBe("0-90000");
@@ -50,6 +50,16 @@ describe("buildUrl", () => {
     expect(p.get("longitude")).toBe("-71.0589");
     expect(p.has("zip")).toBe(false);
     expect(p.get("radius")).toBe("100");
+  });
+});
+
+describe("mapPowertrain", () => {
+  it("maps friendly words to MarketCheck codes", () => {
+    expect(mapPowertrain("Hybrid")).toBe("HEV");
+    expect(mapPowertrain("hev")).toBe("HEV");
+    expect(mapPowertrain("PHEV")).toBe("PHEV");
+    expect(mapPowertrain("Plug-in Hybrid")).toBe("PHEV");
+    expect(mapPowertrain("gas")).toBe("Combustion");
   });
 });
 
