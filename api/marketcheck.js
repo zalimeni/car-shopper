@@ -136,7 +136,14 @@ export function buildUrl(apiKey, profile, hub) {
   if (years.length) q.set("year_range", years[0] + "-" + years[years.length - 1]);
   if (p.maxPrice) q.set("price_range", "0-" + Math.round(p.maxPrice));
   if (p.maxMiles) q.set("miles_range", "0-" + Math.round(p.maxMiles));
-  if (hub.z) q.set("zip", hub.z);
+  // Prefer lat/long (independent of MarketCheck's ZIP index — some valid ZIPs
+  // like 02101 are "not found"); fall back to zip.
+  if (hub.lat != null && hub.lon != null) {
+    q.set("latitude", String(hub.lat));
+    q.set("longitude", String(hub.lon));
+  } else if (hub.z) {
+    q.set("zip", hub.z);
+  }
   q.set("radius", String(hub.r || RADIUS_MI));
   q.set("rows", String(ROWS));
   q.set("start", "0");

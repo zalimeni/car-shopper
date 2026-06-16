@@ -50,7 +50,10 @@ var DEFAULT_CRITERIA = [
 ];
 
 var SOURCES = ["CarGurus", "Cars.com", "AutoTempest", "Carvana", "CarMax", "Edmunds", "TrueCar", "FB Marketplace"];
-var HUBS = [{ n: "Boston MA", z: "02101" }, { n: "Durham NC", z: "27701" }];
+var HUBS = [
+  { n: "Boston MA", z: "02101", lat: 42.3601, lon: -71.0589 },
+  { n: "Durham NC", z: "27701", lat: 35.994, lon: -78.8986 },
+];
 
 // ── Utility ──
 function calcRem(p) { return Math.round((BUDGET - p * (1 + TAX)) / (1 + TAX)); }
