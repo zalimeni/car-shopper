@@ -254,7 +254,9 @@ export function normalize(row, profileId) {
     vin: row.vin || "",
     vehicle: vehicle,
     year: Number(build.year) || 0,
-    trim: build.trim || "",
+    // version is the fuller variant (e.g. "Hybrid LE AWD") — surfaces the
+    // powertrain on the card; fall back to the plain trim.
+    trim: build.version || build.trim || "",
     price: Number(row.price) || 0,
     mileage: Number(row.miles) || 0,
     dealer: dealer.name || "",
