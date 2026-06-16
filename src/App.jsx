@@ -208,24 +208,39 @@ function migrate(data) {
 // ── Tabs ──
 var TABS = ["Dashboard", "Profiles", "Criteria", "Queries", "Results"];
 
+// Session-scoped persistence for volatile UI state, so a mobile reload / tab
+// discard on app-switch doesn't wipe in-progress results (candidates, raw
+// output, current tab). Cleared when the tab is actually closed.
+function ssGet(key, fallback) {
+  try { var v = sessionStorage.getItem(key); return v == null ? fallback : JSON.parse(v); } catch (e) { return fallback; }
+}
+function ssSet(key, val) {
+  try { sessionStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* unavailable */ }
+}
+
 export default function App() {
   var [data, setData] = useState(null);
   var [loading, setLoading] = useState(true);
-  var [tab, setTab] = useState("Dashboard");
+  var [tab, setTab] = useState(function () { return ssGet("cs-tab", "Dashboard"); });
   var [saving, setSaving] = useState(false);
   var [edListing, setEdListing] = useState(null);
   var [queries, setQueries] = useState([]);
-  var [candidates, setCandidates] = useState([]);
+  var [candidates, setCandidates] = useState(function () { return ssGet("cs-candidates", []); });
   var [importText, setImportText] = useState("");
   var [importResult, setImportResult] = useState(null);
   var [filterProf, setFilterProf] = useState("all");
   var init = useRef(false);
 
   var [exportJson, setExportJson] = useState("");
-  var [rawDebug, setRawDebug] = useState("");
+  var [rawDebug, setRawDebug] = useState(function () { return ssGet("cs-rawDebug", ""); });
   var [rawBusy, setRawBusy] = useState(false);
   var [syncing, setSyncing] = useState(false);
   var [syncMsg, setSyncMsg] = useState(null);
+
+  // Persist the volatile bits so an app-switch reload restores them.
+  useEffect(function () { ssSet("cs-tab", tab); }, [tab]);
+  useEffect(function () { ssSet("cs-candidates", candidates); }, [candidates]);
+  useEffect(function () { ssSet("cs-rawDebug", rawDebug); }, [rawDebug]);
 
   useEffect(function () {
     if (init.current) return;
