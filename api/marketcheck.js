@@ -103,9 +103,10 @@ export default async function handler(req, res) {
       // relaxed filters to isolate which one zeroes it (budget? year? model name?).
       if (r.ok && rows.length === 0) {
         const variants = [
-          { relaxed: "drop price+miles caps", drop: ["price_range", "miles_range"] },
-          { relaxed: "drop price+miles+year", drop: ["price_range", "miles_range", "year_range"] },
-          { relaxed: "make only (drop model too)", drop: ["price_range", "miles_range", "year_range", "model"] },
+          { relaxed: "drop price+miles", drop: ["price_range", "miles_range"] },
+          { relaxed: "drop price+miles+powertrain (keep model)", drop: ["price_range", "miles_range", "powertrain_type"] },
+          { relaxed: "drop price+miles+year+powertrain", drop: ["price_range", "miles_range", "year_range", "powertrain_type"] },
+          { relaxed: "make only (drop model+powertrain)", drop: ["price_range", "miles_range", "year_range", "model", "powertrain_type"] },
         ];
         debug.diagnosis = [];
         for (const v of variants) {
@@ -116,10 +117,10 @@ export default async function handler(req, res) {
             const rr = await fetchWithRetry(u.toString(), { headers: { Accept: "application/json" } });
             const jj = await rr.json().catch(function () { return null; });
             const entry = { relaxed: v.relaxed, status: rr.status, num_found: jj && jj.num_found != null ? jj.num_found : null };
-            // When model is dropped, reveal MarketCheck's taxonomy: which model
-            // strings exist for this make in range, and a sample build object
-            // (exposes the fuel field name/value to filter hybrids).
-            if (v.drop.indexOf("model") > -1 && jj && Array.isArray(jj.listings)) {
+            // Whenever the powertrain filter is dropped we get real listings —
+            // surface the actual model / powertrain_type / fuel_type strings so we
+            // can see the exact values to filter on (instead of guessing).
+            if (v.drop.indexOf("powertrain_type") > -1 && jj && Array.isArray(jj.listings)) {
               const counts = {}, pt = {}, ft = {};
               jj.listings.forEach(function (l) {
                 const b = l && l.build; if (!b) return;
@@ -128,7 +129,7 @@ export default async function handler(req, res) {
                 if (b.fuel_type) ft[b.fuel_type] = (ft[b.fuel_type] || 0) + 1;
               });
               entry.modelsSeen = counts;
-              entry.powertrainsSeen = pt; // exact powertrain_type strings to filter on
+              entry.powertrainsSeen = pt;
               entry.fuelTypesSeen = ft;
               const target = jj.listings.find(function (l) { return l && l.build && /rav4/i.test(l.build.model || ""); });
               entry.sampleBuild = (target || jj.listings[0] || {}).build;
