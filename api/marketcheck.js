@@ -85,7 +85,7 @@ export default async function handler(req, res) {
     const url = buildUrl(apiKey, pr, hub);
     const debug = { request: url.replace(/(api_key=)[^&]*/, "$1REDACTED"), profile: pr.id, hub: hub };
     try {
-      const r = await fetch(url, { headers: { Accept: "application/json" } });
+      const r = await fetchWithRetry(url, { headers: { Accept: "application/json" } });
       debug.status = r.status;
       const text = await r.text();
       let json = null;
@@ -98,6 +98,27 @@ export default async function handler(req, res) {
       // Echo the response body on error/empty so 4xx reasons (e.g. HTTP 422) are
       // visible in the app — key already redacted from `request` above.
       if (!r.ok || rows.length === 0) debug.body = text.slice(0, 1000);
+
+      // Auto-diagnose a valid-but-empty result: re-run with progressively
+      // relaxed filters to isolate which one zeroes it (budget? year? model name?).
+      if (r.ok && rows.length === 0) {
+        const variants = [
+          { relaxed: "drop price+miles caps", drop: ["price_range", "miles_range"] },
+          { relaxed: "drop price+miles+year", drop: ["price_range", "miles_range", "year_range"] },
+          { relaxed: "make only (drop model too)", drop: ["price_range", "miles_range", "year_range", "model"] },
+        ];
+        debug.diagnosis = [];
+        for (const v of variants) {
+          await sleep(THROTTLE_MS);
+          const u = new URL(url);
+          v.drop.forEach(function (k) { u.searchParams.delete(k); });
+          try {
+            const rr = await fetchWithRetry(u.toString(), { headers: { Accept: "application/json" } });
+            const jj = await rr.json().catch(function () { return null; });
+            debug.diagnosis.push({ relaxed: v.relaxed, status: rr.status, num_found: jj && jj.num_found != null ? jj.num_found : null });
+          } catch (e) { debug.diagnosis.push({ relaxed: v.relaxed, error: e && e.message }); }
+        }
+      }
     } catch (e) {
       debug.error = e && e.message ? e.message : "fetch failed";
     }
