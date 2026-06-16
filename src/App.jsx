@@ -322,6 +322,19 @@ export default function App() {
     };
   }, [data]);
 
+  // Runs one live MarketCheck query and shows raw vs normalized output on-screen
+  // (mobile-friendly equivalent of window.__rawSync()).
+  var runRawDebug = useCallback(async function () {
+    if (!data || rawBusy) return;
+    setRawBusy(true); setRawDebug("");
+    try {
+      var active = data.profiles.filter(function (p) { return p.active; });
+      var r = await fetchRawSample(active, HUBS);
+      setRawDebug(JSON.stringify(r, null, 2));
+    } catch (e) { setRawDebug("Error: " + (e && e.message ? e.message : String(e))); }
+    setRawBusy(false);
+  }, [data, rawBusy]);
+
   var genQueries = useCallback(function () {
     if (!data) return;
     var qs = [];
@@ -481,7 +494,8 @@ export default function App() {
             approveAll={approveAll} dismissCand={dismissCand}
             importText={importText} setImportText={setImportText} doImport={doImport} importResult={importResult} setImportResult={setImportResult}
             filterProf={filterProf} setFilterProf={setFilterProf}
-            doSync={doSync} syncing={syncing} syncMsg={syncMsg} lastSynced={data.lastSynced} />
+            doSync={doSync} syncing={syncing} syncMsg={syncMsg} lastSynced={data.lastSynced}
+            runRawDebug={runRawDebug} rawBusy={rawBusy} rawDebug={rawDebug} setRawDebug={setRawDebug} />
         )}
       </main>
       <footer style={S.footer}>
@@ -493,16 +507,6 @@ export default function App() {
               setTab("Results");
             }
           }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>Export Listings</button>
-          <button onClick={async function () {
-            if (!data || rawBusy) return;
-            setRawBusy(true); setRawDebug(""); setTab("Results");
-            try {
-              var active = data.profiles.filter(function (p) { return p.active; });
-              var r = await fetchRawSample(active, HUBS);
-              setRawDebug(JSON.stringify(r, null, 2));
-            } catch (e) { setRawDebug("Error: " + (e && e.message ? e.message : String(e))); }
-            setRawBusy(false);
-          }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>{rawBusy ? "Running…" : "Debug raw"}</button>
           <button onClick={reset} style={Object.assign({}, S.resetBtn, confirmReset ? { color: "#c44" } : {})}>
             {confirmReset ? "Tap again to confirm reset" : "Reset All Data"}
           </button>
@@ -516,16 +520,6 @@ export default function App() {
               <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { setExportJson(""); }}>Close</button>
             </div>
             <textarea readOnly value={exportJson} style={Object.assign({}, S.ta, { width: "100%", minHeight: 80, fontSize: 10, boxSizing: "border-box" })}
-              onClick={function (e) { e.target.select(); }} />
-          </div>
-        )}
-        {(rawBusy || rawDebug) && (
-          <div style={{ marginTop: 8, padding: 10, background: "#161820", borderRadius: 6, border: "1px solid #1e2028", textAlign: "left", maxHeight: 260, overflowY: "auto" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-              <span style={{ fontSize: 11, color: "#6b6b76" }}>Raw MarketCheck debug (1 live query — rawSample vs normalizedSample)</span>
-              {!rawBusy && <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { setRawDebug(""); }}>Close</button>}
-            </div>
-            <textarea readOnly value={rawBusy ? "Running one live query…" : rawDebug} style={Object.assign({}, S.ta, { width: "100%", minHeight: 140, fontSize: 10, boxSizing: "border-box" })}
               onClick={function (e) { e.target.select(); }} />
           </div>
         )}
@@ -815,7 +809,8 @@ function QueriesTab({ queries, gen }) {
 function ResultsTab({ data, addListing, updListing, delListing, edListing, setEdListing, markChk,
   candidates, approveCand, approveAll, dismissCand,
   importText, setImportText, doImport, importResult, setImportResult,
-  filterProf, setFilterProf, doSync, syncing, syncMsg, lastSynced }) {
+  filterProf, setFilterProf, doSync, syncing, syncMsg, lastSynced,
+  runRawDebug, rawBusy, rawDebug, setRawDebug }) {
   var [showAdd, setShowAdd] = useState(false);
   var [showImport, setShowImport] = useState(false);
   var [filterRole, setFilterRole] = useState("all");
@@ -870,12 +865,24 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
         <h2 style={S.secT}>Listings</h2>
         <div style={{ display: "flex", gap: 6 }}>
           <button style={Object.assign({}, S.secBtn, syncing ? { opacity: 0.6 } : {})} disabled={syncing} onClick={function () { doSync(); }}>{syncing ? "Syncing…" : "↻ Sync"}</button>
+          <button style={Object.assign({}, S.secBtn, rawBusy ? { opacity: 0.6 } : {})} disabled={rawBusy} onClick={function () { runRawDebug(); }}>{rawBusy ? "…" : "Raw"}</button>
           <button style={S.secBtn} onClick={function () { setShowImport(!showImport); setShowAdd(false); }}>{showImport ? "Close" : "Import"}</button>
           <button style={S.priBtn} onClick={function () { setShowAdd(!showAdd); setShowImport(false); setEdListing(null); }}>{showAdd ? "Cancel" : "+ Add"}</button>
         </div>
       </div>
 
       <SyncStatus syncing={syncing} syncMsg={syncMsg} lastSynced={lastSynced} />
+
+      {(rawBusy || rawDebug) && (
+        <div style={{ marginBottom: 12, padding: 10, background: "#161820", borderRadius: 6, border: "1px solid #1e2028", textAlign: "left", maxHeight: 280, overflowY: "auto" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+            <span style={{ fontSize: 11, color: "#6b6b76" }}>Raw debug — 1 live query (rawSample vs normalizedSample / error body)</span>
+            {!rawBusy && <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { setRawDebug(""); }}>Close</button>}
+          </div>
+          <textarea readOnly value={rawBusy ? "Running one live query…" : rawDebug} style={Object.assign({}, S.ta, { width: "100%", minHeight: 160, fontSize: 10, boxSizing: "border-box" })}
+            onClick={function (e) { e.target.select(); }} />
+        </div>
+      )}
 
       {/* Filter & Sort bar */}
       {totalAll > 0 && (
