@@ -13,7 +13,7 @@ const fixture = JSON.parse(
 describe("buildUrl", () => {
   const profile = {
     id: "rav4-hybrid",
-    params: { make: "Toyota", model: "RAV4 Hybrid", years: "2019-2022", maxPrice: 25000, maxMiles: 90000 },
+    params: { make: "Toyota", model: "RAV4", powertrain: "Hybrid", years: "2019-2022", maxPrice: 25000, maxMiles: 90000 },
   };
   const url = buildUrl("TEST_KEY", profile, { n: "Boston MA", z: "02101" });
   const qs = url.split("?")[1];
@@ -26,13 +26,18 @@ describe("buildUrl", () => {
     expect(params.get("api_key")).toBe("TEST_KEY");
     expect(params.get("car_type")).toBe("used");
     expect(params.get("make")).toBe("Toyota");
-    expect(params.get("model")).toBe("RAV4 Hybrid");
+    expect(params.get("model")).toBe("RAV4");
+    expect(params.get("powertrain_type")).toBe("Hybrid");
     expect(params.get("year_range")).toBe("2019-2022");
     expect(params.get("price_range")).toBe("0-25000");
     expect(params.get("miles_range")).toBe("0-90000");
     expect(params.get("zip")).toBe("02101");
     expect(params.get("radius")).toBe("100");
     expect(params.get("rows")).toBe("50");
+  });
+  it("omits powertrain_type when the profile has none", () => {
+    const u = buildUrl("K", { id: "x", params: { make: "Chevrolet", model: "Bolt EV", years: "2021-2023" } }, { z: "27701" });
+    expect(new URLSearchParams(u.split("?")[1]).has("powertrain_type")).toBe(false);
   });
   it("does not send the invalid seller_type param", () => {
     expect(params.has("seller_type")).toBe(false);
