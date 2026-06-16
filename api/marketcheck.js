@@ -115,7 +115,18 @@ export default async function handler(req, res) {
           try {
             const rr = await fetchWithRetry(u.toString(), { headers: { Accept: "application/json" } });
             const jj = await rr.json().catch(function () { return null; });
-            debug.diagnosis.push({ relaxed: v.relaxed, status: rr.status, num_found: jj && jj.num_found != null ? jj.num_found : null });
+            const entry = { relaxed: v.relaxed, status: rr.status, num_found: jj && jj.num_found != null ? jj.num_found : null };
+            // When model is dropped, reveal MarketCheck's taxonomy: which model
+            // strings exist for this make in range, and a sample build object
+            // (exposes the fuel field name/value to filter hybrids).
+            if (v.drop.indexOf("model") > -1 && jj && Array.isArray(jj.listings)) {
+              const counts = {};
+              jj.listings.forEach(function (l) { const m = l && l.build && l.build.model; if (m) counts[m] = (counts[m] || 0) + 1; });
+              entry.modelsSeen = counts;
+              const target = jj.listings.find(function (l) { return l && l.build && /rav4/i.test(l.build.model || ""); });
+              entry.sampleBuild = (target || jj.listings[0] || {}).build;
+            }
+            debug.diagnosis.push(entry);
           } catch (e) { debug.diagnosis.push({ relaxed: v.relaxed, error: e && e.message }); }
         }
       }
