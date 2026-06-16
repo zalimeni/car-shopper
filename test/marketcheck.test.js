@@ -78,7 +78,7 @@ describe("normalize", () => {
       vin: "4T3LWRFV9MU040436",
       vehicle: "Toyota RAV4",
       year: 2021,
-      trim: "LE",
+      trim: "Hybrid LE AWD",
       price: 23997,
       mileage: 84755,
       dealer: "Courtesy Mitsubishi",
@@ -98,6 +98,12 @@ describe("normalize", () => {
     expect(n.dealerType).toBe("independent");
     expect(n.mileage).toBe(80857);
     expect(n.state).toBe("ME");
+  });
+
+  it("falls back to trim when build.version is absent", () => {
+    const n = normalize({ vin: "X", build: { make: "Chevrolet", model: "Bolt EUV", trim: "Premier" } }, "bolt-euv");
+    expect(n.vehicle).toBe("Chevrolet Bolt EUV");
+    expect(n.trim).toBe("Premier");
   });
 });
 
