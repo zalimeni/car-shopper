@@ -23,6 +23,24 @@ const ENDPOINT = "/v2/search/car/active";
 // plan. A hub may also carry its own `r` to override per-location.
 const RADIUS_MI = Number(process.env.MARKETCHECK_RADIUS) || 100;
 const ROWS = 50; // page size; one page is plenty for a tight watchlist
+// Free tier rate-limits bursts; space sequential queries out and retry 429s.
+const THROTTLE_MS = Number(process.env.MARKETCHECK_THROTTLE_MS) || 500;
+const MAX_RETRIES = 3;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Fetch that retries on HTTP 429 with backoff (honoring Retry-After).
+async function fetchWithRetry(url, opts) {
+  let attempt = 0;
+  while (true) {
+    const r = await fetch(url, opts);
+    if (r.status !== 429 || attempt >= MAX_RETRIES) return r;
+    const ra = parseFloat(r.headers.get("retry-after") || "");
+    const waitMs = ra > 0 ? Math.min(ra * 1000, 5000) : Math.min(500 * Math.pow(2, attempt), 4000);
+    await sleep(waitMs);
+    attempt++;
+  }
+}
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -90,12 +108,15 @@ export default async function handler(req, res) {
   const seen = {}; // vin -> normalized listing (dedup across hubs, keep lowest price)
   const errors = [];
 
+  let first = true;
   for (const pr of profiles) {
     for (const hub of hubs) {
+      if (!first) await sleep(THROTTLE_MS); // stay under the burst rate limit
+      first = false;
       const label = (pr.name || pr.id || "?") + " @ " + (hub.n || hub.z || "?");
       try {
         const url = buildUrl(apiKey, pr, hub);
-        const r = await fetch(url, { headers: { Accept: "application/json" } });
+        const r = await fetchWithRetry(url, { headers: { Accept: "application/json" } });
         if (!r.ok) {
           // Auto-debug: 4xx bodies name the offending param. Echo it (+ the
           // sent query, key redacted) so the error itself is actionable.

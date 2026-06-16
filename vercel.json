@@ -2,5 +2,8 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "functions": {
+    "api/marketcheck.js": { "maxDuration": 30 }
+  },
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }
