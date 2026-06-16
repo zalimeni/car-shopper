@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { buildUrl, parseYears, normalize, mapDealerType, mapPowertrain } from "../api/marketcheck.js";
+import { buildUrl, parseYears, normalize, mapDealerType, mapPowertrain, pickPhoto } from "../api/marketcheck.js";
 
 const fixture = JSON.parse(
   readFileSync(fileURLToPath(new URL("./fixtures/marketcheck-active-search.json", import.meta.url)), "utf8")
@@ -87,6 +87,7 @@ describe("normalize", () => {
       state: "MA",
       color: "Midnight Black Metallic",
       link: "https://www.courtesymitsubishima.com/auto/used-2021-toyota-rav4-hybrid-le-attleboro-ma/121137914/",
+      photo: "",
       dom: 18,
       profileId: "rav4-hybrid",
       source: "marketcheck",
@@ -104,6 +105,28 @@ describe("normalize", () => {
     const n = normalize({ vin: "X", build: { make: "Chevrolet", model: "Bolt EUV", trim: "Premier" } }, "bolt-euv");
     expect(n.vehicle).toBe("Chevrolet Bolt EUV");
     expect(n.trim).toBe("Premier");
+  });
+});
+
+describe("pickPhoto", () => {
+  it("picks the first photo and caps the CDN width", () => {
+    const row = { media: { photo_links: ["https://cdn.example.com/resrc/images/c_limit,fl_lossy,w_900/v1/x.jpg"] } };
+    expect(pickPhoto(row)).toBe("https://cdn.example.com/resrc/images/c_limit,fl_lossy,w_400/v1/x.jpg");
+  });
+  it("rewrites w_auto", () => {
+    expect(pickPhoto({ media: { photo_links: ["https://c/images/w_auto/v1/x.jpg"] } })).toBe("https://c/images/w_400/v1/x.jpg");
+  });
+  it("skips coming-soon placeholders", () => {
+    const row = { media: { photo_links: ["https://x/photo-coming-soon/toyota.png", "https://cdn/images/c_limit,w_900/v1/real.jpg"] } };
+    expect(pickPhoto(row)).toBe("https://cdn/images/c_limit,w_400/v1/real.jpg");
+  });
+  it("returns '' when there are no usable photos", () => {
+    expect(pickPhoto({ media: { photo_links: [] } })).toBe("");
+    expect(pickPhoto({})).toBe("");
+  });
+  it("never uses photo_links_cached (key-bearing)", () => {
+    const row = { media: { photo_links_cached: ["https://api.marketcheck.com/v2/image/cache/x?api_key=mc_live_SECRET"] } };
+    expect(pickPhoto(row)).toBe("");
   });
 });
 
