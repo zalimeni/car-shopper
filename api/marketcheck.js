@@ -191,7 +191,7 @@ export function buildUrl(apiKey, profile, hub) {
   q.set("car_type", "used"); // /search/car/active is dealer inventory by default
   if (p.make) q.set("make", p.make);
   if (p.model) q.set("model", p.model);
-  if (p.powertrain) q.set("powertrain_type", p.powertrain); // Hybrid / PHEV / Electric
+  if (p.powertrain) q.set("powertrain_type", mapPowertrain(p.powertrain));
   // year_range=min-max (a non-contiguous profile like "2016, 2018" over-fetches
   // the gap year; harmless — candidates are reviewed before they hit the list).
   const years = parseYears(p.years).split(",").filter(Boolean);
@@ -210,6 +210,16 @@ export function buildUrl(apiKey, profile, hub) {
   q.set("rows", String(ROWS));
   q.set("start", "0");
   return HOST + ENDPOINT + "?" + q.toString();
+}
+
+// Map friendly powertrain words to MarketCheck's powertrain_type codes
+// (HEV/PHEV/Combustion). Pass through already-correct codes and unknowns.
+export function mapPowertrain(v) {
+  const k = String(v || "").trim().toLowerCase();
+  if (k === "hybrid" || k === "hev") return "HEV";
+  if (k === "phev" || k === "plug-in hybrid" || k === "plugin hybrid" || k === "plug in hybrid") return "PHEV";
+  if (k === "gas" || k === "gasoline" || k === "combustion") return "Combustion";
+  return v;
 }
 
 // "2019-2022" -> "2019,2020,2021,2022"; "2016, 2018" -> "2016,2018"
