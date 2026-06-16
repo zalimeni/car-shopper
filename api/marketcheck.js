@@ -141,7 +141,11 @@ export default async function handler(req, res) {
     } catch (e) {
       debug.error = e && e.message ? e.message : "fetch failed";
     }
-    res.status(200).json(debug);
+    // MarketCheck embeds the API key in media.photo_links_cached URLs — strip
+    // media and redact any stray api_key so the debug output never leaks it.
+    if (Array.isArray(debug.rawSample)) debug.rawSample = debug.rawSample.map(stripMedia);
+    const safe = JSON.parse(JSON.stringify(debug).replace(/api_key=[^"&\\\s]+/g, "api_key=REDACTED"));
+    res.status(200).json(safe);
     return;
   }
 
@@ -275,6 +279,14 @@ export function mapDealerType(row, dealer) {
 
 function safeParse(s) {
   try { return JSON.parse(s); } catch (e) { return {}; }
+}
+
+// Drop the bulky `media` block (its cached-image URLs embed the API key).
+function stripMedia(row) {
+  if (!row || typeof row !== "object") return row;
+  const c = Object.assign({}, row);
+  delete c.media;
+  return c;
 }
 
 // ── Mock data (?mock=1): two synthetic listings per active profile ──

@@ -1251,7 +1251,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
 }
 
 var S = {
-  app: { fontFamily: "'IBM Plex Sans','SF Pro Text',-apple-system,sans-serif", maxWidth: 720, margin: "0 auto", padding: "0 16px 80px", background: "#0f1114", minHeight: "100vh", color: "#e4e4e7" },
+  app: { fontFamily: "'IBM Plex Sans','SF Pro Text',-apple-system,sans-serif", maxWidth: 720, margin: "0 auto", padding: "0 16px 24px", background: "#0f1114", minHeight: "100vh", color: "#e4e4e7" },
   loading: { padding: 40, textAlign: "center", color: "#888", fontFamily: "sans-serif" },
   header: { paddingTop: 20, paddingBottom: 8, borderBottom: "1px solid #23262d", marginBottom: 16 },
   hRow: { display: "flex", justifyContent: "space-between", alignItems: "center" },
@@ -1261,7 +1261,7 @@ var S = {
   nav: { display: "flex", gap: 2, overflowX: "auto", paddingBottom: 4 },
   tab: { background: "none", border: "none", color: "#8a8a96", fontSize: 13, padding: "6px 12px", cursor: "pointer", borderRadius: 6, whiteSpace: "nowrap", fontFamily: "inherit" },
   tabOn: { background: "#1e2028", color: "#f0f0f3", fontWeight: 500 },
-  footer: { position: "fixed", bottom: 0, left: 0, right: 0, padding: "8px 16px", background: "#0f1114", borderTop: "1px solid #1a1c22", textAlign: "center" },
+  footer: { marginTop: 28, padding: "12px 16px", background: "#0f1114", borderTop: "1px solid #1a1c22", textAlign: "center" },
   resetBtn: { background: "none", border: "none", color: "#555", fontSize: 11, cursor: "pointer", fontFamily: "inherit" },
   stats: { display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginBottom: 16 },
   stat: { background: "#161820", borderRadius: 8, padding: "14px 12px", textAlign: "center", display: "flex", flexDirection: "column", gap: 2 },
