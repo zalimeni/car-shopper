@@ -120,9 +120,16 @@ export default async function handler(req, res) {
             // strings exist for this make in range, and a sample build object
             // (exposes the fuel field name/value to filter hybrids).
             if (v.drop.indexOf("model") > -1 && jj && Array.isArray(jj.listings)) {
-              const counts = {};
-              jj.listings.forEach(function (l) { const m = l && l.build && l.build.model; if (m) counts[m] = (counts[m] || 0) + 1; });
+              const counts = {}, pt = {}, ft = {};
+              jj.listings.forEach(function (l) {
+                const b = l && l.build; if (!b) return;
+                if (b.model) counts[b.model] = (counts[b.model] || 0) + 1;
+                if (b.powertrain_type) pt[b.powertrain_type] = (pt[b.powertrain_type] || 0) + 1;
+                if (b.fuel_type) ft[b.fuel_type] = (ft[b.fuel_type] || 0) + 1;
+              });
               entry.modelsSeen = counts;
+              entry.powertrainsSeen = pt; // exact powertrain_type strings to filter on
+              entry.fuelTypesSeen = ft;
               const target = jj.listings.find(function (l) { return l && l.build && /rav4/i.test(l.build.model || ""); });
               entry.sampleBuild = (target || jj.listings[0] || {}).build;
             }
@@ -183,6 +190,7 @@ export function buildUrl(apiKey, profile, hub) {
   q.set("car_type", "used"); // /search/car/active is dealer inventory by default
   if (p.make) q.set("make", p.make);
   if (p.model) q.set("model", p.model);
+  if (p.powertrain) q.set("powertrain_type", p.powertrain); // Hybrid / PHEV / Electric
   // year_range=min-max (a non-contiguous profile like "2016, 2018" over-fetches
   // the gap year; harmless — candidates are reviewed before they hit the list).
   const years = parseYears(p.years).split(",").filter(Boolean);

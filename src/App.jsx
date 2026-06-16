@@ -6,7 +6,7 @@ import { fetchListings, fetchRawSample, reconcile } from "./sync";
 var AUTO_SYNC_HOURS = 12; // sync-on-open debounce
 
 var STORAGE_KEY = "car-search-data";
-var VERSION = 4;
+var VERSION = 5;
 var STALE_DAYS = 5;
 var BUDGET = 40000;
 var TAX = 0.07;
@@ -22,10 +22,10 @@ var DEFAULT_REQS = [
 
 var DEFAULT_PROFILES = [
   { id: "rav4-hybrid", name: "RAV4 Hybrid", role: "SUV", active: true,
-    params: { make: "Toyota", model: "RAV4 Hybrid", years: "2019-2022", trims: "XLE, XSE", maxPrice: 25000, maxMiles: 90000,
+    params: { make: "Toyota", model: "RAV4", powertrain: "Hybrid", years: "2019-2022", trims: "XLE, XSE", maxPrice: 25000, maxMiles: 90000,
       mustHave: "AWD, hybrid", niceToHave: "Weather Pkg, CPO, wireless CarPlay (2022)", dealbreakers: "" } },
   { id: "rav4-prime", name: "RAV4 Prime", role: "SUV", active: true,
-    params: { make: "Toyota", model: "RAV4 Prime", years: "2021-2022", trims: "SE, XSE", maxPrice: 28000, maxMiles: 90000,
+    params: { make: "Toyota", model: "RAV4", powertrain: "PHEV", years: "2021-2022", trims: "SE, XSE", maxPrice: 28000, maxMiles: 90000,
       mustHave: "AWD, PHEV", niceToHave: "Premium pkg, Weather pkg, CPO", dealbreakers: "" } },
   { id: "bolt-euv", name: "Bolt EUV", role: "Commuter", active: true,
     params: { make: "Chevrolet", model: "Bolt EUV", years: "2022-2023", trims: "LT, Premier", maxPrice: 19000, maxMiles: 70000,
@@ -201,6 +201,15 @@ function migrate(data) {
     });
   }
   if (v < 3) { data.globalReqs = data.globalReqs || DEFAULT_REQS; }
+  if (v < 5) {
+    // MarketCheck's model is "RAV4"; hybrids/PHEVs are filtered by powertrain_type.
+    data.profiles = (data.profiles || []).map(function (p) {
+      if (!p.params) return p;
+      if (p.params.model === "RAV4 Hybrid") return Object.assign({}, p, { params: Object.assign({}, p.params, { model: "RAV4", powertrain: "Hybrid" }) });
+      if (p.params.model === "RAV4 Prime") return Object.assign({}, p, { params: Object.assign({}, p.params, { model: "RAV4", powertrain: "PHEV" }) });
+      return p;
+    });
+  }
   data.version = VERSION;
   return data;
 }
@@ -742,7 +751,7 @@ function ProfEd({ profile, onSave }) {
   var [p, setP] = useState(Object.assign({}, profile.params));
   return (
     <div style={S.grid2}>
-      {[["make", "Make"], ["model", "Model"], ["years", "Years"], ["trims", "Trims"]].map(function (pair) {
+      {[["make", "Make"], ["model", "Model"], ["powertrain", "Powertrain (Hybrid/PHEV/Electric)"], ["years", "Years"], ["trims", "Trims"]].map(function (pair) {
         return (<div key={pair[0]} style={S.field}><label style={S.lbl}>{pair[1]}</label><input style={S.inp} value={p[pair[0]] || ""} onChange={function (e) { setP(Object.assign({}, p, { [pair[0]]: e.target.value })); }} /></div>);
       })}
       <div style={S.field}><label style={S.lbl}>Max Price</label><input style={S.inp} type="number" value={p.maxPrice} onChange={function (e) { setP(Object.assign({}, p, { maxPrice: parseInt(e.target.value) || 0 })); }} /></div>
