@@ -24,28 +24,34 @@ export default function AuthGate({ children }) {
   // a UX gate only — the data layer (RLS) and the API enforce access regardless —
   // so on any error (offline, local dev without functions) we fail open and let
   // the app render; non-allowlisted users simply see empty data + 403 on sync.
+  //
+  // Keyed on the user id (not the whole session) so routine token refreshes —
+  // which fire on every mobile app-switch/focus — don't re-run this and unmount
+  // the app. We only blank to "Checking access…" on the FIRST check; later
+  // identity changes re-verify in the background without tearing down the app.
+  const userId = session && session.user ? session.user.id : null;
   useEffect(() => {
-    if (!session) { setAuthorized(null); return; }
+    if (!userId) { setAuthorized(null); return; }
     let cancelled = false;
-    setAuthorized(null);
     (async () => {
       try {
-        const res = await fetch("/api/me", {
-          headers: { Authorization: "Bearer " + session.access_token },
-        });
-        if (res.status === 403) { if (!cancelled) setAuthorized(false); return; }
+        const { data: s } = await supabase.auth.getSession();
+        const token = s && s.session ? s.session.access_token : "";
+        const res = await fetch("/api/me", { headers: { Authorization: "Bearer " + token } });
+        if (cancelled) return;
+        if (res.status === 403) { setAuthorized(false); return; }
         if (res.ok) {
           const j = await res.json().catch(() => null);
-          if (!cancelled) setAuthorized(!(j && j.authorized === false));
+          setAuthorized(!(j && j.authorized === false));
           return;
         }
-        if (!cancelled) setAuthorized(true); // 401/other -> fail open
+        setAuthorized(true); // 401/other -> fail open
       } catch (e) {
         if (!cancelled) setAuthorized(true); // network / local dev -> fail open
       }
     })();
     return () => { cancelled = true; };
-  }, [session]);
+  }, [userId]);
 
   if (loading) return <div style={S.center}>Loading…</div>;
   if (!session) return <SignIn />;
