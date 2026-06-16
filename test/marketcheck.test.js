@@ -37,6 +37,15 @@ describe("buildUrl", () => {
   it("does not send the invalid seller_type param", () => {
     expect(params.has("seller_type")).toBe(false);
   });
+
+  it("uses lat/long (not zip) when the hub has coordinates", () => {
+    const u = buildUrl("K", profile, { n: "Boston MA", z: "02101", lat: 42.3601, lon: -71.0589 });
+    const p = new URLSearchParams(u.split("?")[1]);
+    expect(p.get("latitude")).toBe("42.3601");
+    expect(p.get("longitude")).toBe("-71.0589");
+    expect(p.has("zip")).toBe(false);
+    expect(p.get("radius")).toBe("100");
+  });
 });
 
 describe("parseYears", () => {
