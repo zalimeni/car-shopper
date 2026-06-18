@@ -54,7 +54,7 @@ describe("buildUserPrompt", () => {
   it("includes listing facts including Carfax/MSRP extras", () => {
     expect(p).toContain("$24,000");
     expect(p).toContain("38,000 mi");
-    expect(p).toContain("Carfax 1-owner: yes");
+    expect(p).toContain("Carfax: 1-owner confirmed");
     expect(p).toContain("MSRP: $32,000");
     expect(p).toContain("-3%");
   });

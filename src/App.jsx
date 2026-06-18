@@ -318,6 +318,7 @@ export default function App() {
   // ── AI scoring ──
   var [keyStatus, setKeyStatus] = useState({ configured: false, valid: false, last4: "" });
   var [scoreBusy, setScoreBusy] = useState(false);
+  var [scoringActive, setScoringActive] = useState([]); // the exact items being scored right now (for per-card "Scoring…")
   var [scoreMsg, setScoreMsg] = useState(null);
 
   useEffect(function () {
@@ -368,25 +369,36 @@ export default function App() {
     (data.profiles || []).forEach(function (p) { profileById[p.id] = p; });
     var ctx = { criteria: data.criteria, globalReqs: data.globalReqs || [], profileById: profileById, model: data.scoreModel || DEFAULT_SCORE_MODEL };
     setScoreBusy(true);
+    setScoringActive(all.map(function (x) { return x.id || x.vin || null; }).filter(Boolean));
     setScoreMsg({ busy: true, text: "Scoring " + all.length + " listing" + (all.length > 1 ? "s" : "") + "…" });
     try {
       var pairs = await scoreSet(all, ctx, function (d, t) { setScoreMsg({ busy: true, text: "Scoring " + d + "/" + t + "…" }); });
-      var candRes = new Map();
-      var byId = {};
+      // Index successful results by object ref AND by id/vin, so application can't
+      // miss due to a reference that churned across the async boundary.
+      var byRef = new Map();
+      var byKey = {};
       pairs.forEach(function (p) {
         if (!p.result || !p.result.ok) return;
-        if (p.item.id) byId[p.item.id] = p.result; else candRes.set(p.item, p.result);
+        byRef.set(p.item, p.result);
+        var k = p.item.id || p.item.vin;
+        if (k) byKey[k] = p.result;
       });
-      if (candRes.size) {
-        setCandidates(function (prev) {
-          return prev.map(function (c) { var r = candRes.get(c); return r ? applyScore(c, r, data.criteria) : c; });
+      var pick = function (x) {
+        var r = byRef.get(x);
+        if (r) return r;
+        var k = x.id || x.vin;
+        return k ? byKey[k] : null;
+      };
+      setCandidates(function (prev) {
+        return prev.map(function (c) {
+          if (c.id) return c; // candidates have no id; leave saved-shaped rows alone
+          var r = pick(c);
+          return r ? applyScore(c, r, data.criteria) : c;
         });
-      }
-      if (Object.keys(byId).length) {
-        patchListings(function (list) {
-          return list.map(function (l) { return byId[l.id] ? applyScore(l, byId[l.id], data.criteria) : l; });
-        });
-      }
+      });
+      patchListings(function (list) {
+        return list.map(function (l) { var r = pick(l); return r ? applyScore(l, r, data.criteria) : l; });
+      });
       var ok = pairs.filter(function (p) { return p.result && p.result.ok; }).length;
       var failed = pairs.length - ok;
       var firstErr = "";
@@ -400,8 +412,10 @@ export default function App() {
     } catch (e) {
       console.error("Score:", e);
       scoreErr(e);
+    } finally {
+      setScoreBusy(false);
+      setScoringActive([]);
     }
-    setScoreBusy(false);
   }, [data, scoreBusy, patchListings]);
 
   // Pull dealer inventory via the proxy and reconcile. New VINs flow into the
@@ -645,7 +659,7 @@ export default function App() {
             filterProf={filterProf} setFilterProf={setFilterProf}
             doSync={doSync} syncing={syncing} syncMsg={syncMsg} lastSynced={data.lastSynced}
             keyStatus={keyStatus} setKeyStatus={setKeyStatus} autoScore={autoScore} setAutoScore={setAutoScore}
-            scoreBusy={scoreBusy} scoreMsg={scoreMsg} scoreItems={scoreItems}
+            scoreBusy={scoreBusy} scoreMsg={scoreMsg} scoreItems={scoreItems} scoringActive={scoringActive}
             scoreModel={scoreModel} setScoreModel={setScoreModel} />
         )}
       </main>
@@ -972,7 +986,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   candidates, approveCand, approveAll, dismissCand,
   importText, setImportText, doImport, importResult, setImportResult,
   filterProf, setFilterProf, doSync, syncing, syncMsg, lastSynced,
-  keyStatus, setKeyStatus, autoScore, setAutoScore, scoreBusy, scoreMsg, scoreItems, scoreModel, setScoreModel }) {
+  keyStatus, setKeyStatus, autoScore, setAutoScore, scoreBusy, scoreMsg, scoreItems, scoringActive, scoreModel, setScoreModel }) {
   var [showAdd, setShowAdd] = useState(false);
   var [showImport, setShowImport] = useState(false);
   var [filterRole, setFilterRole] = useState("all");
@@ -1016,7 +1030,8 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       onStatus: function (s) { updListing(l.id, { status: s }); },
       onDel: function () { delListing(l.id); },
       onChk: function () { markChk(l.id); }, stale: stale,
-      onScore: function () { scoreItems([], [l]); }, scoreBusy: scoreBusy, keyOk: keyStatus.valid };
+      onScore: function () { scoreItems([], [l]); }, scoreBusy: scoreBusy, keyOk: keyStatus.valid,
+      scoring: scoringActive.indexOf(l.id || l.vin) > -1 };
   }
 
   var totalShown = staleW.length + freshW.length + rejL.length + purchL.length;
@@ -1078,7 +1093,8 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
           </div>
           {candidates.map(function (c, i) {
             return (<CandCard key={i} cand={c} onApprove={function () { approveCand(c); }} onDismiss={function () { dismissCand(c); }} data={data}
-              onScore={function () { scoreItems([c], []); }} scoreBusy={scoreBusy} keyOk={keyStatus.valid} />);
+              onScore={function () { scoreItems([c], []); }} scoreBusy={scoreBusy} keyOk={keyStatus.valid}
+              scoring={scoringActive.indexOf(c.id || c.vin) > -1} />);
           })}
         </div>
       )}
@@ -1304,7 +1320,7 @@ function Thumb({ photo, link, alt }) {
   );
 }
 
-function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk }) {
+function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk, scoring }) {
   var prof = data.profiles.find(function (p) { return p.id === cand.profileId; });
   var scoreColor = cand.compositeScore >= 7 ? "#2d8659" : cand.compositeScore >= 5 ? "#d4a017" : "#c44";
   return (
@@ -1352,7 +1368,7 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk 
         <button style={Object.assign({}, S.priBtn, { padding: "6px 14px", fontSize: 12 })} onClick={onApprove}>✓ Add to Watchlist</button>
         {keyOk && onScore && (
           <button style={Object.assign({}, S.smBtn, { color: "#b89edd" }, scoreBusy ? { opacity: 0.6 } : {})} disabled={scoreBusy}
-            onClick={onScore}>{scoreBusy ? "Scoring…" : (cand.scoredAt ? "✨ Re-score" : "✨ Score")}</button>
+            onClick={onScore}>{scoring ? "Scoring…" : (cand.scoredAt ? "✨ Re-score" : "✨ Score")}</button>
         )}
         <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={onDismiss}>Skip</button>
       </div>
@@ -1408,7 +1424,7 @@ function LForm({ profiles, criteria, onSave, initial }) {
   );
 }
 
-function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, stale, onScore, scoreBusy, keyOk }) {
+function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, stale, onScore, scoreBusy, keyOk, scoring }) {
   var l = listing;
   var prof = data.profiles.find(function (p) { return p.id === l.profileId; });
   var profRole = prof ? prof.role : "?";
@@ -1502,7 +1518,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
       {l.status !== "purchased" && !showReject && !confirmDel && (
         <div style={{ display: "flex", gap: 4, marginTop: 8, borderTop: "1px solid #1e2028", paddingTop: 8, flexWrap: "wrap" }}>
           <button style={S.smBtn} onClick={onEdit}>Edit</button>
-          {keyOk && onScore && <button style={Object.assign({}, S.smBtn, { color: "#b89edd" }, scoreBusy ? { opacity: 0.6 } : {})} disabled={scoreBusy} onClick={onScore}>{scoreBusy ? "Scoring…" : (l.scoredAt ? "✨ Re-score" : "✨ Score")}</button>}
+          {keyOk && onScore && <button style={Object.assign({}, S.smBtn, { color: "#b89edd" }, scoreBusy ? { opacity: 0.6 } : {})} disabled={scoreBusy} onClick={onScore}>{scoring ? "Scoring…" : (l.scoredAt ? "✨ Re-score" : "✨ Score")}</button>}
           {l.status === "watch" && stale && <button style={Object.assign({}, S.smBtn, { color: "#2d8659" })} onClick={onChk}>Still avail</button>}
           {l.status === "watch" && <button style={Object.assign({}, S.smBtn, { color: "#c44" })} onClick={function () { setShowReject(true); }}>Reject</button>}
           {l.status === "watch" && <button style={Object.assign({}, S.smBtn, { color: "#d4a017" })} onClick={function () { onStatus("purchased"); }}>Bought</button>}
