@@ -81,7 +81,14 @@ export const SCORE_SYSTEM =
   "concrete rationale grounded in the listing data — plus a 1-2 sentence overall " +
   "summary. Be decisive and specific; cite the actual numbers (price, mileage, " +
   "year). 10 is excellent, 5 is average, 1 is poor. If a fact isn't in the " +
-  "listing data, say so rather than inventing it, and score conservatively.";
+  "listing data, say so rather than inventing it, and score conservatively. " +
+  "IMPORTANT — title status: a \"clean title not confirmed\" / Carfax-not-confirmed " +
+  "note means the data source did not verify the title; it is NOT evidence of a " +
+  "branded, salvage, or rebuilt title and must NOT be treated as a hard " +
+  "dealbreaker on its own. Treat unconfirmed title/history as something for the " +
+  "buyer to verify (score the condition criterion a bit conservatively), and " +
+  "reserve dealbreaker language for an actually-reported branded/salvage/rebuilt " +
+  "title or accident.";
 
 // Compact, deterministic listing serialization for the prompt — only fields that
 // are present. Includes Carfax / pricing extras when the listing carries them.
@@ -103,8 +110,12 @@ function listingFacts(l) {
   add("Color", l.color);
   add("Days on market", l.dom);
   add("Deal rating", l.dealRating);
-  if (l.carfax_1_owner != null) add("Carfax 1-owner", l.carfax_1_owner ? "yes" : "no");
-  if (l.carfax_clean_title != null) add("Carfax clean title", l.carfax_clean_title ? "yes" : "no");
+  // carfax_* false = "not confirmed by Carfax" (often just missing data), NOT a
+  // negative finding — phrase it so the model doesn't read false as branded/bad.
+  if (l.carfax_1_owner === true) f.push("Carfax: 1-owner confirmed");
+  else if (l.carfax_1_owner === false) f.push("Carfax: 1-owner not confirmed (ownership history unverified)");
+  if (l.carfax_clean_title === true) f.push("Carfax: clean title confirmed");
+  else if (l.carfax_clean_title === false) f.push("Carfax: clean title not confirmed (no/limited Carfax data — not evidence of a branded or salvage title)");
   add("Notes", l.notes);
   return f.join("\n");
 }
