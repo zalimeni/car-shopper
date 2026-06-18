@@ -438,10 +438,15 @@ export default function App() {
       var decorated = rec.candidates.map(function (c) {
         return Object.assign({}, c, { compositeScore: calcScore(c.scores, data.criteria), _candidate: true });
       });
+      // Don't resurface VINs the user explicitly skipped — they live in
+      // data.skipped until restored. (A skipped item can still be brought back
+      // manually from the Skipped view.)
+      var skippedVins = {};
+      (data.skipped || []).forEach(function (s) { if (s.vin) skippedVins[s.vin] = true; });
       setCandidates(function (prev) {
         var seen = {};
         prev.forEach(function (c) { if (c.vin) seen[c.vin] = true; });
-        return prev.concat(decorated.filter(function (c) { return !c.vin || !seen[c.vin]; }));
+        return prev.concat(decorated.filter(function (c) { return (!c.vin || !seen[c.vin]) && !(c.vin && skippedVins[c.vin]); }));
       });
       if (res.errors && res.errors.length) console.warn("Sync query errors:", res.errors);
       // Which existing listings had their price change this run — candidates for
@@ -546,9 +551,42 @@ export default function App() {
     setCandidates([]);
   }, [data, candidates, save]);
 
+  // Skip → move into the persisted skipped list (so it survives reload/sync and
+  // can be restored), strip transient flags.
   var dismissCand = useCallback(function (cand) {
     setCandidates(function (prev) { return prev.filter(function (c) { return c !== cand; }); });
-  }, []);
+    if (!data) return;
+    var entry = Object.assign({}, cand, { _candidate: undefined, _dupe: undefined, _existingPrice: undefined, _cheaper: undefined, skippedAt: today() });
+    save(Object.assign({}, data, { skipped: (data.skipped || []).concat([entry]) }));
+  }, [data, save]);
+
+  // Skipped → back into the review queue.
+  var restoreSkipped = useCallback(function (entry) {
+    if (!data) return;
+    setCandidates(function (prev) { return prev.concat([Object.assign({}, entry, { _candidate: true, skippedAt: undefined })]); });
+    save(Object.assign({}, data, { skipped: (data.skipped || []).filter(function (s) { return s !== entry; }) }));
+  }, [data, save]);
+
+  // Skipped → straight onto the watchlist (same as approving a candidate).
+  var watchSkipped = useCallback(function (entry) {
+    if (!data) return;
+    var nl = Object.assign({}, entry, {
+      id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
+      addedDate: today(), lastChecked: today(), status: "watch",
+      _candidate: undefined, _dupe: undefined, _existingPrice: undefined, _cheaper: undefined, skippedAt: undefined,
+    });
+    save(Object.assign({}, data, {
+      listings: dedupInsert(data.listings, nl),
+      skipped: (data.skipped || []).filter(function (s) { return s !== entry; }),
+    }));
+  }, [data, save]);
+
+  // Skipped → drop permanently (still won't resurface on sync since the VIN
+  // would just re-enter as a fresh candidate; this only clears the record).
+  var purgeSkipped = useCallback(function (entry) {
+    if (!data) return;
+    save(Object.assign({}, data, { skipped: (data.skipped || []).filter(function (s) { return s !== entry; }) }));
+  }, [data, save]);
 
   var doImport = useCallback(function () {
     if (!data || !importText.trim()) return;
@@ -655,6 +693,7 @@ export default function App() {
             edListing={edListing} setEdListing={setEdListing} markChk={markChk}
             candidates={candidates} approveCand={approveCand}
             approveAll={approveAll} dismissCand={dismissCand}
+            skipped={data.skipped || []} restoreSkipped={restoreSkipped} watchSkipped={watchSkipped} purgeSkipped={purgeSkipped}
             importText={importText} setImportText={setImportText} doImport={doImport} importResult={importResult} setImportResult={setImportResult}
             filterProf={filterProf} setFilterProf={setFilterProf}
             doSync={doSync} syncing={syncing} syncMsg={syncMsg} lastSynced={data.lastSynced}
@@ -984,6 +1023,7 @@ function QueriesTab({ queries, gen }) {
 // ── Results ──
 function ResultsTab({ data, addListing, updListing, delListing, edListing, setEdListing, markChk,
   candidates, approveCand, approveAll, dismissCand,
+  skipped, restoreSkipped, watchSkipped, purgeSkipped,
   importText, setImportText, doImport, importResult, setImportResult,
   filterProf, setFilterProf, doSync, syncing, syncMsg, lastSynced,
   keyStatus, setKeyStatus, autoScore, setAutoScore, scoreBusy, scoreMsg, scoreItems, scoringActive, scoreModel, setScoreModel }) {
@@ -1022,6 +1062,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   var activeProfiles = data.profiles.filter(function (p) { return p.active; });
 
   var [showRej, setShowRej] = useState(false);
+  var [showSkipped, setShowSkipped] = useState(false);
 
   function cp(l, stale) {
     return { key: l.id, listing: l, data: data, editing: edListing === l.id,
@@ -1095,6 +1136,38 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
             return (<CandCard key={i} cand={c} onApprove={function () { approveCand(c); }} onDismiss={function () { dismissCand(c); }} data={data}
               onScore={function () { scoreItems([c], []); }} scoreBusy={scoreBusy} keyOk={keyStatus.valid}
               scoring={scoringActive.indexOf(c.id || c.vin) > -1} />);
+          })}
+        </div>
+      )}
+
+      {/* Skipped candidates — restorable */}
+      {skipped.length > 0 && (
+        <div style={S.card}>
+          <h3 style={Object.assign({}, S.cardH, { cursor: "pointer", margin: 0, display: "flex", alignItems: "center", gap: 6 })}
+            onClick={function () { setShowSkipped(!showSkipped); }}>
+            {showSkipped ? "▾" : "▸"} Skipped ({skipped.length})
+          </h3>
+          {showSkipped && skipped.map(function (s, i) {
+            return (
+              <div key={(s.vin || "") + i} style={{ borderTop: "1px solid #1e2028", paddingTop: 8, marginTop: 8 }}>
+                <div style={{ fontSize: 13, color: "#c8c8d0" }}>
+                  {s.year} {s.vehicle}{s.trim ? " " + s.trim : ""}
+                  {s.compositeScore > 0 && <span style={{ marginLeft: 8, fontWeight: 700, color: s.compositeScore >= 7 ? "#2d8659" : s.compositeScore >= 5 ? "#d4a017" : "#c44" }}>{s.compositeScore}</span>}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, color: "#8a8a96", margin: "2px 0 6px" }}>
+                  <span>${(s.price || 0).toLocaleString()}</span>
+                  <span>{(s.mileage || 0).toLocaleString()} mi</span>
+                  {s.dealer && <span>{s.dealer}</span>}
+                  {s.location && <span>{s.location}, {s.state}</span>}
+                </div>
+                {s.aiSummary && <div style={{ fontSize: 12, color: "#9a9aa6", fontStyle: "italic", marginBottom: 6 }}>{s.aiSummary}</div>}
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <button style={Object.assign({}, S.smBtn, { color: "#6b9edd" })} onClick={function () { restoreSkipped(s); }}>↩ Restore to queue</button>
+                  <button style={Object.assign({}, S.smBtn, { color: "#2d8659" })} onClick={function () { watchSkipped(s); }}>+ Watchlist</button>
+                  <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { purgeSkipped(s); }}>Remove</button>
+                </div>
+              </div>
+            );
           })}
         </div>
       )}
