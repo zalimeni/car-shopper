@@ -50,7 +50,6 @@ var DEFAULT_CRITERIA = [
   { id: "deal", name: "Deal rating", weight: 10 },
 ];
 
-var SOURCES = ["CarGurus", "Cars.com", "AutoTempest", "Carvana", "CarMax", "Edmunds", "TrueCar", "FB Marketplace"];
 var HUBS = [
   { n: "Boston MA", z: "02101", lat: 42.3601, lon: -71.0589 },
   { n: "Durham NC", z: "27701", lat: 35.994, lon: -78.8986 },
@@ -228,7 +227,7 @@ function migrate(data) {
 }
 
 // ── Tabs ──
-var TABS = ["Dashboard", "Profiles", "Criteria", "Queries", "Results"];
+var TABS = ["Dashboard", "Profiles", "Criteria", "Results"];
 
 // Session-scoped persistence for volatile UI state, so a mobile reload / tab
 // discard on app-switch doesn't wipe in-progress results (candidates, raw
@@ -246,7 +245,6 @@ export default function App() {
   var [tab, setTab] = useState(function () { return ssGet("cs-tab", "Dashboard"); });
   var [saving, setSaving] = useState(false);
   var [edListing, setEdListing] = useState(null);
-  var [queries, setQueries] = useState([]);
   var [candidates, setCandidates] = useState(function () { return ssGet("cs-candidates", []); });
   var [importText, setImportText] = useState("");
   var [importResult, setImportResult] = useState(null);
@@ -503,24 +501,6 @@ export default function App() {
     setRawBusy(false);
   }, [data, rawBusy]);
 
-  var genQueries = useCallback(function () {
-    if (!data) return;
-    var qs = [];
-    data.profiles.filter(function (p) { return p.active; }).forEach(function (pr) {
-      var p = pr.params;
-      var yr = p.years.replace(/\s/g, "").split(",")[0].split("-")[0];
-      HUBS.forEach(function (h) {
-        SOURCES.forEach(function (src) {
-          qs.push({ pn: pr.name, hub: h.n, src: src,
-            query: "used " + p.make + " " + p.model + " " + yr + " near " + h.n + " under " + p.maxPrice,
-            note: p.years + " " + p.trims + ", max $" + p.maxPrice.toLocaleString() + ", max " + p.maxMiles.toLocaleString() + " mi" });
-        });
-      });
-    });
-    setQueries(qs);
-    setTab("Queries");
-  }, [data, setTab]);
-
   var viewProfile = useCallback(function (profileId) {
     setFilterProf(profileId);
     setTab("Results");
@@ -683,11 +663,10 @@ export default function App() {
       <main>
         {tab === "Dashboard" && (
           <DashView data={data} watch={watch} rej={rej} bought={bought} suvW={suvW} comW={comW}
-            staleN={staleN} genQueries={genQueries} setTab={setTab} markAllChk={markAllChk} viewProfile={viewProfile} />
+            staleN={staleN} setTab={setTab} markAllChk={markAllChk} viewProfile={viewProfile} />
         )}
         {tab === "Profiles" && <ProfilesTab data={data} save={save} />}
         {tab === "Criteria" && <CriteriaTab data={data} saveRecalc={saveRecalc} />}
-        {tab === "Queries" && <QueriesTab queries={queries} gen={genQueries} />}
         {tab === "Results" && (
           <ResultsTab data={data} addListing={addListing} updListing={updListing} delListing={delListing}
             edListing={edListing} setEdListing={setEdListing} markChk={markChk}
@@ -744,7 +723,7 @@ export default function App() {
 }
 
 // ── Dashboard ──
-function DashView({ data, watch, rej, bought, suvW, comW, staleN, genQueries, setTab, markAllChk, viewProfile }) {
+function DashView({ data, watch, rej, bought, suvW, comW, staleN, setTab, markAllChk, viewProfile }) {
   var act = data.profiles.filter(function (p) { return p.active; });
   var topS = suvW.slice().sort(function (a, b) { return (b.compositeScore || 0) - (a.compositeScore || 0); }).slice(0, 2);
   var topC = comW.slice().sort(function (a, b) { return (b.compositeScore || 0) - (a.compositeScore || 0); }).slice(0, 2);
@@ -983,39 +962,6 @@ function CriteriaTab({ data, saveRecalc }) {
         })}
         <p style={S.help}>Auto-recalculates all scores after 0.6s.</p>
       </div>
-    </div>
-  );
-}
-
-// ── Queries ──
-function QueriesTab({ queries, gen }) {
-  useEffect(function () { if (!queries.length) gen(); }, [queries.length, gen]);
-  var grp = {};
-  queries.forEach(function (q) { if (!grp[q.pn]) grp[q.pn] = []; grp[q.pn].push(q); });
-  return (
-    <div>
-      <div style={S.secH}><h2 style={S.secT}>Search Queries</h2><button style={S.secBtn} onClick={gen}>Regen</button></div>
-      <div style={S.card}>
-        <p style={S.help}>Copy these queries to search each source manually, then import results as JSON on the Results tab.</p>
-        <p style={S.help}>Sources: {SOURCES.join(", ")}</p>
-      </div>
-      {Object.entries(grp).map(function (entry) {
-        return (
-          <div key={entry[0]} style={S.card}>
-            <h3 style={S.cardH}>{entry[0]}</h3>
-            {entry[1].map(function (q, i) {
-              return (
-                <div key={i} style={{ padding: "6px 0", borderBottom: "1px solid #1e2028" }}>
-                  <div style={{ display: "flex", gap: 6, marginBottom: 2 }}>
-                    <span style={S.srcB}>{q.src}</span><span style={S.hubB}>{q.hub}</span>
-                  </div>
-                  <div style={{ fontSize: 11, color: "#6b6b76" }}>{q.note}</div>
-                </div>
-              );
-            })}
-          </div>
-        );
-      })}
     </div>
   );
 }
@@ -1381,6 +1327,14 @@ function AiBox({ listing, criteria }) {
   );
 }
 
+// Non-scoring title note. carfax_clean_title true = confirmed clean; false =
+// just "not stated on the dealer site" (verify), NOT a branded title.
+function TitleNote({ listing }) {
+  if (listing.carfax_clean_title === true) return (<span style={{ fontSize: 11, color: "#2d8659" }}>✓ Carfax clean title</span>);
+  if (listing.carfax_clean_title === false) return (<span style={{ fontSize: 11, color: "#8a8a96" }}>ⓘ Title not Carfax-confirmed — verify</span>);
+  return null;
+}
+
 function Thumb({ photo, link, alt }) {
   if (!photo) return null;
   var href = link || photo;
@@ -1419,6 +1373,7 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
         {cand.dealer && <span>{cand.dealer} ({cand.dealerType || "?"})</span>}
         {cand.location && <span>{cand.location}, {cand.state} {isSalt(cand.state) ? "🧂" : ""}</span>}
         {cand.dealRating && <span>Deal: {cand.dealRating}</span>}
+        <TitleNote listing={cand} />
       </div>
       {cand.notes && <div style={{ fontSize: 12, color: "#6b6b76", fontStyle: "italic", marginBottom: 6 }}>{cand.notes}</div>}
       {/* Listing link */}
@@ -1533,6 +1488,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
         <span>{l.location}, {l.state} {salt ? "🧂" : ""}</span>
         {l.dealRating && <span>Deal: {l.dealRating}</span>}
         {l.vin && <span style={{ fontFamily: "monospace", fontSize: 11 }}>VIN: …{l.vin.slice(-6)}</span>}
+        <TitleNote listing={l} />
       </div>
       {/* Listing link - prominent button style */}
       {(function () {
@@ -1648,8 +1604,6 @@ var S = {
   lbl: { fontSize: 11, color: "#6b6b76", textTransform: "uppercase", letterSpacing: "0.04em" },
   inp: { background: "#1a1c22", border: "1px solid #2a2d38", borderRadius: 5, color: "#e4e4e7", padding: "7px 10px", fontSize: 13, fontFamily: "inherit" },
   ta: { background: "#1a1c22", border: "1px solid #2a2d38", borderRadius: 5, color: "#e4e4e7", padding: "7px 10px", fontSize: 13, fontFamily: "inherit", resize: "vertical" },
-  srcB: { fontSize: 10, fontWeight: 600, background: "#1a3c5c", color: "#6b9edd", padding: "2px 6px", borderRadius: 3 },
-  hubB: { fontSize: 10, fontWeight: 500, background: "#2a1c3c", color: "#b89edd", padding: "2px 6px", borderRadius: 3 },
   trimB: { fontSize: 11, background: "#1e2028", color: "#8a8a96", padding: "2px 6px", borderRadius: 3, marginLeft: 6 },
   saltW: { fontSize: 12, color: "#d4a017", background: "#2a2210", padding: "6px 10px", borderRadius: 4 },
   budL: { fontSize: 11, color: "#6b6b76", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 },

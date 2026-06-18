@@ -105,8 +105,8 @@ export default async function handler(req, res) {
         const variants = [
           { relaxed: "drop price+miles", drop: ["price_range", "miles_range"] },
           { relaxed: "drop price+miles+powertrain (keep model)", drop: ["price_range", "miles_range", "powertrain_type"] },
-          { relaxed: "drop price+miles+year+powertrain", drop: ["price_range", "miles_range", "year_range", "powertrain_type"] },
-          { relaxed: "make only (drop model+powertrain)", drop: ["price_range", "miles_range", "year_range", "model", "powertrain_type"] },
+          { relaxed: "drop price+miles+year+powertrain", drop: ["price_range", "miles_range", "year", "powertrain_type"] },
+          { relaxed: "make only (drop model+powertrain)", drop: ["price_range", "miles_range", "year", "model", "powertrain_type"] },
         ];
         debug.diagnosis = [];
         for (const v of variants) {
@@ -196,10 +196,10 @@ export function buildUrl(apiKey, profile, hub) {
   if (p.make) q.set("make", p.make);
   if (p.model) q.set("model", p.model);
   if (p.powertrain) q.set("powertrain_type", mapPowertrain(p.powertrain));
-  // year_range=min-max (a non-contiguous profile like "2016, 2018" over-fetches
-  // the gap year; harmless — candidates are reviewed before they hit the list).
+  // Exact years (CSV) rather than a min-max range, so a non-contiguous profile
+  // like "2016, 2018" excludes the gap year (2017) instead of over-fetching it.
   const years = parseYears(p.years).split(",").filter(Boolean);
-  if (years.length) q.set("year_range", years[0] + "-" + years[years.length - 1]);
+  if (years.length) q.set("year", years.join(","));
   if (p.maxPrice) q.set("price_range", "0-" + Math.round(p.maxPrice));
   if (p.maxMiles) q.set("miles_range", "0-" + Math.round(p.maxMiles));
   // Prefer lat/long (independent of MarketCheck's ZIP index — some valid ZIPs
