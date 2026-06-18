@@ -267,6 +267,14 @@ export function normalize(row, profileId) {
     link: row.vdp_url || "",
     photo: pickPhoto(row),
     dom: row.dom != null ? Number(row.dom) : null,
+    // Extras that feed AI scoring (and persist on the listing). MarketCheck puts
+    // these at the row top level; null when absent so scoring can tell "unknown"
+    // from a real false/0. msrp on used inventory often just echoes the asking
+    // price, so the scoring prompt only surfaces it when it exceeds price.
+    carfax_1_owner: typeof row.carfax_1_owner === "boolean" ? row.carfax_1_owner : null,
+    carfax_clean_title: typeof row.carfax_clean_title === "boolean" ? row.carfax_clean_title : null,
+    price_change_percent: row.price_change_percent != null ? Number(row.price_change_percent) : null,
+    msrp: Number(row.msrp) || 0,
     profileId: profileId,
     source: "marketcheck",
   };

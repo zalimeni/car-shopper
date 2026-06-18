@@ -14,9 +14,30 @@
       "dom": 18,
       "seller_type": "dealer",
       "inventory_type": "used",
-      "dealer": { "id": 1074596, "name": "Courtesy Mitsubishi", "dealer_type": "franchise", "city": "Attleboro", "state": "MA", "zip": "02703" },
-      "build": { "year": 2021, "make": "Toyota", "model": "RAV4", "trim": "LE", "version": "Hybrid LE AWD", "body_type": "SUV", "drivetrain": "4WD", "fuel_type": "Unleaded", "powertrain_type": "HEV" },
-      "dist": 35.74
+      "dealer": {
+        "id": 1074596,
+        "name": "Courtesy Mitsubishi",
+        "dealer_type": "franchise",
+        "city": "Attleboro",
+        "state": "MA",
+        "zip": "02703"
+      },
+      "build": {
+        "year": 2021,
+        "make": "Toyota",
+        "model": "RAV4",
+        "trim": "LE",
+        "version": "Hybrid LE AWD",
+        "body_type": "SUV",
+        "drivetrain": "4WD",
+        "fuel_type": "Unleaded",
+        "powertrain_type": "HEV"
+      },
+      "dist": 35.74,
+      "carfax_1_owner": true,
+      "carfax_clean_title": false,
+      "price_change_percent": 0,
+      "msrp": 23997
     },
     {
       "id": "2T3M6RFV4MW014752-4fcf69e3-8936",
@@ -30,8 +51,25 @@
       "dom": 128,
       "seller_type": "dealer",
       "inventory_type": "used",
-      "dealer": { "id": 1086804, "name": "Maine Auto Mall", "dealer_type": "independent", "city": "Biddeford", "state": "ME", "zip": "04005" },
-      "build": { "year": 2021, "make": "Toyota", "model": "RAV4", "trim": "LE", "version": "Hybrid LE AWD", "body_type": "SUV", "drivetrain": "4WD", "fuel_type": "Unleaded", "powertrain_type": "HEV" },
+      "dealer": {
+        "id": 1086804,
+        "name": "Maine Auto Mall",
+        "dealer_type": "independent",
+        "city": "Biddeford",
+        "state": "ME",
+        "zip": "04005"
+      },
+      "build": {
+        "year": 2021,
+        "make": "Toyota",
+        "model": "RAV4",
+        "trim": "LE",
+        "version": "Hybrid LE AWD",
+        "body_type": "SUV",
+        "drivetrain": "4WD",
+        "fuel_type": "Unleaded",
+        "powertrain_type": "HEV"
+      },
       "dist": 81.26
     }
   ]
