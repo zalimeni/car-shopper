@@ -109,8 +109,9 @@ A later phase adds unattended refresh so new matches arrive without opening the
 app. This is the piece that *does* need elevated server credentials:
 
 - Vercel Cron → `POST /api/sync` (shared `CRON_SECRET` so only cron can call it).
-- The function loads/writes the user's row with `SUPABASE_SERVICE_ROLE_KEY`
-  (server-side only) — because cron has no user session — scoped to `SYNC_USER_ID`.
+- The function loads/writes the user's row with the Supabase Secret key
+  (`SUPABASE_SECRET_KEY`, server-side only) — because cron has no user session —
+  scoped to `SYNC_USER_ID`.
 - On *newly discovered* candidates (or notable price drops), send an email
   (e.g. Resend/Postmark) summarizing the matches + links.
 - The reconcile logic from §6 is shared between the client (sync-on-open) and

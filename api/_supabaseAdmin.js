@@ -1,12 +1,15 @@
-// Service-role Supabase client for the server-only Anthropic-key vault.
+// Server-only Supabase admin client for the Anthropic-key vault.
 //
 // public.user_anthropic_keys has RLS enabled with NO client policies, so anon/
-// authenticated callers can't touch it. The server reaches it through the
-// service-role key (which bypasses RLS) — used only after authorize() has
-// confirmed the caller, and always scoped to that caller's own user_id.
+// authenticated callers can't touch it. The server reaches it through a
+// full-access key that bypasses RLS — the new-style Supabase Secret key
+// (sb_secret_…), or the legacy service_role JWT as a fallback. Used only after
+// authorize() has confirmed the caller, and always scoped to that caller's own
+// user_id.
 //
-// Returns null when SUPABASE_SERVICE_ROLE_KEY isn't configured, so endpoints can
-// degrade to a clear "not configured" error rather than crashing.
+// Reads SUPABASE_SECRET_KEY (preferred), falling back to the older
+// SUPABASE_SERVICE_ROLE_KEY name. Returns null when neither is configured, so
+// endpoints degrade to a clear "not configured" error rather than crashing.
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -16,7 +19,7 @@ const SUPABASE_URL =
   "https://dispkandrvmycwccavvl.supabase.co";
 
 export function adminClient() {
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const key = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!key) return null;
   return createClient(SUPABASE_URL, key, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -55,7 +58,7 @@ export async function getKeyRow(userId) {
 
 export async function upsertKey(userId, ciphertext, last4) {
   const db = adminClient();
-  if (!db) return { error: "Service role key is not configured on the server" };
+  if (!db) return { error: "Supabase secret key is not configured on the server" };
   const { error } = await db.from(TABLE).upsert({
     user_id: userId,
     ciphertext: ciphertext,
@@ -76,7 +79,7 @@ export async function setKeyValid(userId, valid) {
 
 export async function deleteKey(userId) {
   const db = adminClient();
-  if (!db) return { error: "Service role key is not configured on the server" };
+  if (!db) return { error: "Supabase secret key is not configured on the server" };
   const { error } = await db.from(TABLE).delete().eq("user_id", userId);
   return { error: error ? error.message : null };
 }
