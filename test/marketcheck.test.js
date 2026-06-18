@@ -89,6 +89,10 @@ describe("normalize", () => {
       link: "https://www.courtesymitsubishima.com/auto/used-2021-toyota-rav4-hybrid-le-attleboro-ma/121137914/",
       photo: "",
       dom: 18,
+      carfax_1_owner: true,
+      carfax_clean_title: false,
+      price_change_percent: 0,
+      msrp: 23997,
       profileId: "rav4-hybrid",
       source: "marketcheck",
     });

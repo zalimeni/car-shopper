@@ -73,7 +73,9 @@ function listingFacts(l) {
   add("Vehicle", l.vehicle);
   add("Trim", l.trim);
   add("Price", l.price != null ? "$" + Number(l.price).toLocaleString() : null);
-  add("MSRP", l.msrp != null && l.msrp !== 0 ? "$" + Number(l.msrp).toLocaleString() : null);
+  // Only surface MSRP when it's a real original-sticker signal (> asking price);
+  // on used inventory MarketCheck's msrp often just echoes price.
+  add("MSRP", l.msrp != null && l.price != null && Number(l.msrp) > Number(l.price) ? "$" + Number(l.msrp).toLocaleString() : null);
   add("Price change since first seen", l.price_change_percent != null ? l.price_change_percent + "%" : null);
   add("Mileage", l.mileage != null ? Number(l.mileage).toLocaleString() + " mi" : null);
   add("Dealer", l.dealer);
