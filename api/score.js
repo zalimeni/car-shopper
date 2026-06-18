@@ -16,7 +16,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { authorize } from "./_auth.js";
 import { decrypt, cryptoReady } from "./_crypto.js";
 import { getKeyRow, setKeyValid } from "./_supabaseAdmin.js";
-import { SCORE_MODEL, SCORE_SYSTEM, buildScoreSchema, buildUserPrompt, coerceResult } from "./_scoring.js";
+import { resolveScoreModel, SCORE_SYSTEM, buildScoreSchema, buildUserPrompt, coerceResult } from "./_scoring.js";
 
 const MAX_LISTINGS = 12; // client chunks; this bounds a single request's fan-out
 
@@ -51,12 +51,13 @@ export default async function handler(req, res) {
 
   const client = new Anthropic({ apiKey: apiKey });
   const schema = buildScoreSchema(criteria);
+  const model = resolveScoreModel(body.model); // UI choice, allowlisted; falls back to default
   const ctx = { criteria: criteria, profile: body.profile, globalReqs: body.globalReqs };
 
   let authFailed = false;
   const results = await Promise.all(listings.map(async function (listing, index) {
     try {
-      const parsed = await scoreOne(client, listing, ctx, schema);
+      const parsed = await scoreOne(client, model, listing, ctx, schema);
       if (!parsed) return { index: index, vin: listing.vin || "", ok: false, error: "Model output was incomplete or refused" };
       const coerced = coerceResult(parsed, criteria);
       if (!coerced) return { index: index, vin: listing.vin || "", ok: false, error: "Model output missing required criteria" };
@@ -76,9 +77,9 @@ export default async function handler(req, res) {
   res.status(200).json({ results: results });
 }
 
-async function scoreOne(client, listing, ctx, schema) {
+async function scoreOne(client, model, listing, ctx, schema) {
   const resp = await client.messages.create({
-    model: SCORE_MODEL,
+    model: model,
     // Generous headroom: adaptive thinking burns output tokens before the JSON
     // is emitted, so a tight cap makes every call stop_reason:"max_tokens".
     // Still well under the ~16k non-streaming guidance.

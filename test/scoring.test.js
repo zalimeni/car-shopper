@@ -1,11 +1,27 @@
 import { describe, it, expect } from "vitest";
-import { buildScoreSchema, buildUserPrompt, coerceResult } from "../api/_scoring.js";
+import { buildScoreSchema, buildUserPrompt, coerceResult, resolveScoreModel, SCORE_MODELS } from "../api/_scoring.js";
 
 const CRIT = [
   { id: "price", name: "Price vs. budget", weight: 25 },
   { id: "mileage", name: "Mileage vs. age", weight: 15 },
   { id: "deal", name: "Deal rating", weight: 10 },
 ];
+
+describe("resolveScoreModel", () => {
+  it("accepts an allowlisted model", () => {
+    expect(resolveScoreModel("claude-opus-4-8")).toBe("claude-opus-4-8");
+    expect(resolveScoreModel("claude-haiku-4-5")).toBe("claude-haiku-4-5");
+  });
+  it("falls back to the Sonnet default for anything not allowlisted", () => {
+    expect(resolveScoreModel("gpt-4")).toBe("claude-sonnet-4-6");
+    expect(resolveScoreModel("")).toBe("claude-sonnet-4-6");
+    expect(resolveScoreModel(undefined)).toBe("claude-sonnet-4-6");
+    expect(resolveScoreModel("constructor")).toBe("claude-sonnet-4-6"); // not a real entry despite being on Object.prototype
+  });
+  it("default is Sonnet and is itself allowlisted", () => {
+    expect(SCORE_MODELS["claude-sonnet-4-6"]).toBeTruthy();
+  });
+});
 
 describe("buildScoreSchema", () => {
   it("requires every criterion id and constrains scores to 1-10", () => {
