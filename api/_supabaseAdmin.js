@@ -1,15 +1,13 @@
 // Server-only Supabase admin client for the Anthropic-key vault.
 //
 // public.user_anthropic_keys has RLS enabled with NO client policies, so anon/
-// authenticated callers can't touch it. The server reaches it through a
-// full-access key that bypasses RLS — the new-style Supabase Secret key
-// (sb_secret_…), or the legacy service_role JWT as a fallback. Used only after
+// authenticated callers can't touch it. The server reaches it through the
+// Supabase Secret key (sb_secret_…), which bypasses RLS — used only after
 // authorize() has confirmed the caller, and always scoped to that caller's own
 // user_id.
 //
-// Reads SUPABASE_SECRET_KEY (preferred), falling back to the older
-// SUPABASE_SERVICE_ROLE_KEY name. Returns null when neither is configured, so
-// endpoints degrade to a clear "not configured" error rather than crashing.
+// Reads SUPABASE_SECRET_KEY. Returns null when it isn't configured, so endpoints
+// degrade to a clear "not configured" error rather than crashing.
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -19,7 +17,7 @@ const SUPABASE_URL =
   "https://dispkandrvmycwccavvl.supabase.co";
 
 export function adminClient() {
-  const key = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const key = process.env.SUPABASE_SECRET_KEY;
   if (!key) return null;
   return createClient(SUPABASE_URL, key, {
     auth: { persistSession: false, autoRefreshToken: false },
