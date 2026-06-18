@@ -73,8 +73,12 @@ export default async function handler(req, res) {
     return;
   }
 
+  // Anthropic validation passed by here — any failure now is the server's vault
+  // write. Name Supabase explicitly so it isn't mistaken for an Anthropic-key
+  // problem (e.g. Supabase's own "Invalid API key" means SUPABASE_SECRET_KEY is
+  // wrong, not the key the user just entered).
   const r = await upsertKey(userId, encrypt(key), key.slice(-4));
-  if (r.error) { res.status(500).json({ error: r.error }); return; }
+  if (r.error) { res.status(502).json({ error: "Your Anthropic key is valid, but the server couldn't save it to the Supabase vault: " + r.error + " (check SUPABASE_SECRET_KEY)" }); return; }
   res.status(200).json({ ok: true, configured: true, valid: true, last4: key.slice(-4) });
 }
 
