@@ -8,8 +8,8 @@ const fixture = JSON.parse(
 );
 
 // Golden test on the request we send. This guards the exact bugs that broke the
-// live sync: wrong host, year as a comma list instead of year_range, and an
-// invalid seller_type param.
+// live sync: wrong host, an invalid seller_type param, and year filtering (we
+// send exact years as a CSV so non-contiguous profiles exclude gap years).
 describe("buildUrl", () => {
   const profile = {
     id: "rav4-hybrid",
@@ -28,12 +28,18 @@ describe("buildUrl", () => {
     expect(params.get("make")).toBe("Toyota");
     expect(params.get("model")).toBe("RAV4");
     expect(params.get("powertrain_type")).toBe("HEV"); // "Hybrid" -> MarketCheck code
-    expect(params.get("year_range")).toBe("2019-2022");
+    expect(params.get("year")).toBe("2019,2020,2021,2022");
+    expect(params.has("year_range")).toBe(false);
     expect(params.get("price_range")).toBe("0-25000");
     expect(params.get("miles_range")).toBe("0-90000");
     expect(params.get("zip")).toBe("02101");
     expect(params.get("radius")).toBe("100");
     expect(params.get("rows")).toBe("50");
+  });
+  it("sends exact years for a non-contiguous profile, excluding the gap year", () => {
+    const u = buildUrl("K", { id: "volt", params: { make: "Chevrolet", model: "Volt", years: "2016, 2018" } }, { z: "02101" });
+    const p = new URLSearchParams(u.split("?")[1]);
+    expect(p.get("year")).toBe("2016,2018"); // not 2016-2018, which would include 2017
   });
   it("omits powertrain_type when the profile has none", () => {
     const u = buildUrl("K", { id: "x", params: { make: "Chevrolet", model: "Bolt EV", years: "2021-2023" } }, { z: "27701" });
