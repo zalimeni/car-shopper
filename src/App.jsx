@@ -378,7 +378,15 @@ export default function App() {
         });
       }
       var ok = pairs.filter(function (p) { return p.result && p.result.ok; }).length;
-      setScoreMsg({ ok: true, text: "Scored " + ok + "/" + pairs.length + (ok < pairs.length ? " (" + (pairs.length - ok) + " failed)" : "") });
+      var failed = pairs.length - ok;
+      var firstErr = "";
+      for (var fi = 0; fi < pairs.length; fi++) {
+        if (!pairs[fi].result || !pairs[fi].result.ok) { firstErr = (pairs[fi].result && pairs[fi].result.error) || ""; break; }
+      }
+      setScoreMsg({
+        ok: failed === 0,
+        text: "Scored " + ok + "/" + pairs.length + (failed ? " (" + failed + " failed" + (firstErr ? ": " + firstErr : "") + ")" : ""),
+      });
     } catch (e) {
       console.error("Score:", e);
       scoreErr(e);

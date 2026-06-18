@@ -79,7 +79,10 @@ export default async function handler(req, res) {
 async function scoreOne(client, listing, ctx, schema) {
   const resp = await client.messages.create({
     model: SCORE_MODEL,
-    max_tokens: 2500,
+    // Generous headroom: adaptive thinking burns output tokens before the JSON
+    // is emitted, so a tight cap makes every call stop_reason:"max_tokens".
+    // Still well under the ~16k non-streaming guidance.
+    max_tokens: 8000,
     thinking: { type: "adaptive" },
     system: SCORE_SYSTEM,
     messages: [{ role: "user", content: buildUserPrompt(listing, ctx) }],
