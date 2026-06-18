@@ -78,13 +78,13 @@ export default async function handler(req, res) {
 }
 
 async function scoreOne(client, model, listing, ctx, schema) {
+  // No extended thinking: this is a bounded, schema-constrained rubric score, so
+  // thinking mostly adds latency (20-40s/call) — which, fanned out per request,
+  // crowds the function timeout and makes the UI look stuck. The JSON output is
+  // small, so a modest cap is plenty.
   const resp = await client.messages.create({
     model: model,
-    // Generous headroom: adaptive thinking burns output tokens before the JSON
-    // is emitted, so a tight cap makes every call stop_reason:"max_tokens".
-    // Still well under the ~16k non-streaming guidance.
-    max_tokens: 8000,
-    thinking: { type: "adaptive" },
+    max_tokens: 3000,
     system: SCORE_SYSTEM,
     messages: [{ role: "user", content: buildUserPrompt(listing, ctx) }],
     output_config: { format: { type: "json_schema", schema: schema } },

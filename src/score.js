@@ -8,7 +8,8 @@
 
 import { supabase } from "./supabaseClient";
 
-const CHUNK = 6; // listings per /api/score request; bounds request time/size
+const CHUNK = 4; // listings per /api/score request; bounds request time/size
+const REQUEST_TIMEOUT_MS = 75000; // > server function budget, so a real hang surfaces
 
 // Scoring model choices shown in the UI. Must stay in sync with the server-side
 // allowlist (api/_scoring.js SCORE_MODELS); the server ignores anything else.
@@ -75,11 +76,22 @@ export async function scoreSet(items, ctx, onProgress) {
     const profile = ctx.profileById ? ctx.profileById[pid] : null;
     for (let i = 0; i < group.length; i += CHUNK) {
       const chunk = group.slice(i, i + CHUNK);
-      const res = await fetch("/api/score", {
-        method: "POST",
-        headers: headers,
-        body: JSON.stringify({ listings: chunk, criteria: ctx.criteria, profile: profile, globalReqs: ctx.globalReqs, model: ctx.model }),
-      });
+      const controller = new AbortController();
+      const timer = setTimeout(function () { controller.abort(); }, REQUEST_TIMEOUT_MS);
+      let res;
+      try {
+        res = await fetch("/api/score", {
+          method: "POST",
+          headers: headers,
+          body: JSON.stringify({ listings: chunk, criteria: ctx.criteria, profile: profile, globalReqs: ctx.globalReqs, model: ctx.model }),
+          signal: controller.signal,
+        });
+      } catch (e) {
+        if (e && e.name === "AbortError") throw new Error("Scoring timed out — try again, fewer listings, or the Haiku model.");
+        throw e;
+      } finally {
+        clearTimeout(timer);
+      }
       const j = await res.json().catch(function () { return {}; });
       if (res.status === 401 || (j && (j.error === "key_rejected" || j.error === "no_key" || j.error === "key_unreadable"))) {
         const err = new Error(j.message || j.error || "Scoring isn't authorized");
