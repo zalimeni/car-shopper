@@ -10,6 +10,15 @@ import { supabase } from "./supabaseClient";
 
 const CHUNK = 6; // listings per /api/score request; bounds request time/size
 
+// Scoring model choices shown in the UI. Must stay in sync with the server-side
+// allowlist (api/_scoring.js SCORE_MODELS); the server ignores anything else.
+export var SCORE_MODEL_OPTIONS = [
+  { id: "claude-sonnet-4-6", label: "Sonnet — balanced (recommended)" },
+  { id: "claude-opus-4-8", label: "Opus — most nuanced" },
+  { id: "claude-haiku-4-5", label: "Haiku — fastest / cheapest" },
+];
+export var DEFAULT_SCORE_MODEL = "claude-sonnet-4-6";
+
 async function authHeaders() {
   const { data } = await supabase.auth.getSession();
   const token = data && data.session ? data.session.access_token : "";
@@ -69,7 +78,7 @@ export async function scoreSet(items, ctx, onProgress) {
       const res = await fetch("/api/score", {
         method: "POST",
         headers: headers,
-        body: JSON.stringify({ listings: chunk, criteria: ctx.criteria, profile: profile, globalReqs: ctx.globalReqs }),
+        body: JSON.stringify({ listings: chunk, criteria: ctx.criteria, profile: profile, globalReqs: ctx.globalReqs, model: ctx.model }),
       });
       const j = await res.json().catch(function () { return {}; });
       if (res.status === 401 || (j && (j.error === "key_rejected" || j.error === "no_key" || j.error === "key_unreadable"))) {

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import storage from "./storage";
 import { signOut } from "./Auth";
 import { fetchListings, fetchRawSample, reconcile } from "./sync";
-import { getKeyStatus, saveKey, removeKey, scoreSet } from "./score";
+import { getKeyStatus, saveKey, removeKey, scoreSet, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
 
 var AUTO_SYNC_HOURS = 12; // sync-on-open debounce
 
@@ -336,6 +336,16 @@ export default function App() {
     });
   }, []);
 
+  var scoreModel = data && data.scoreModel ? data.scoreModel : DEFAULT_SCORE_MODEL;
+  var setScoreModel = useCallback(function (m) {
+    setData(function (prev) {
+      if (!prev) return prev;
+      var nd = Object.assign({}, prev, { scoreModel: m });
+      storage.set(STORAGE_KEY, JSON.stringify(nd)).catch(function (e) { console.error(e); });
+      return nd;
+    });
+  }, []);
+
   function scoreErr(e) {
     if (e && e.code === "no_key") {
       setKeyStatus(function (s) { return Object.assign({}, s, { configured: false, valid: false }); });
@@ -356,7 +366,7 @@ export default function App() {
     if (!all.length) return;
     var profileById = {};
     (data.profiles || []).forEach(function (p) { profileById[p.id] = p; });
-    var ctx = { criteria: data.criteria, globalReqs: data.globalReqs || [], profileById: profileById };
+    var ctx = { criteria: data.criteria, globalReqs: data.globalReqs || [], profileById: profileById, model: data.scoreModel || DEFAULT_SCORE_MODEL };
     setScoreBusy(true);
     setScoreMsg({ busy: true, text: "Scoring " + all.length + " listing" + (all.length > 1 ? "s" : "") + "…" });
     try {
@@ -635,7 +645,8 @@ export default function App() {
             filterProf={filterProf} setFilterProf={setFilterProf}
             doSync={doSync} syncing={syncing} syncMsg={syncMsg} lastSynced={data.lastSynced}
             keyStatus={keyStatus} setKeyStatus={setKeyStatus} autoScore={autoScore} setAutoScore={setAutoScore}
-            scoreBusy={scoreBusy} scoreMsg={scoreMsg} scoreItems={scoreItems} />
+            scoreBusy={scoreBusy} scoreMsg={scoreMsg} scoreItems={scoreItems}
+            scoreModel={scoreModel} setScoreModel={setScoreModel} />
         )}
       </main>
       <footer style={S.footer}>
@@ -961,7 +972,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   candidates, approveCand, approveAll, dismissCand,
   importText, setImportText, doImport, importResult, setImportResult,
   filterProf, setFilterProf, doSync, syncing, syncMsg, lastSynced,
-  keyStatus, setKeyStatus, autoScore, setAutoScore, scoreBusy, scoreMsg, scoreItems }) {
+  keyStatus, setKeyStatus, autoScore, setAutoScore, scoreBusy, scoreMsg, scoreItems, scoreModel, setScoreModel }) {
   var [showAdd, setShowAdd] = useState(false);
   var [showImport, setShowImport] = useState(false);
   var [filterRole, setFilterRole] = useState("all");
@@ -1025,7 +1036,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       <SyncStatus syncing={syncing} syncMsg={syncMsg} lastSynced={lastSynced} />
 
       <AiPanel keyStatus={keyStatus} setKeyStatus={setKeyStatus} autoScore={autoScore} setAutoScore={setAutoScore}
-        scoreBusy={scoreBusy} scoreMsg={scoreMsg} />
+        scoreBusy={scoreBusy} scoreMsg={scoreMsg} scoreModel={scoreModel} setScoreModel={setScoreModel} />
 
       {/* Filter & Sort bar */}
       {totalAll > 0 && (
@@ -1177,7 +1188,7 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
 }
 
 // AI scoring controls: key status + management, auto-score toggle, live status.
-function AiPanel({ keyStatus, setKeyStatus, autoScore, setAutoScore, scoreBusy, scoreMsg }) {
+function AiPanel({ keyStatus, setKeyStatus, autoScore, setAutoScore, scoreBusy, scoreMsg, scoreModel, setScoreModel }) {
   var [open, setOpen] = useState(false);
   var [keyInput, setKeyInput] = useState("");
   var [busy, setBusy] = useState(false);
@@ -1211,7 +1222,11 @@ function AiPanel({ keyStatus, setKeyStatus, autoScore, setAutoScore, scoreBusy, 
           <span style={{ fontSize: 13, color: "#c8c8d0", fontWeight: 600 }}>✨ AI scoring</span>
           <span style={{ fontSize: 11, color: statusColor }}>{statusText}</span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <select value={scoreModel} disabled={!valid} onChange={function (e) { setScoreModel(e.target.value); }}
+            title="Scoring model" style={Object.assign({}, S.inp, { padding: "4px 6px", fontSize: 12 }, valid ? {} : { opacity: 0.5 })}>
+            {SCORE_MODEL_OPTIONS.map(function (m) { return (<option key={m.id} value={m.id}>{m.label}</option>); })}
+          </select>
           <label style={{ fontSize: 12, color: valid ? "#c8c8d0" : "#555", display: "flex", alignItems: "center", gap: 5, cursor: valid ? "pointer" : "default" }}>
             <input type="checkbox" checked={autoScore} disabled={!valid} onChange={function (e) { setAutoScore(e.target.checked); }} />
             Auto-score on sync

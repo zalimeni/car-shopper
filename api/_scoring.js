@@ -5,7 +5,26 @@
 // The app's criteria are user-editable, so the schema and the rubric are built
 // from whatever criteria the client sends rather than hardcoded.
 
-export const SCORE_MODEL = process.env.SCORING_MODEL || "claude-opus-4-8";
+// Models the user may pick for scoring (allowlisted so a request can't drive
+// arbitrary model strings). Default is Sonnet — strong judgment for this
+// structured task at a lower cost than Opus. SCORING_MODEL env var, when set to
+// one of these, overrides the default; the per-request model (from the UI) wins
+// over both when it's in this list.
+export const SCORE_MODELS = {
+  "claude-sonnet-4-6": "Sonnet 4.6 — balanced (recommended)",
+  "claude-opus-4-8": "Opus 4.8 — most nuanced",
+  "claude-haiku-4-5": "Haiku 4.5 — fastest / cheapest",
+};
+
+export const DEFAULT_SCORE_MODEL =
+  process.env.SCORING_MODEL && Object.prototype.hasOwnProperty.call(SCORE_MODELS, process.env.SCORING_MODEL)
+    ? process.env.SCORING_MODEL
+    : "claude-sonnet-4-6";
+
+export function resolveScoreModel(requested) {
+  if (requested && Object.prototype.hasOwnProperty.call(SCORE_MODELS, requested)) return requested;
+  return DEFAULT_SCORE_MODEL;
+}
 
 // Per-criterion guidance baked into the rubric so 1-10 means the same thing
 // across runs. Keyed by the default criterion ids; criteria without an entry
