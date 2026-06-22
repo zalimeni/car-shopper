@@ -45,6 +45,15 @@ function envAllowlist() {
     .filter(Boolean);
 }
 
+// Admins may manage the allowlist (api/allowlist.js). Defaults to the owner;
+// override with ADMIN_EMAILS (comma-separated). Admins are a subset of allowed.
+export function isAdmin(email) {
+  if (!email) return false;
+  var list = (process.env.ADMIN_EMAILS || DEFAULT_ALLOW)
+    .split(",").map(function (s) { return s.trim().toLowerCase(); }).filter(Boolean);
+  return list.indexOf(String(email).toLowerCase()) > -1;
+}
+
 // Constant-time string compare (avoids leaking the token via timing).
 function safeEqual(a, b) {
   const ab = Buffer.from(String(a));

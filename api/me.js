@@ -8,7 +8,7 @@
 //   401 { authorized: false, error }  — not signed in / bad token
 //   403 { authorized: false, error }  — signed in but not allowlisted
 
-import { authorize } from "./_auth.js";
+import { authorize, isAdmin } from "./_auth.js";
 import { getKeyStatus } from "./_supabaseAdmin.js";
 
 export default async function handler(req, res) {
@@ -21,5 +21,5 @@ export default async function handler(req, res) {
   if (!auth.user.debug) {
     try { anthropicKey = await getKeyStatus(auth.user.id); } catch (e) { /* status defaults to "no key" */ }
   }
-  res.status(200).json({ authorized: true, email: auth.user.email || "", anthropicKey: anthropicKey });
+  res.status(200).json({ authorized: true, email: auth.user.email || "", anthropicKey: anthropicKey, isAdmin: isAdmin(auth.user.email) });
 }

@@ -3,6 +3,7 @@ import storage from "./storage";
 import { signOut } from "./Auth";
 import { fetchListings, fetchRawSample, reconcile } from "./sync";
 import { getKeyStatus, saveKey, removeKey, scoreSet, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
+import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
 
 var AUTO_SYNC_HOURS = 12; // sync-on-open debounce
 
@@ -379,10 +380,12 @@ export default function App() {
   var [scoreBusy, setScoreBusy] = useState(false);
   var [scoringActive, setScoringActive] = useState([]); // the exact items being scored right now (for per-card "Scoring…")
   var [scoreMsg, setScoreMsg] = useState(null);
+  var [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(function () {
     var cancelled = false;
     getKeyStatus().then(function (s) { if (!cancelled) setKeyStatus(s); });
+    getMe().then(function (m) { if (!cancelled && m && m.isAdmin) setIsAdmin(true); });
     return function () { cancelled = true; };
   }, []);
 
@@ -707,7 +710,7 @@ export default function App() {
         </div>
         <p style={S.sub}>{getSettings(data).tagline}</p>
         <nav style={S.nav}>
-          {TABS.map(function (t) {
+          {(isAdmin ? TABS.concat(["Admin"]) : TABS).map(function (t) {
             var label = t;
             if (t === "Results") {
               var n = data.listings.length + candidates.length;
@@ -740,6 +743,7 @@ export default function App() {
             scoreModel={scoreModel} setScoreModel={setScoreModel} />
         )}
         {tab === "Help" && <HelpTab />}
+        {tab === "Admin" && isAdmin && <AdminTab />}
       </main>
       <footer style={S.footer}>
         <div style={{ display: "flex", justifyContent: "center", gap: 12, alignItems: "center" }}>
@@ -1219,6 +1223,71 @@ function Wizard({ data, onComplete }) {
           </div>
         </div>
       </main>
+    </div>
+  );
+}
+
+// ── Admin: allowlist management (admins only) ──
+function AdminTab() {
+  var [emails, setEmails] = useState(null);
+  var [input, setInput] = useState("");
+  var [invite, setInvite] = useState(false);
+  var [busy, setBusy] = useState(false);
+  var [msg, setMsg] = useState(null);
+
+  function load() { listAllowed().then(setEmails).catch(function (e) { setMsg({ ok: false, text: e.message }); }); }
+  useEffect(function () { load(); }, []);
+
+  async function add() {
+    if (!input.trim()) return;
+    setBusy(true); setMsg(null);
+    try {
+      var r = await addAllowed(input.trim(), invite);
+      setInput("");
+      var t = "Added " + r.email;
+      if (invite) t += r.invited ? " · invite sent" : (r.inviteError ? " · invite failed: " + r.inviteError : "");
+      setMsg({ ok: true, text: t });
+      load();
+    } catch (e) { setMsg({ ok: false, text: e.message }); }
+    setBusy(false);
+  }
+  async function remove(email) {
+    setBusy(true); setMsg(null);
+    try { await removeAllowed(email); load(); } catch (e) { setMsg({ ok: false, text: e.message }); }
+    setBusy(false);
+  }
+
+  return (
+    <div>
+      <div style={S.secH}><h2 style={S.secT}>Allowlist</h2></div>
+      <div style={S.card}>
+        <p style={S.help}>Only these emails (plus any in the <code>ALLOWED_EMAILS</code> env var) can sign in and use the app. Changes here write the <code>allowed_emails</code> table and take effect immediately.</p>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          <input style={Object.assign({}, S.inp, { flex: 1, minWidth: 180 })} type="email" autoComplete="off" placeholder="person@example.com"
+            value={input} onChange={function (e) { setInput(e.target.value); }} onKeyDown={function (e) { if (e.key === "Enter") add(); }} />
+          <button style={Object.assign({}, S.priBtn, busy ? { opacity: 0.6 } : {})} disabled={busy || !input.trim()} onClick={add}>{busy ? "…" : "Add"}</button>
+        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#8a8a96", marginTop: 8, cursor: "pointer" }}>
+          <input type="checkbox" checked={invite} onChange={function (e) { setInvite(e.target.checked); }} />
+          Also send a sign-in invite email (Supabase default email is rate-limited / may land in spam)
+        </label>
+        {msg && <div style={{ fontSize: 12, marginTop: 8, color: msg.ok ? "#2d8659" : "#c44" }}>{msg.text}</div>}
+      </div>
+
+      <div style={S.card}>
+        <h3 style={S.cardH}>Allowed emails {emails ? "(" + emails.length + ")" : ""}</h3>
+        {emails === null ? <p style={S.empty}>Loading…</p>
+          : emails.length === 0 ? <p style={S.empty}>None in the table — the <code>ALLOWED_EMAILS</code> env var still applies.</p>
+          : emails.map(function (row) {
+              return (
+                <div key={row.email} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: "1px solid #1e2028" }}>
+                  <span style={{ flex: 1, fontSize: 13, color: "#c8c8d0" }}>{row.email}</span>
+                  {row.added_at && <span style={{ fontSize: 11, color: "#555" }}>{String(row.added_at).slice(0, 10)}</span>}
+                  <button style={Object.assign({}, S.smBtn, { color: "#888" })} disabled={busy} onClick={function () { remove(row.email); }}>Remove</button>
+                </div>
+              );
+            })}
+      </div>
     </div>
   );
 }
