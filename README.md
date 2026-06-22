@@ -1,38 +1,56 @@
 # car-shopper
 
-Personal used-car search dashboard for tracking a two-car purchase. Built with
-React + Vite and deployed to GitHub Pages. State persists locally in the
-browser via `localStorage` — there is no backend.
+Personal used-car search dashboard. It pulls dealer inventory for the vehicles
+you're hunting, tracks them on a scored watchlist (price changes, staleness,
+sold-detection), and can score each listing with AI against your own criteria.
+
+Frontend is React + Vite; a handful of Vercel serverless functions (`api/`)
+hold the secret keys and talk to MarketCheck and Anthropic. Auth and per-user
+data live in Supabase.
 
 > Vibe-coded with Claude, then cleaned up and deployed.
 
-## Context
+## What it does
 
-Shopping for two used cars with a $40K combined budget:
+- **Dealer-inventory sync** — pulls active listings matching your profiles from
+  [MarketCheck](https://www.marketcheck.com/apis) (via a serverless proxy that
+  keeps the API key server-side). New VINs become **candidates** for review;
+  known VINs get price-change and last-seen updates. Sync is the refresh.
+- **Watchlist** — approve candidates to a scored, sortable watchlist with
+  VIN dedup (lowest price wins), salt-belt flagging (🧂), photo thumbnails,
+  reject-with-reason, staleness ("needs check") tracking, and a non-scoring
+  Carfax title note.
+- **AI scoring (optional)** — bring your own Anthropic API key (stored
+  encrypted server-side, never shown again) to score listings 1–10 per
+  criterion with rationales and an overall summary. Pick the model
+  (Sonnet / Opus / Haiku); optionally auto-score on every sync.
+- **Configurable for any search** — budget, search locations (ZIPs), and the
+  vehicles you want are all editable. Roles/categories are freeform, so you can
+  shop one car or several, of whatever types.
+- **Setup wizard** — a guided first run (budget, locations, profiles, rules)
+  for new users; re-runnable without wiping data.
 
-- **SUV**: 2019–2022 RAV4 Hybrid or 2021–2022 RAV4 Prime (family car, AWD,
-  rear-passenger safety priority)
-- **Commuter**: 2022–2023 Bolt EUV, 2021–2023 Bolt EV, or 2016/2018 Volt
-  (25-mile commute, L2 charging at work)
+The default setup is opinionated (the owner's): a two-car, ≤$40K Northeast
+hybrid/EV search (RAV4 Hybrid/Prime + Bolt EUV/EV + Volt; hubs in Boston MA and
+Durham NC). The wizard and Settings make all of that yours.
 
-Search hubs: Boston MA (02101) and Durham NC (27701), 400-mile radius.
+## Tabs
 
-## Features
+- **Dashboard** — counts, top picks grouped by category, stale-listing alerts,
+  global-requirements summary.
+- **Profiles** — vehicle profiles (make/model/powertrain/years/trims, price &
+  mileage caps, must-haves, dealbreakers), the global-requirements checklist,
+  and a **Settings** card (budget, header tagline, search locations).
+- **Criteria** — weighted scoring criteria; editing a weight recalculates every
+  composite score.
+- **Results** — sync, review candidates (approve / skip → restorable Skipped
+  list), the watchlist, AI-scoring controls, and validated JSON import/export.
+- **Help** — in-app usage guide.
 
-- **Dashboard** — stats, budget pairing calculator, profile quick-links to the
-  filtered watchlist, and stale-listing alerts.
-- **Vehicle Profiles** — configurable profiles with make/model/year/trim, price
-  and mileage ranges, must-haves, and dealbreakers.
-- **Global Requirements** — an editable checklist applied to all profiles.
-- **Scoring Criteria** — weighted criteria; editing a weight auto-recalculates
-  every listing's composite score.
-- **Search Queries** — generates per-source, per-hub queries for the active
-  profiles to run manually.
-- **Results** — filter by profile/role, sort by score/price/mileage, VIN dedup
-  (lowest price wins), salt-belt flagging (🧂), reject-with-reason, and
-  staleness tracking.
-- **Import / Export** — validated JSON import with per-field error reporting and
-  an approve/reject candidate flow; one-tap JSON export for backup.
+> What filters the search vs. what only guides scoring: **make / model /
+> powertrain / years / max price / max miles** are the MarketCheck query.
+> **Trims, must/nice-to-have, dealbreakers, and global requirements** only feed
+> AI scoring.
 
 ## Getting started
 
@@ -41,107 +59,128 @@ Requires Node 22 (see `.nvmrc`).
 ```bash
 npm install
 npm run dev      # http://localhost:3000
-```
-
-Other scripts:
-
-```bash
+npm test         # vitest (api/ logic)
 npm run build    # production build to dist/
 npm run preview  # serve the production build locally
 ```
 
-## Deployment
+The frontend runs without the serverless functions; sync and AI scoring just
+won't work until they're deployed (or run via `vercel dev`) with the env vars
+below.
 
-Deployed on **Vercel**. The repo is connected as a Vercel project, so every push
-to `main` triggers a production deploy (and pushes to other branches get preview
-deployments). Settings live in `vercel.json`:
+## Environment variables
 
-- `buildCommand`: `npm run build`
-- `outputDirectory`: `dist`
-- a catch-all rewrite to `index.html` so the single-page app serves on any path
+Client vars are prefixed `VITE_` and bundled into the browser (safe — protected
+by RLS). Everything else is **server-only** (used in `api/`, never shipped to
+the client). See `.env.example`.
 
-To set up from scratch: in the Vercel dashboard, **Add New Project → Import**
-this repo. Vercel auto-detects Vite; no extra configuration is required.
+| Variable | Scope | Required for | Notes |
+|---|---|---|---|
+| `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` | client | auth + storage | Defaults baked into `src/supabaseClient.js`; override to point at another project. |
+| `MARKETCHECK_API_KEY` | server | dealer sync | From marketcheck.com/apis. Optional: `MARKETCHECK_HOST`, `MARKETCHECK_RADIUS` (mi, free tier ≤100), `MARKETCHECK_THROTTLE_MS`. |
+| `SUPABASE_SECRET_KEY` | server | AI key vault | Supabase **Secret key** (`sb_secret_…`) — bypasses RLS to read/write the server-only key vault. |
+| `KEY_ENCRYPTION_SECRET` | server | AI key vault | ≥16 chars; AES-256-GCM key for encrypting each user's Anthropic key at rest. Rotating it invalidates stored keys (users re-enter). |
+| `SCORING_MODEL` | server | — | Overrides the default scoring model (`claude-sonnet-4-6`); must be one of the allowlisted models. |
+| `ALLOWED_EMAILS` | server | access control | **The email allowlist.** Comma-separated. Defaults to the owner's email. |
+| `DEBUG_TOKEN` | server | — | Optional ≥24-char bypass token for headless `/api` debugging (no DB access). Unset = disabled. |
 
-## Auth & data storage
+## Auth & access control
 
-The app is gated by **Supabase email magic-link auth** and stores all state in
-Supabase, so your data syncs across devices: sign in with the same email
-anywhere and you get the same data.
+The app is gated by **Supabase email magic-link auth**. Beyond signing in, a
+user must be **allowlisted** to be served by the API or to read/write data.
+Access is granted if the signed-in email is **either**:
 
-State is kept as a single JSON blob in one row per user (table `app_state`,
-keyed by `user_id`). The `src/storage.js` wrapper exposes an async
-`get/set/delete` API over that row. On first sign-in, any data left in
-`localStorage` from the earlier localStorage-only version is migrated up
-automatically. You can still **Export Listings** for a manual JSON backup and
-use the **Import** tab to restore or seed data.
+1. in the **`ALLOWED_EMAILS`** env var (comma-separated), or
+2. in the **`public.allowed_emails`** table (checked via the `is_allowed()`
+   RPC, which also backs Row Level Security).
+
+Either one suffices. The env var is convenient for granting access without a DB
+write and applies even before the allowlist migration is run. Anyone can sign
+up via magic-link, but non-allowlisted accounts see an "access not enabled"
+screen and the API/RLS reject them.
+
+## Data storage
+
+Per-user state is a single JSON blob — one row per user in the `app_state`
+table (`src/storage.js` wraps it with an async `get/set/delete`). Signing in
+with the same email on any device loads the same data. **Export Listings**
+(footer) gives a manual JSON backup; **Import** (Results) restores/seeds.
+
+Each user's Anthropic API key (for AI scoring) is stored **encrypted** in a
+separate, server-only `user_anthropic_keys` table — RLS-locked with no client
+policies, reachable only by the serverless functions via `SUPABASE_SECRET_KEY`.
+The plaintext key never returns to the browser (the UI shows only status +
+last 4).
 
 ### Supabase setup
 
-The project URL and publishable (anon) key are baked in as defaults in
-`src/supabaseClient.js` — these are public by design; data is protected by Row
-Level Security. To point at a different project, set `VITE_SUPABASE_URL` and
-`VITE_SUPABASE_ANON_KEY` (see `.env.example`) locally and in Vercel.
+The project URL and publishable (anon) key are baked into
+`src/supabaseClient.js` (public by design; RLS protects the data). To use a
+different project, set `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`.
 
-For a fresh Supabase project, two one-time steps are required:
+Apply the SQL in `supabase/migrations/` (via the Supabase CLI `supabase db
+push`, or paste into the SQL editor) — it creates `app_state` + RLS, the
+`allowed_emails` allowlist + `is_allowed()`, and the encrypted
+`user_anthropic_keys` vault. Then under **Authentication → URL Configuration**
+set the Site URL to your deployed URL and add `http://localhost:3000` (and any
+preview URLs) to the redirect allowlist so magic links return correctly.
 
-1. **Create the table and RLS policy** (SQL editor):
+## Deployment
 
-   ```sql
-   create table app_state (
-     user_id uuid primary key references auth.users(id) on delete cascade,
-     data jsonb not null,
-     updated_at timestamptz not null default now()
-   );
+Deployed on **Vercel**; every push to `main` is a production deploy (other
+branches get previews). `vercel.json` sets the build command, output dir, a
+catch-all SPA rewrite, and per-function `maxDuration` (the AI `/api/score`
+function gets 60s). Set the env vars above in the Vercel project settings.
 
-   alter table app_state enable row level security;
-
-   create policy "own row" on app_state
-     for all
-     using (auth.uid() = user_id)
-     with check (auth.uid() = user_id);
-   ```
-
-2. **Allow the app's URLs** under Authentication → URL Configuration: set the
-   Site URL to the Vercel production URL and add `http://localhost:3000` (and
-   any preview URLs) to the redirect allowlist so magic links return correctly.
+To set up from scratch: **Add New Project → Import** this repo (Vite is
+auto-detected), then add the environment variables.
 
 ## Architecture
 
-- `src/App.jsx` — single-file React app: all components, logic, and inline
-  styles.
-- `src/Auth.jsx` — Supabase auth gate (magic-link sign-in) and `signOut`.
-- `src/storage.js` — async `get/set/delete` wrapper over the Supabase row.
-- `src/supabaseClient.js` — configured Supabase client.
-- `src/main.jsx` — React entry point (wraps `App` in `AuthGate`).
-- `src/index.css` — minimal global reset.
+```
+src/
+  App.jsx           single-file React UI (components, logic, inline styles)
+  Auth.jsx          Supabase magic-link gate + allowlist check
+  storage.js        async get/set/delete over the app_state row
+  supabaseClient.js configured Supabase client
+  sync.js           dealer-sync client (calls /api/marketcheck) + reconcile()
+  score.js          AI-scoring client + Anthropic-key management
+  main.jsx          React entry (wraps App in AuthGate)
+  index.css         minimal global reset
+api/                Vercel serverless functions (server-side secrets)
+  _auth.js          shared auth + allowlist gate
+  _crypto.js        AES-256-GCM encrypt/decrypt for the key vault
+  _supabaseAdmin.js service-role client for the key vault
+  _scoring.js       scoring prompt/schema/coercion + model allowlist
+  marketcheck.js    MarketCheck proxy (buildUrl/normalize) — holds the API key
+  me.js             auth + key-status check for the client
+  anthropic-key.js  set/validate/remove the per-user Anthropic key
+  score.js          batch listing scoring with the user's key
+supabase/migrations/  app_state, allowlist, anthropic-key vault
+test/               vitest suites for the api/ logic + fixtures
+```
+
+CI (GitHub Actions): `test.yml` runs tests + build on every push/PR;
+`migrations.yml` validates the SQL against a throwaway Postgres (and applies it
+to the project on `main` if `SUPABASE_DB_URL` is configured).
 
 ## Roadmap
 
-Recently shipped:
+Shipped:
 
-- ✅ Supabase-backed storage with email magic-link auth and cross-device sync
-  (replaced per-browser `localStorage`)
-- ✅ Continuous deployment on Vercel
+- ✅ Supabase storage + email magic-link auth + allowlist; cross-device sync
+- ✅ Continuous deployment on Vercel with serverless functions
+- ✅ Automated dealer-inventory sync (MarketCheck) with candidate review,
+  price/availability refresh, skip-and-restore, and VIN dedup
+- ✅ AI scoring with a per-user encrypted Anthropic key, model selection, and
+  auto-score-on-sync
+- ✅ Configurable budget / locations / freeform categories + setup wizard
 
-### Next: automated listing pipeline
+Backlog:
 
-Turn today's manual JSON import into an end-to-end loop, reusing the existing
-validation, candidate-approval, and VIN-dedup flow:
-
-- [ ] **Discovery** — pull new listings matching the active profiles and stage
-  them as candidates for approval
-- [ ] **Price & availability refresh** — re-check watched listings, record price
-  changes, and refresh `lastChecked`
-- [ ] **Dead-listing purge** — detect sold/removed listings and retire them
-- [ ] **Scheduled runs** feeding the Results tab (aligned with the 5-day
-  staleness threshold)
-
-### Backlog
-
-- [ ] Component decomposition (`App.jsx` is ~1,150 lines)
-- [ ] CSS modules or Tailwind instead of inline styles
-- [ ] Normalized tables (per-listing rows) for query history and dedup
-- [ ] Realtime sync across open devices
-- [ ] Mobile PWA support
-- [ ] Tests
+- [ ] Sold/removed-listing auto-purge (currently flagged, not retired)
+- [ ] Scheduled background sync (cron) with notifications — see
+  `docs/listing-pipeline.md`
+- [ ] Component decomposition (`App.jsx` is large)
+- [ ] Normalized per-listing tables for history/dedup
+- [ ] Realtime sync across open devices; mobile PWA
