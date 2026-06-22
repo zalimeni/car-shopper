@@ -290,7 +290,7 @@ function freshData(blank) {
 }
 
 // ── Tabs ──
-var TABS = ["Dashboard", "Profiles", "Criteria", "Results", "Help"];
+var TABS = ["Dashboard", "Profiles", "Criteria", "Results", "Compare", "Help"];
 
 // Session-scoped persistence for volatile UI state, so a mobile reload / tab
 // discard on app-switch doesn't wipe in-progress results (candidates, raw
@@ -759,6 +759,7 @@ export default function App() {
             scoreModel={scoreModel} setScoreModel={setScoreModel} />
         )}
         {tab === "Help" && <HelpTab />}
+        {tab === "Compare" && <CompareTab data={data} />}
         {tab === "Admin" && isAdmin && <AdminTab />}
       </main>
       <footer style={S.footer}>
@@ -1308,6 +1309,125 @@ function AdminTab() {
   );
 }
 
+// ── Compare ──
+function scoreHue(v) { return v >= 7 ? "#2d8659" : v >= 5 ? "#d4a017" : "#c44"; }
+
+function CompareTab({ data }) {
+  var profs = data.profiles || [];
+  var [sel, setSel] = useState(function () { return profs.map(function (p) { return p.id; }); });
+  function toggle(id) { setSel(function (prev) { return prev.indexOf(id) > -1 ? prev.filter(function (x) { return x !== id; }) : prev.concat(id); }); }
+
+  var listings = data.listings
+    .filter(function (l) { return l.status === "watch" && sel.indexOf(l.profileId) > -1; })
+    .slice().sort(function (a, b) { return (b.compositeScore || 0) - (a.compositeScore || 0); });
+
+  // Primary-attribute rows. `best` marks which direction "wins" for highlighting.
+  var specs = [
+    { label: "Price", get: function (l) { return l.price; }, fmt: function (v) { return "$" + v.toLocaleString(); }, best: "min" },
+    { label: "Mileage", get: function (l) { return l.mileage; }, fmt: function (v) { return v.toLocaleString() + " mi"; }, best: "min" },
+    { label: "Year", get: function (l) { return l.year; }, fmt: function (v) { return String(v); }, best: "max" },
+    { label: "Trim", get: function (l) { return l.trim; }, fmt: function (v) { return v; } },
+    { label: "Dealer", get: function (l) { return l.dealer ? l.dealer + " (" + (l.dealerType || "?") + ")" : ""; }, fmt: function (v) { return v; } },
+    { label: "Location", get: function (l) { return [l.location, l.state].filter(Boolean).join(", ") + (isSalt(l.state) ? " 🧂" : ""); }, fmt: function (v) { return v; } },
+    { label: "Color", get: function (l) { return l.color; }, fmt: function (v) { return v; } },
+    { label: "Days on market", get: function (l) { return l.dom; }, fmt: function (v) { return String(v); } },
+  ];
+
+  function bestVal(get, dir) {
+    if (listings.length < 2 || !dir) return null;
+    var nums = listings.map(get).filter(function (v) { return typeof v === "number" && !isNaN(v); });
+    if (!nums.length) return null;
+    return dir === "min" ? Math.min.apply(null, nums) : Math.max.apply(null, nums);
+  }
+
+  var labelCell = { position: "sticky", left: 0, background: "#161820", textAlign: "left", color: "#8a8a96", fontWeight: 500, padding: "7px 10px", borderBottom: "1px solid #1e2028", whiteSpace: "nowrap", zIndex: 1 };
+  var cell = { padding: "7px 10px", borderBottom: "1px solid #1e2028", textAlign: "center", whiteSpace: "nowrap", minWidth: 120, color: "#c8c8d0" };
+
+  function row(label, render, key) {
+    return (
+      <tr key={key || label}>
+        <td style={labelCell}>{label}</td>
+        {listings.map(function (l, i) { return render(l, i); })}
+      </tr>
+    );
+  }
+  function specRow(spec) {
+    var best = bestVal(spec.get, spec.best);
+    return row(spec.label, function (l, i) {
+      var v = spec.get(l);
+      var blank = v == null || v === "" || (typeof v === "number" && isNaN(v));
+      var isBest = best != null && typeof v === "number" && v === best;
+      return (<td key={i} style={Object.assign({}, cell, isBest ? { color: "#2d8659", fontWeight: 700 } : {})}>{blank ? "—" : spec.fmt(v)}</td>);
+    }, "spec-" + spec.label);
+  }
+  function critRow(c) {
+    var best = bestVal(function (l) { return l.scores && l.scores[c.id]; }, "max");
+    return row(c.name + " (" + c.weight + ")", function (l, i) {
+      var v = l.scores && l.scores[c.id];
+      if (v == null) return (<td key={i} style={cell}>—</td>);
+      var isBest = best != null && v === best;
+      return (<td key={i} style={Object.assign({}, cell, { color: scoreHue(v), fontWeight: isBest ? 700 : 400 })}>{v}{isBest ? " ★" : ""}</td>);
+    }, "crit-" + c.id);
+  }
+
+  return (
+    <div>
+      <div style={S.secH}><h2 style={S.secT}>Compare</h2></div>
+      <div style={S.card}>
+        <p style={S.help}>Side-by-side watchlist listings for the selected profiles, ranked by total score. Best value per row is highlighted (★ / green).</p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+          {profs.map(function (p) {
+            var on = sel.indexOf(p.id) > -1;
+            return (
+              <button key={p.id} onClick={function () { toggle(p.id); }}
+                style={Object.assign({}, S.searchBtn, on ? { borderColor: "#2563eb", color: "#fff" } : { opacity: 0.55 })}>
+                {on ? "✓ " : ""}{p.name}
+              </button>
+            );
+          })}
+          <span style={{ flex: 1 }} />
+          <button style={S.smBtn} onClick={function () { setSel(profs.map(function (p) { return p.id; })); }}>All</button>
+          <button style={S.smBtn} onClick={function () { setSel([]); }}>None</button>
+        </div>
+      </div>
+
+      {listings.length === 0 ? (
+        <p style={S.empty}>No watchlist listings for the selected profile(s).</p>
+      ) : (
+        <div style={Object.assign({}, S.card, { overflowX: "auto", padding: 0 })}>
+          <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={Object.assign({}, labelCell, { color: "#6b6b76", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em" })}>{listings.length} listing{listings.length > 1 ? "s" : ""}</th>
+                {listings.map(function (l, i) {
+                  var url = l.link || (l.vin ? "https://www.google.com/search?q=" + encodeURIComponent(l.vin) : "");
+                  return (
+                    <th key={i} style={Object.assign({}, cell, { color: "#f0f0f3", fontWeight: 600, verticalAlign: "top", borderBottom: "1px solid #2a2d38" })}>
+                      <div>{l.year} {l.vehicle}</div>
+                      {url && <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#8ab4f8", fontWeight: 400 }}>view →</a>}
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {row("Total score", function (l, i) {
+                var v = l.compositeScore || 0;
+                var best = bestVal(function (x) { return x.compositeScore; }, "max");
+                var isBest = best != null && best > 0 && v === best;
+                return (<td key={i} style={Object.assign({}, cell, { fontSize: 16, fontWeight: 700, color: v ? scoreHue(v) : "#555" })}>{v || "—"}{isBest ? " ★" : ""}</td>);
+              }, "total")}
+              {specs.map(specRow)}
+              <tr><td style={Object.assign({}, labelCell, { color: "#6b6b76", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em", paddingTop: 12 })}>Criteria (weight)</td>{listings.map(function (l, i) { return (<td key={i} style={Object.assign({}, cell, { paddingTop: 12 })} />); })}</tr>
+              {(data.criteria || []).map(critRow)}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Help / usage ──
 function HelpTab() {
   var li = { fontSize: 13, color: "#c8c8d0", lineHeight: 1.6, margin: "0 0 6px", paddingLeft: 4 };
@@ -1331,6 +1451,7 @@ function HelpTab() {
         <p style={li}><span style={b}>Profiles</span> — add/edit/enable the vehicles you're searching for. Each active profile is queried at every hub on sync.</p>
         <p style={li}><span style={b}>Criteria</span> — the weighted factors (price, mileage, condition, etc.) behind each listing's composite score. Editing weights re-scores everything automatically.</p>
         <p style={li}><span style={b}>Results</span> — sync, review candidates, and manage your watchlist. This is where you'll spend most of your time.</p>
+        <p style={li}><span style={b}>Compare</span> — side-by-side table of watchlist listings for the profiles you pick, across primary specs and each scoring criterion plus the total; best value per row is highlighted.</p>
       </div>
 
       <div style={S.card}>
