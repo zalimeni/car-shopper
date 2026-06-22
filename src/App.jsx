@@ -7,9 +7,9 @@ import { getKeyStatus, saveKey, removeKey, scoreSet, SCORE_MODEL_OPTIONS, DEFAUL
 var AUTO_SYNC_HOURS = 12; // sync-on-open debounce
 
 var STORAGE_KEY = "car-search-data";
-var VERSION = 5;
+var VERSION = 6;
 var STALE_DAYS = 5;
-var BUDGET = 40000;
+var BUDGET = 40000; // default budget; per-user override in data.settings.budget
 var TAX = 0.07;
 var SALT = new Set("CT,MA,NH,VT,ME,NY,NJ,PA,OH,MI,WI,MN,IL,IN,IA,MD,DE,WV,RI".split(","));
 
@@ -55,8 +55,49 @@ var HUBS = [
   { n: "Durham NC", z: "27701", lat: 35.994, lon: -78.8986 },
 ];
 
+// Per-user settings (synced in data.settings). Defaults preserve the original
+// two-car/Northeast setup; the setup wizard and the Settings card edit them.
+// There's no single/multi-car "mode" — one-car shopping is just the case where
+// only one car type (role) is active, and the pairing widgets follow from that.
+var DEFAULT_SETTINGS = {
+  budget: BUDGET,
+  taxRate: TAX,
+  tagline: "2-car · Boston + Durham · ≤$40K",
+  hubs: HUBS,
+};
+function getSettings(data) { return Object.assign({}, DEFAULT_SETTINGS, (data && data.settings) || {}); }
+
 // ── Utility ──
-function calcRem(p) { return Math.round((BUDGET - p * (1 + TAX)) / (1 + TAX)); }
+// Pre-tax budget left after buying a car at pre-tax price p.
+function calcRem(p, budget, tax) {
+  if (budget == null) budget = BUDGET;
+  if (tax == null) tax = TAX;
+  return Math.round((budget - p * (1 + tax)) / (1 + tax));
+}
+
+// Stable-ish color for a freeform role label (SUV/Commuter keep their originals).
+var ROLE_PALETTE = ["#1a5c3a", "#1a3c5c", "#5c1a3c", "#3c5c1a", "#5c3c1a", "#3c1a5c", "#1a5c5c"];
+function roleColor(role) {
+  if (!role) return "#444";
+  if (role === "SUV") return "#1a5c3a";
+  if (role === "Commuter") return "#1a3c5c";
+  var h = 0;
+  for (var i = 0; i < role.length; i++) h = (h * 31 + role.charCodeAt(i)) >>> 0;
+  return ROLE_PALETTE[h % ROLE_PALETTE.length];
+}
+// Distinct role labels among active profiles (drives dynamic grouping/filtering).
+function activeRoles(data) {
+  var seen = [];
+  (data.profiles || []).forEach(function (p) {
+    if (p.active && p.role && seen.indexOf(p.role) === -1) seen.push(p.role);
+  });
+  return seen;
+}
+// Role chip; renders nothing for an empty/unknown role (single-car setups).
+function RoleBadge({ role, extra }) {
+  if (!role || role === "?") return null;
+  return (<span style={Object.assign({}, S.role, { background: roleColor(role) }, extra || {})}>{role}</span>);
+}
 function isSalt(st) { return SALT.has((st || "").toUpperCase()); }
 function daysSince(d) { if (!d) return Infinity; return Math.floor((new Date() - new Date(d)) / 864e5); }
 function today() { return new Date().toISOString().split("T")[0]; }
@@ -222,8 +263,26 @@ function migrate(data) {
       return p;
     });
   }
+  // v6: budget/tax/hubs/tagline moved into data.settings (was hardcoded).
+  data.settings = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
+  // Existing users are already set up — don't pop the wizard at them.
+  if (data.onboarded == null) data.onboarded = true;
   data.version = VERSION;
   return data;
+}
+
+// Pristine app state for a brand-new user or a reset. `blank` drops the
+// owner's opinionated starter profiles/requirements (used by "start fresh").
+function freshData(blank) {
+  return {
+    profiles: blank ? [] : DEFAULT_PROFILES,
+    criteria: DEFAULT_CRITERIA,
+    globalReqs: blank ? [] : DEFAULT_REQS,
+    listings: [],
+    settings: Object.assign({}, DEFAULT_SETTINGS),
+    onboarded: false,
+    version: VERSION,
+  };
 }
 
 // ── Tabs ──
@@ -277,14 +336,14 @@ export default function App() {
             await storage.set(STORAGE_KEY, JSON.stringify(d));
           }
         } else {
-          var d2 = { profiles: DEFAULT_PROFILES, criteria: DEFAULT_CRITERIA, globalReqs: DEFAULT_REQS, listings: [], version: VERSION };
+          var d2 = freshData(false); // brand-new user: defaults + wizard (onboarded:false)
           setData(d2);
           await storage.set(STORAGE_KEY, JSON.stringify(d2));
         }
       } catch (e) {
         console.error("Init:", e);
         // DO NOT overwrite storage on error - just use defaults in memory
-        setData({ profiles: DEFAULT_PROFILES, criteria: DEFAULT_CRITERIA, globalReqs: DEFAULT_REQS, listings: [], version: VERSION });
+        setData(freshData(false));
       }
       setLoading(false);
     })();
@@ -431,7 +490,7 @@ export default function App() {
         setSyncing(false);
         return;
       }
-      var res = await fetchListings(active, HUBS, opts);
+      var res = await fetchListings(active, getSettings(data).hubs, opts);
       var rec = reconcile(data.listings, res.listings, today());
       var decorated = rec.candidates.map(function (c) {
         return Object.assign({}, c, { compositeScore: calcScore(c.scores, data.criteria), _candidate: true });
@@ -484,7 +543,7 @@ export default function App() {
     if (typeof window === "undefined" || !data) return;
     window.__rawSync = function () {
       var active = data.profiles.filter(function (p) { return p.active; });
-      return fetchRawSample(active, HUBS).then(function (r) { console.log("[rawSync]", r); return r; });
+      return fetchRawSample(active, getSettings(data).hubs).then(function (r) { console.log("[rawSync]", r); return r; });
     };
   }, [data]);
 
@@ -495,7 +554,7 @@ export default function App() {
     setRawBusy(true); setRawDebug("");
     try {
       var active = data.profiles.filter(function (p) { return p.active; });
-      var r = await fetchRawSample(active, HUBS);
+      var r = await fetchRawSample(active, getSettings(data).hubs);
       setRawDebug(JSON.stringify(r, null, 2));
     } catch (e) { setRawDebug("Error: " + (e && e.message ? e.message : String(e))); }
     setRawBusy(false);
@@ -623,7 +682,7 @@ export default function App() {
   var [confirmReset, setConfirmReset] = useState(false);
   var reset = useCallback(async function () {
     if (!confirmReset) { setConfirmReset(true); return; }
-    await save({ profiles: DEFAULT_PROFILES, criteria: DEFAULT_CRITERIA, globalReqs: DEFAULT_REQS, listings: [], version: VERSION });
+    await save(freshData(false)); // keep opinionated starters; re-runs the wizard
     setCandidates([]);
     setConfirmReset(false);
   }, [save, confirmReset]);
@@ -635,9 +694,6 @@ export default function App() {
   var staleN = watch.filter(function (l) { return daysSince(l.lastChecked) >= STALE_DAYS; }).length;
   var rej = data.listings.filter(function (l) { return l.status === "rejected"; });
   var bought = data.listings.filter(function (l) { return l.status === "purchased"; });
-  var roleOf = function (l) { var pr = data.profiles.find(function (p) { return p.id === l.profileId; }); return pr ? pr.role : null; };
-  var suvW = watch.filter(function (l) { return roleOf(l) === "SUV"; });
-  var comW = watch.filter(function (l) { return roleOf(l) === "Commuter"; });
 
   return (
     <div style={S.app}>
@@ -646,7 +702,7 @@ export default function App() {
           <h1 style={S.title}>Car Search Tracker</h1>
           <span style={S.badge}>{saving ? "Saving..." : "Saved ✓"}</span>
         </div>
-        <p style={S.sub}>2-car · Boston + Durham · ≤$40K</p>
+        <p style={S.sub}>{getSettings(data).tagline}</p>
         <nav style={S.nav}>
           {TABS.map(function (t) {
             var label = t;
@@ -662,7 +718,7 @@ export default function App() {
 
       <main>
         {tab === "Dashboard" && (
-          <DashView data={data} watch={watch} rej={rej} bought={bought} suvW={suvW} comW={comW}
+          <DashView data={data} watch={watch} rej={rej} bought={bought}
             staleN={staleN} setTab={setTab} markAllChk={markAllChk} viewProfile={viewProfile} />
         )}
         {tab === "Profiles" && <ProfilesTab data={data} save={save} />}
@@ -724,14 +780,28 @@ export default function App() {
 }
 
 // ── Dashboard ──
-function DashView({ data, watch, rej, bought, suvW, comW, staleN, setTab, markAllChk, viewProfile }) {
+function DashView({ data, watch, rej, bought, staleN, setTab, markAllChk, viewProfile }) {
   var act = data.profiles.filter(function (p) { return p.active; });
-  var topS = suvW.slice().sort(function (a, b) { return (b.compositeScore || 0) - (a.compositeScore || 0); }).slice(0, 2);
-  var topC = comW.slice().sort(function (a, b) { return (b.compositeScore || 0) - (a.compositeScore || 0); }).slice(0, 2);
+  var settings = getSettings(data);
 
   // Count listings per profile
   var countsByProf = {};
   watch.forEach(function (l) { countsByProf[l.profileId] = (countsByProf[l.profileId] || 0) + 1; });
+
+  // Top picks grouped by role (freeform). One role -> one group; no roles -> a
+  // single "Top picks" group. Drives the snapshot without any SUV/Commuter
+  // hardcoding.
+  var roleByProf = {};
+  data.profiles.forEach(function (p) { roleByProf[p.id] = p.role || ""; });
+  var groups = {};
+  watch.forEach(function (l) {
+    var r = roleByProf[l.profileId] || "";
+    (groups[r] = groups[r] || []).push(l);
+  });
+  var groupKeys = Object.keys(groups).sort();
+  var topByRole = groupKeys.map(function (r) {
+    return { role: r, items: groups[r].slice().sort(function (a, b) { return (b.compositeScore || 0) - (a.compositeScore || 0); }).slice(0, 2) };
+  });
 
   return (
     <div>
@@ -759,7 +829,7 @@ function DashView({ data, watch, rej, bought, suvW, comW, staleN, setTab, markAl
             var n = countsByProf[pr.id] || 0;
             return (
               <button key={pr.id} style={S.searchBtn} onClick={function () { viewProfile(pr.id); }}>
-                <span style={Object.assign({}, S.role, { background: pr.role === "SUV" ? "#1a5c3a" : "#1a3c5c", marginRight: 6, display: "inline-block" })}>{pr.role}</span>
+                <RoleBadge role={pr.role} extra={{ marginRight: 6, display: "inline-block" }} />
                 {pr.name} {n > 0 ? "(" + n + ")" : ""}
               </button>
             );
@@ -771,28 +841,29 @@ function DashView({ data, watch, rej, bought, suvW, comW, staleN, setTab, markAl
       </div>
 
       <div style={S.card}>
-        <h3 style={S.cardH}>Budget Snapshot</h3>
-        {(topS.length || topC.length) ? (
+        <h3 style={S.cardH}>Top Picks {settings.budget ? "· budget $" + Number(settings.budget).toLocaleString() : ""}</h3>
+        {watch.length ? (
           <div>
-            {topS.length > 0 && <BG label="Best SUV" items={topS} other="commuter" />}
-            {topC.length > 0 && <BG label="Best commuter" items={topC} other="SUV" />}
+            {topByRole.map(function (g) {
+              return (<BG key={g.role || "_"} label={g.role ? "Best " + g.role : "Top picks"} items={g.items} budget={settings.budget} tax={settings.taxRate} />);
+            })}
           </div>
         ) : (<p style={S.empty}>No listings yet.</p>)}
       </div>
 
       <div style={S.card}>
         <h3 style={S.cardH}>Global Requirements</h3>
-        {(data.globalReqs || []).filter(function (r) { return r.active; }).map(function (r) {
-          return (<div key={r.id} style={{ fontSize: 12, color: "#c8c8d0", padding: "2px 0" }}>✓ {r.text}</div>);
-        })}
+        {(data.globalReqs || []).filter(function (r) { return r.active; }).length
+          ? (data.globalReqs || []).filter(function (r) { return r.active; }).map(function (r) {
+              return (<div key={r.id} style={{ fontSize: 12, color: "#c8c8d0", padding: "2px 0" }}>✓ {r.text}</div>);
+            })
+          : <p style={S.empty}>None set — add some on the Profiles tab to guide scoring.</p>}
       </div>
-
-      <div style={S.card}><h3 style={S.cardH}>Pairing Calculator</h3><PairCalc /></div>
     </div>
   );
 }
 
-function BG({ label, items, other }) {
+function BG({ label, items, budget, tax }) {
   return (
     <div style={{ marginBottom: 12 }}>
       <div style={S.budL}>{label}</div>
@@ -800,7 +871,7 @@ function BG({ label, items, other }) {
         return (
           <div key={l.id} style={S.budR}>
             <span>{l.year} {l.vehicle} — ${(l.price || 0).toLocaleString()}</span>
-            <span style={S.budRem}>→ ${calcRem(l.price).toLocaleString()} for {other}</span>
+            {budget ? <span style={S.budRem}>→ ${calcRem(l.price, budget, tax).toLocaleString()} left</span> : null}
           </div>
         );
       })}
@@ -808,19 +879,62 @@ function BG({ label, items, other }) {
   );
 }
 
-function PairCalc() {
-  var [sp, setSp] = useState("");
-  var [cp, setCp] = useState("");
-  var s = parseInt(sp) || 0, c = parseInt(cp) || 0;
-  var tot = Math.round((s + c) * (1 + TAX)), diff = BUDGET - tot;
+// ── Settings (budget, tagline, search locations) ──
+function SettingsCard({ data, save }) {
+  var s = getSettings(data);
+  var [open, setOpen] = useState(false);
+  var [budget, setBudget] = useState(String(s.budget || ""));
+  var [tagline, setTagline] = useState(s.tagline || "");
+  var [hubs, setHubs] = useState((s.hubs || []).map(function (h) { return { n: h.n || "", z: h.z || "", lat: h.lat, lon: h.lon }; }));
+
+  function setHub(i, key, val) {
+    setHubs(function (prev) {
+      return prev.map(function (h, j) {
+        if (j !== i) return h;
+        var nh = Object.assign({}, h, { [key]: val });
+        if (key === "z") { nh.lat = undefined; nh.lon = undefined; } // stale coords once zip changes
+        return nh;
+      });
+    });
+  }
+  function addHub() { setHubs(function (prev) { return prev.concat([{ n: "", z: "" }]); }); }
+  function delHub(i) { setHubs(function (prev) { return prev.filter(function (_, j) { return j !== i; }); }); }
+  function saveAll() {
+    var cleanHubs = hubs.filter(function (h) { return (h.z || "").trim() || (h.n || "").trim(); })
+      .map(function (h) { var o = { n: (h.n || "").trim(), z: (h.z || "").trim() }; if (h.lat != null) o.lat = h.lat; if (h.lon != null) o.lon = h.lon; return o; });
+    save(Object.assign({}, data, { settings: Object.assign({}, s, { budget: parseInt(budget) || 0, tagline: tagline.trim(), hubs: cleanHubs }) }));
+    setOpen(false);
+  }
+
   return (
-    <div>
-      <div style={S.calcR}><label style={S.calcL}>SUV $</label><input style={S.calcI} type="number" value={sp} onChange={function (e) { setSp(e.target.value); }} placeholder="22000" /></div>
-      <div style={S.calcR}><label style={S.calcL}>Commuter $</label><input style={S.calcI} type="number" value={cp} onChange={function (e) { setCp(e.target.value); }} placeholder="16000" /></div>
-      {(s > 0 || c > 0) && (
-        <div style={{ fontSize: 13, color: "#c8c8d0", lineHeight: 1.8, marginTop: 4 }}>
-          <div>After ~7% tax: <strong>${tot.toLocaleString()}</strong></div>
-          <div style={{ color: diff >= 0 ? "#2d8659" : "#c44" }}>{diff >= 0 ? "$" + diff.toLocaleString() + " under ✓" : "$" + Math.abs(diff).toLocaleString() + " over ✗"}</div>
+    <div style={S.card}>
+      <div style={S.secH}>
+        <h3 style={S.cardH}>Settings</h3>
+        <button style={S.secBtn} onClick={function () { setOpen(!open); }}>{open ? "Close" : "Edit"}</button>
+      </div>
+      {!open ? (
+        <p style={S.help}>Budget ${Number(s.budget || 0).toLocaleString()} · {(s.hubs || []).length} search location{(s.hubs || []).length === 1 ? "" : "s"} ({(s.hubs || []).map(function (h) { return h.n || h.z; }).join(", ") || "none"})</p>
+      ) : (
+        <div>
+          <div style={S.grid2}>
+            <div style={S.field}><label style={S.lbl}>Total budget ($)</label><input style={S.inp} type="number" value={budget} onChange={function (e) { setBudget(e.target.value); }} /></div>
+            <div style={S.field}><label style={S.lbl}>Header tagline</label><input style={S.inp} value={tagline} onChange={function (e) { setTagline(e.target.value); }} /></div>
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <label style={S.lbl}>Search locations (ZIP is required; name is just a label)</label>
+            {hubs.map(function (h, i) {
+              return (
+                <div key={i} style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                  <input style={Object.assign({}, S.inp, { flex: 1 })} value={h.n} placeholder="Boston MA" onChange={function (e) { setHub(i, "n", e.target.value); }} />
+                  <input style={Object.assign({}, S.inp, { width: 90 })} value={h.z} placeholder="02101" onChange={function (e) { setHub(i, "z", e.target.value); }} />
+                  <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { delHub(i); }}>×</button>
+                </div>
+              );
+            })}
+            <button style={Object.assign({}, S.smBtn, { marginTop: 6 })} onClick={addHub}>+ Add location</button>
+          </div>
+          <p style={S.help}>Budget powers the "budget left" math; locations are where dealer inventory is searched (~100 mi radius each).</p>
+          <button style={Object.assign({}, S.priBtn, { marginTop: 6 })} onClick={saveAll}>Save settings</button>
         </div>
       )}
     </div>
@@ -833,11 +947,16 @@ function ProfilesTab({ data, save }) {
   function toggleActive(id) { save(Object.assign({}, data, { profiles: data.profiles.map(function (p) { return p.id === id ? Object.assign({}, p, { active: !p.active }) : p; }) })); }
   function delProf(id) { save(Object.assign({}, data, { profiles: data.profiles.filter(function (p) { return p.id !== id; }) })); }
   function addProf() {
-    var n = { id: "p-" + Date.now(), name: "New Profile", role: "Commuter", active: true,
+    var n = { id: "p-" + Date.now(), name: "New Profile", role: "", active: true,
       params: { make: "", model: "", years: "", trims: "", maxPrice: 20000, maxMiles: 80000, mustHave: "", niceToHave: "", dealbreakers: "" } };
     save(Object.assign({}, data, { profiles: data.profiles.concat(n) })); setEd(n.id);
   }
-  function updProf(id, params) { save(Object.assign({}, data, { profiles: data.profiles.map(function (p) { return p.id === id ? Object.assign({}, p, { params: Object.assign({}, p.params, params) }) : p; }) })); setEd(null); }
+  function updProf(id, upd) {
+    save(Object.assign({}, data, { profiles: data.profiles.map(function (p) {
+      return p.id === id ? Object.assign({}, p, { name: upd.name, role: upd.role, params: Object.assign({}, p.params, upd.params) }) : p;
+    }) }));
+    setEd(null);
+  }
   function toggleReq(id) { save(Object.assign({}, data, { globalReqs: (data.globalReqs || []).map(function (r) { return r.id === id ? Object.assign({}, r, { active: !r.active }) : r; }) })); }
   var [newReqText, setNewReqText] = useState("");
   var [showAddReq, setShowAddReq] = useState(false);
@@ -858,9 +977,10 @@ function ProfilesTab({ data, save }) {
 
   return (
     <div>
+      <SettingsCard data={data} save={save} />
       <div style={S.card}>
         <div style={S.secH}><h3 style={S.cardH}>Global Requirements</h3><button style={S.secBtn} onClick={function () { setShowAddReq(!showAddReq); }}>+ Add</button></div>
-        <p style={S.help}>Apply to ALL profiles. Toggle off for soft preferences.</p>
+        <p style={S.help}>Apply to ALL profiles — fed to AI scoring (not the search query). Toggle off for soft preferences.</p>
         {showAddReq && (
           <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
             <input style={Object.assign({}, S.inp, { flex: 1 })} value={newReqText} onChange={function (e) { setNewReqText(e.target.value); }} placeholder="New requirement..." />
@@ -893,17 +1013,16 @@ function ProfilesTab({ data, save }) {
           <div key={p.id} style={Object.assign({}, S.card, { opacity: p.active ? 1 : 0.5 })}>
             <div style={S.profH}>
               <div style={S.profHL}>
-                <span style={Object.assign({}, S.role, { background: p.role === "SUV" ? "#1a5c3a" : "#1a3c5c" })}>{p.role}</span>
+                <RoleBadge role={p.role} />
                 <strong style={{ fontSize: 15, color: "#e4e4e7" }}>{p.name}</strong>
               </div>
               <div style={S.profA}>
                 <button style={S.smBtn} onClick={function () { toggleActive(p.id); }}>{p.active ? "Off" : "On"}</button>
                 <button style={S.smBtn} onClick={function () { setEd(ed === p.id ? null : p.id); }}>{ed === p.id ? "Done" : "Edit"}</button>
-                <button style={S.smBtn} onClick={function () { save(Object.assign({}, data, { profiles: data.profiles.map(function (pp) { return pp.id === p.id ? Object.assign({}, pp, { role: pp.role === "SUV" ? "Commuter" : "SUV" }) : pp; }) })); }}>{p.role === "SUV" ? "→Com" : "→SUV"}</button>
                 <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { delProf(p.id); }}>Del</button>
               </div>
             </div>
-            {ed === p.id ? (<ProfEd profile={p} onSave={function (params) { updProf(p.id, params); }} />) : (
+            {ed === p.id ? (<ProfEd profile={p} onSave={function (upd) { updProf(p.id, upd); }} />) : (
               <div style={{ fontSize: 13, color: "#8a8a96", lineHeight: 1.6 }}>
                 <div>{p.params.make} {p.params.model} · {p.params.years} · {p.params.trims}</div>
                 <div>≤${p.params.maxPrice.toLocaleString()} · ≤{p.params.maxMiles.toLocaleString()} mi</div>
@@ -920,17 +1039,22 @@ function ProfilesTab({ data, save }) {
 
 function ProfEd({ profile, onSave }) {
   var [p, setP] = useState(Object.assign({}, profile.params));
+  var [name, setName] = useState(profile.name || "");
+  var [role, setRole] = useState(profile.role || "");
   return (
     <div style={S.grid2}>
-      {[["make", "Make"], ["model", "Model"], ["powertrain", "Powertrain (Hybrid/PHEV/Electric)"], ["years", "Years"], ["trims", "Trims"]].map(function (pair) {
+      <div style={S.field}><label style={S.lbl}>Name</label><input style={S.inp} value={name} onChange={function (e) { setName(e.target.value); }} /></div>
+      <div style={S.field}><label style={S.lbl}>Category / role (optional)</label><input style={S.inp} value={role} onChange={function (e) { setRole(e.target.value); }} placeholder="e.g. SUV, Daily, Truck" /></div>
+      {[["make", "Make"], ["model", "Model"], ["powertrain", "Powertrain (Hybrid/PHEV/Electric)"], ["years", "Years"], ["trims", "Trims (scoring only)"]].map(function (pair) {
         return (<div key={pair[0]} style={S.field}><label style={S.lbl}>{pair[1]}</label><input style={S.inp} value={p[pair[0]] || ""} onChange={function (e) { setP(Object.assign({}, p, { [pair[0]]: e.target.value })); }} /></div>);
       })}
       <div style={S.field}><label style={S.lbl}>Max Price</label><input style={S.inp} type="number" value={p.maxPrice} onChange={function (e) { setP(Object.assign({}, p, { maxPrice: parseInt(e.target.value) || 0 })); }} /></div>
       <div style={S.field}><label style={S.lbl}>Max Miles</label><input style={S.inp} type="number" value={p.maxMiles} onChange={function (e) { setP(Object.assign({}, p, { maxMiles: parseInt(e.target.value) || 0 })); }} /></div>
-      {[["mustHave", "Must-have"], ["niceToHave", "Nice-to-have"], ["dealbreakers", "Dealbreakers"]].map(function (pair) {
+      {[["mustHave", "Must-have (scoring only)"], ["niceToHave", "Nice-to-have (scoring only)"], ["dealbreakers", "Dealbreakers (scoring only)"]].map(function (pair) {
         return (<div key={pair[0]} style={Object.assign({}, S.field, { gridColumn: "1/-1" })}><label style={S.lbl}>{pair[1]}</label><textarea style={S.ta} value={p[pair[0]] || ""} onChange={function (e) { setP(Object.assign({}, p, { [pair[0]]: e.target.value })); }} rows={2} /></div>);
       })}
-      <button style={S.priBtn} onClick={function () { onSave(p); }}>Save</button>
+      <p style={Object.assign({}, S.help, { gridColumn: "1/-1", margin: 0 })}>Make / model / powertrain / years / max price / max miles filter the search. Trims, must/nice-to-have, and dealbreakers only guide AI scoring.</p>
+      <button style={S.priBtn} onClick={function () { onSave({ name: name.trim() || "Profile", role: role.trim(), params: p }); }}>Save</button>
     </div>
   );
 }
@@ -1069,6 +1193,8 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   var purchL = applyFilter(data.listings.filter(function (l) { return l.status === "purchased"; })).slice().sort(sortFn);
 
   var activeProfiles = data.profiles.filter(function (p) { return p.active; });
+  var roleOpts = [];
+  data.profiles.forEach(function (p) { if (p.role && roleOpts.indexOf(p.role) === -1) roleOpts.push(p.role); });
 
   var [showRej, setShowRej] = useState(false);
   var [showSkipped, setShowSkipped] = useState(false);
@@ -1110,11 +1236,12 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
             <option value="all">All profiles</option>
             {activeProfiles.map(function (p) { return (<option key={p.id} value={p.id}>{p.name}</option>); })}
           </select>
-          <select style={Object.assign({}, S.inp, { flex: "0 0 auto", padding: "5px 8px", fontSize: 12 })} value={filterRole} onChange={function (e) { setFilterRole(e.target.value); }}>
-            <option value="all">All roles</option>
-            <option value="SUV">SUV only</option>
-            <option value="Commuter">Commuter only</option>
-          </select>
+          {roleOpts.length >= 2 && (
+            <select style={Object.assign({}, S.inp, { flex: "0 0 auto", padding: "5px 8px", fontSize: 12 })} value={filterRole} onChange={function (e) { setFilterRole(e.target.value); }}>
+              <option value="all">All categories</option>
+              {roleOpts.map(function (r) { return (<option key={r} value={r}>{r} only</option>); })}
+            </select>
+          )}
           <select style={Object.assign({}, S.inp, { flex: "0 0 auto", padding: "5px 8px", fontSize: 12 })} value={sortBy} onChange={function (e) { setSortBy(e.target.value); }}>
             <option value="score">Sort: Score ↓</option>
             <option value="price">Sort: Price ↑</option>
@@ -1420,7 +1547,7 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
         <div>
           <strong style={{ fontSize: 14, color: "#f0f0f3" }}>{cand.year} {cand.vehicle}</strong>
           {cand.trim && <span style={S.trimB}>{cand.trim}</span>}
-          {prof && <span style={Object.assign({}, S.role, { background: prof.role === "SUV" ? "#1a5c3a" : "#1a3c5c", marginLeft: 6 })}>{prof.role}</span>}
+          {prof && <RoleBadge role={prof.role} extra={{ marginLeft: 6 }} />}
           {cand._dupe && (
             <span style={{ fontSize: 10, color: cand._cheaper ? "#2d8659" : "#888", marginLeft: 6 }}>
               {cand._cheaper ? "↓ cheaper than existing ($" + cand._existingPrice.toLocaleString() + ")" : "≥ existing ($" + cand._existingPrice.toLocaleString() + ")"}
@@ -1451,9 +1578,11 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
           </a>
         );
       })()}
-      <div style={{ fontSize: 12, color: "#6b9edd", marginBottom: 8 }}>
-        Left for {(prof && prof.role === "SUV") ? "commuter" : "SUV"}: <strong>${calcRem(cand.price).toLocaleString()}</strong>
-      </div>
+      {(function () {
+        var st = getSettings(data);
+        if (!st.budget) return null;
+        return (<div style={{ fontSize: 12, color: "#6b9edd", marginBottom: 8 }}>Budget left if bought: <strong>${calcRem(cand.price, st.budget, st.taxRate).toLocaleString()}</strong></div>);
+      })()}
       <AiBox listing={cand} criteria={data.criteria} />
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <button style={Object.assign({}, S.priBtn, { padding: "6px 14px", fontSize: 12 })} onClick={onApprove}>✓ Add to Watchlist</button>
@@ -1518,8 +1647,9 @@ function LForm({ profiles, criteria, onSave, initial }) {
 function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, stale, onScore, scoreBusy, keyOk, scoring }) {
   var l = listing;
   var prof = data.profiles.find(function (p) { return p.id === l.profileId; });
-  var profRole = prof ? prof.role : "?";
-  var rem = calcRem(l.price || 0);
+  var profRole = prof ? prof.role : "";
+  var st = getSettings(data);
+  var rem = calcRem(l.price || 0, st.budget, st.taxRate);
   var salt = isSalt(l.state);
   var age = daysSince(l.lastChecked);
   var [confirmDel, setConfirmDel] = useState(false);
@@ -1537,7 +1667,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
         <div>
           <strong style={{ fontSize: 15, color: "#f0f0f3" }}>{l.year} {l.vehicle}</strong>
           {l.trim && <span style={S.trimB}>{l.trim}</span>}
-          <span style={Object.assign({}, S.role, { background: profRole === "SUV" ? "#1a5c3a" : profRole === "Commuter" ? "#1a3c5c" : "#444", marginLeft: 6 })}>{profRole}</span>
+          <RoleBadge role={profRole} extra={{ marginLeft: 6 }} />
           {!prof && <span style={{ fontSize: 10, color: "#c44", marginLeft: 4 }}>(deleted)</span>}
           {stale && <span style={S.staleB}>⏰ {age}d</span>}
         </div>
@@ -1569,7 +1699,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
           </a>
         );
       })()}
-      <div style={{ fontSize: 12, color: "#6b9edd", marginBottom: 4 }}>Left for {profRole === "SUV" ? "commuter" : "SUV"}: <strong>${rem.toLocaleString()}</strong></div>
+      {st.budget ? <div style={{ fontSize: 12, color: "#6b9edd", marginBottom: 4 }}>Budget left if bought: <strong>${rem.toLocaleString()}</strong></div> : null}
       {l.lastChecked && <div style={{ fontSize: 11, color: "#555" }}>Checked: {l.lastChecked}</div>}
       {l.source === "marketcheck" && l.lastSeen && (
         <div style={{ fontSize: 11, color: l.lastSeen === today() ? "#555" : "#d4a017" }}>
@@ -1672,8 +1802,4 @@ var S = {
   budL: { fontSize: 11, color: "#6b6b76", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 },
   budR: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, color: "#c8c8d0", padding: "3px 0", flexWrap: "wrap", gap: 4 },
   budRem: { fontSize: 12, color: "#6b9edd" },
-  calcR: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 },
-  calcL: { fontSize: 12, color: "#8a8a96", width: 90 },
-  calcI: { background: "#1a1c22", border: "1px solid #2a2d38", borderRadius: 5, color: "#e4e4e7", padding: "7px 10px", fontSize: 13, flex: 1, fontFamily: "inherit" },
-  calcHint: { fontSize: 12, color: "#6b6b76" },
 };
