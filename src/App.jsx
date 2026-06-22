@@ -13,12 +13,14 @@ var BUDGET = 40000; // default budget; per-user override in data.settings.budget
 var TAX = 0.07;
 var SALT = new Set("CT,MA,NH,VT,ME,NY,NJ,PA,OH,MI,WI,MN,IL,IN,IA,MD,DE,WV,RI".split(","));
 
+// Broadly-applicable starter rules. Color/taste-specific preferences (e.g. "no
+// gold", "prefer not black") are intentionally NOT defaults — they're offered as
+// examples in the wizard and added per-user. Salt-belt rust is handled by the
+// "location & salt exposure" scoring criterion, not a checkbox.
 var DEFAULT_REQS = [
   { id: "clean-title", text: "Clean title (no salvage, rebuilt, or branded)", active: true },
   { id: "no-accidents", text: "No accident history", active: true },
-  { id: "no-gold", text: "No gold exterior color", active: true },
   { id: "no-mech", text: "No significant mechanical issues", active: true },
-  { id: "no-black-pref", text: "Prefer not black exterior (soft preference)", active: true },
 ];
 
 var DEFAULT_PROFILES = [
@@ -1188,7 +1190,7 @@ function Wizard({ data, onComplete }) {
           )}
           {step === 3 && (
             <div>
-              <p style={lbl}>Global rules apply to every profile and <span style={b}>guide AI scoring</span> (they don't filter the search). These defaults are opinionated — toggle off any you don't want. Notable specifics: no gold exterior, prefer-not-black, and salt-belt rust awareness (Northeast bias).</p>
+              <p style={lbl}>Global rules apply to every profile and <span style={b}>guide AI scoring</span> (they don't filter the search). Toggle off any you don't want; add your own on the Profiles tab. They can be as specific as you like — e.g. <span style={b}>"avoid a gold exterior"</span>, <span style={b}>"prefer not black"</span>, or <span style={b}>"must have heated seats."</span> (Salt-belt rust is already handled by the location scoring criterion.)</p>
               {reqs.length ? reqs.map(function (r) {
                 return (
                   <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid #1e2028", opacity: r.active ? 1 : 0.5 }}>

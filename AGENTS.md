@@ -4,11 +4,14 @@ Guidance for AI agents (and humans) working in this repo. Read this first.
 
 ## What this is
 
-A personal **car-shopping tracker** for buying two used cars (an SUV + a
-commuter) near **Boston** and **Durham**, total budget ≤ $40K. It tracks vehicle
-*profiles* (e.g. RAV4 Hybrid, Bolt EUV), scores listings against weighted
-criteria, and pulls dealer inventory automatically from the MarketCheck
-aggregator. Single-user in practice; access is allowlisted.
+A personal **car-shopping tracker**. It tracks vehicle *profiles* (make/model/
+years/price), pulls matching dealer inventory automatically from the MarketCheck
+aggregator, scores listings against weighted criteria (optionally with AI using
+the user's own Anthropic key), and keeps a watchlist with price/availability
+tracking. Budget, search locations, and freeform categories are configurable
+(one car or several); a setup wizard handles first-run. Access is allowlisted;
+the default config is opinionated (the owner's two-car ≤$40K Northeast hybrid/EV
+search) but fully editable.
 
 It is a small, pragmatic app — not a framework. Favor simple, surgical changes
 over architecture.
@@ -18,8 +21,11 @@ over architecture.
 - **Frontend:** React 18 + Vite 8, plain JS (no TypeScript). One big component
   file (`src/App.jsx`).
 - **Backend:** Vercel **serverless functions** in `api/` (Node 22, ESM).
-- **Data/auth:** Supabase — magic-link auth + a single Postgres table
-  (`app_state`) holding one JSONB blob per user. RLS + an email allowlist.
+- **Data/auth:** Supabase — magic-link auth + `app_state` (one JSONB blob per
+  user) and a server-only `user_anthropic_keys` vault (encrypted per-user
+  Anthropic key). RLS + an email allowlist.
+- **External APIs:** MarketCheck (dealer inventory) and Anthropic (AI scoring),
+  both called only from `api/` (keys never reach the browser).
 - **Deploy:** Vercel (`vercel.json`). CI for DB migrations via GitHub Actions.
 - Node version: **22** (`.nvmrc`, `package.json` engines).
 
@@ -29,16 +35,22 @@ over architecture.
 
 | Path | What it is |
 |---|---|
-| `src/App.jsx` | ~1250 lines: nearly the entire UI + app logic. The main file. |
+| `src/App.jsx` | The entire UI + app logic (large; the main file). |
 | `src/sync.js` | Client side of the listing sync: `fetchListings`, `reconcile`, `fetchRawSample`. |
+| `src/score.js` | Client side of AI scoring + Anthropic-key management; `scoreSet`, model list. |
 | `src/storage.js` | Supabase-backed get/set/delete of the per-user JSONB blob. |
 | `src/supabaseClient.js` | Supabase client + default URL/anon key. |
 | `src/Auth.jsx` | Magic-link auth gate + the "not authorized" screen. |
 | `src/main.jsx`, `src/index.css` | Entry point + global styles. |
-| `api/marketcheck.js` | Serverless proxy to MarketCheck (holds the API key). |
+| `api/marketcheck.js` | Serverless proxy to MarketCheck (holds the API key). `buildUrl`/`normalize`. |
 | `api/_auth.js` | Server-side auth + allowlist (`authorize()`). Shared module. |
-| `api/me.js` | Allowlist check for the UI. |
-| `supabase/migrations/*.sql` | DB schema (baseline + allowlist). |
+| `api/me.js` | Allowlist + Anthropic-key-status check for the UI. |
+| `api/_scoring.js` | Scoring prompt/schema/coercion + model allowlist (`resolveScoreModel`). |
+| `api/_crypto.js` | AES-256-GCM encrypt/decrypt for the Anthropic-key vault. |
+| `api/_supabaseAdmin.js` | Service-role (`SUPABASE_SECRET_KEY`) client for the key vault. |
+| `api/anthropic-key.js` | Validate / store (encrypted) / remove the per-user Anthropic key. |
+| `api/score.js` | Batch listing scoring with the user's decrypted key. |
+| `supabase/migrations/*.sql` | DB schema (baseline + allowlist + anthropic-key vault). |
 | `supabase/ci/shim.sql`, `supabase/config.toml` | CI migration testing + CLI config. |
 | `.github/workflows/migrations.yml` | Validate + apply migrations. |
 | `docs/listing-pipeline.md` | **Design doc** for the sync pipeline. Read for the "why". |
@@ -62,9 +74,16 @@ There is **no generated source** in `src/` or `api/` — it's all authored by ha
 See `docs/listing-pipeline.md` for the full design. In short:
 
 - **State model:** the whole app state (`profiles`, `criteria`, `globalReqs`,
-  `listings`, `version`, `lastSynced`) is one JSONB blob per user in
-  `app_state.data`. `storage.js` reads/writes it; `App.jsx` holds it in `data`
-  and saves via `save()` / `saveRecalc()`. There is no per-listing table.
+  `listings`, `settings` {budget, taxRate, tagline, hubs}, `skipped`,
+  `scoreModel`, `autoScore`, `onboarded`, `version`, `lastSynced`) is one JSONB
+  blob per user in `app_state.data`. `storage.js` reads/writes it; `App.jsx`
+  holds it in `data` and saves via `save()` / `saveRecalc()` / `patchListings()`.
+  There is no per-listing table. Bump `VERSION` + add a `migrate()` step when the
+  blob shape changes (see the v6 `settings` migration).
+- **AI scoring:** `src/score.js` → `POST /api/score` decrypts the user's vaulted
+  Anthropic key (`_crypto` + `_supabaseAdmin`) and scores each listing against a
+  JSON schema built from the user's criteria (`_scoring.js`, model allowlisted).
+  Roles/categories are freeform; budget/hubs live in `data.settings`.
 - **Auth + allowlist (server-enforced):** anyone can sign up via magic link, but
   `api/_auth.js` requires the email be allowlisted — via the `ALLOWED_EMAILS`
   env var **or** the `allowed_emails` DB table (`is_allowed()` RPC). RLS on
@@ -80,10 +99,14 @@ See `docs/listing-pipeline.md` for the full design. In short:
   `normalize()` in `api/marketcheck.js`** — if the API shape is wrong, that's the
   only place to change.
 
-`App.jsx` is large but navigable; in order: constants/defaults → utilities →
-import validation → `dedupInsert`/`migrate` → `App` component (state + callbacks)
-→ `DashView` → `ProfilesTab` → `CriteriaTab` → `QueriesTab` → `ResultsTab` →
-`SyncStatus` → `CandCard` → `LForm` → `LCard` → the `S` style object.
+`App.jsx` is large but navigable; in order: constants/defaults (incl.
+`DEFAULT_SETTINGS`, `roleColor`, `RoleBadge`) → utilities (`calcRem`, `applyScore`)
+→ import validation → `dedupInsert`/`migrate`/`freshData` → `App` component
+(state + callbacks) → `DashView`/`BG` → `Wizard` → `SettingsCard`/`ProfilesTab`/
+`ProfEd` → `CriteriaTab` → `HelpTab` → `ResultsTab` → `SyncStatus`/`AiPanel` →
+`AiBox`/`TitleNote`/`Thumb` → `CandCard` → `LForm` → `LCard` → the `S` style
+object. (The old manual `QueriesTab`/`SOURCES` and the two-car `PairCalc` were
+removed.)
 
 ## Commands
 
@@ -95,11 +118,14 @@ npm run preview   # serve the built bundle
 npm test          # Vitest golden tests (see test/)
 ```
 
-**Tests:** Vitest golden tests live in `test/` and cover the deterministic core
-of the sync pipeline — `buildUrl`/`parseYears`/`normalize`/`mapDealerType`
-(`api/marketcheck.js`) and `reconcile` (`src/sync.js`). The `buildUrl` test
-specifically guards against request regressions (host, `year_range`, no
-`seller_type`). Fixtures are in `test/fixtures/` — refresh
+**Tests:** Vitest tests live in `test/` and cover the deterministic core —
+`buildUrl`/`parseYears`/`normalize`/`mapDealerType`/`pickPhoto`
+(`api/marketcheck.js`), `reconcile` (`src/sync.js`), the scoring helpers
+(`buildScoreSchema`/`buildUserPrompt`/`coerceResult`/`resolveScoreModel`,
+`api/_scoring.js`), and the key crypto round-trip (`api/_crypto.js`). The
+`buildUrl` test guards against request regressions (host; exact-year `year` CSV
+so non-contiguous profiles exclude gap years; no `seller_type`). Fixtures are in
+`test/fixtures/` — refresh
 `marketcheck-active-search.json` from a real response via the **Debug raw**
 button when the API shape is confirmed (see `test/README.md`). No linter is
 configured. CI: `.github/workflows/test.yml` runs `npm test` + `npm run build`
@@ -120,10 +146,12 @@ Defined/documented in `.env.example`. Summary:
 | Var | Where | Purpose |
 |---|---|---|
 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | client (bundled) | Supabase connection. Public by design (RLS protects data). |
-| `MARKETCHECK_API_KEY` | server only | MarketCheck data key. **Never** `VITE_`-prefixed. |
-| `MARKETCHECK_RADIUS` | server (optional) | Search radius; default 100 (free-tier cap). |
-| `MARKETCHECK_HOST` | server (optional) | Override API host (default `api.marketcheck.com`). |
-| `ALLOWED_EMAILS` | server (optional) | Comma-separated allowlist; union with the DB table. |
+| `MARKETCHECK_API_KEY` | server only | MarketCheck data key. **Never** `VITE_`-prefixed. (Optional: `MARKETCHECK_HOST`, `MARKETCHECK_RADIUS` default 100, `MARKETCHECK_THROTTLE_MS`.) |
+| `SUPABASE_SECRET_KEY` | server only | Supabase Secret key (`sb_secret_…`); service-role access to the `user_anthropic_keys` vault. |
+| `KEY_ENCRYPTION_SECRET` | server only | ≥16 chars; AES-256-GCM key for the stored Anthropic keys. Rotating invalidates them. |
+| `SCORING_MODEL` | server (optional) | Override default scoring model (`claude-sonnet-4-6`); must be allowlisted in `_scoring.js`. |
+| `ALLOWED_EMAILS` | server (optional) | Comma-separated allowlist; union with the `allowed_emails` DB table. |
+| `DEBUG_TOKEN` | server (optional) | ≥24-char bearer bypass for headless `/api` debugging (no DB access). |
 | `SUPABASE_DB_URL` | GitHub Actions secret | Session-pooler URL for CI `db push`. |
 
 **Golden rule:** only `VITE_`-prefixed vars reach the browser bundle. Anything
@@ -157,7 +185,7 @@ per environment (Preview vs Production) — set keys in the env you're testing.
    - `MARKETCHECK_API_KEY is not configured` → key missing for that Vercel env.
    - HTTP 401/403 → bad key or the plan lacks the active-search endpoint.
    - HTTP 4xx on every query → wrong host/param (it's `api.marketcheck.com`,
-     `year_range=min-max`, `price_range`/`miles_range`, `zip`+`radius`).
+     `year` as an exact-year CSV, `price_range`/`miles_range`, `zip`+`radius`).
    - Radius > 100 on the free tier → set `MARKETCHECK_RADIUS=100`.
 4. To exercise the full candidate/approve flow **without** the API or key, the
    proxy supports `?mock=1` (synthetic listings).
