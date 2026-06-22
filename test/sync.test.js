@@ -43,6 +43,14 @@ describe("reconcile", () => {
     expect(updated.notes).toContain("$27,000 → $25,500");
   });
 
+  it("flags a price-changed listing for review with a lastChange", () => {
+    const updated = result.listings.find((l) => l.id === "a1");
+    expect(updated.reviewPending).toBe(true);
+    expect(updated.lastChange).toEqual({ type: "price", from: 27000, to: 25500, dir: "↓", at: TODAY });
+    // unchanged/absent listings are not flagged
+    expect(result.listings.find((l) => l.id === "b2").reviewPending).toBeFalsy();
+  });
+
   it("flags a vanished listing non-destructively", () => {
     const gone = result.listings.find((l) => l.id === "b2");
     expect(gone).toBeTruthy();

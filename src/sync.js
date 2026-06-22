@@ -87,6 +87,10 @@ export function reconcile(existing, fetched, todayStr) {
     if (f.price && f.price !== l.price) {
       const dir = f.price < l.price ? "↓" : "↑";
       next.notes = appendNote(l.notes, dir + " Price $" + (l.price || 0).toLocaleString() + " → $" + f.price.toLocaleString() + " (" + todayStr + ")");
+      // Material change: surface for review (separate from the saved watchlist)
+      // and eligible for an auto re-score.
+      next.reviewPending = true;
+      next.lastChange = { type: "price", from: l.price || 0, to: f.price, dir: dir, at: todayStr };
       next.price = f.price;
       summary.priceUpdates++;
     } else {

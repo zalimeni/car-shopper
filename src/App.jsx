@@ -14,14 +14,15 @@ var BUDGET = 40000; // default budget; per-user override in data.settings.budget
 var TAX = 0.07;
 var SALT = new Set("CT,MA,NH,VT,ME,NY,NJ,PA,OH,MI,WI,MN,IL,IN,IA,MD,DE,WV,RI".split(","));
 
-// Broadly-applicable starter rules. Color/taste-specific preferences (e.g. "no
-// gold", "prefer not black") are intentionally NOT defaults — they're offered as
-// examples in the wizard and added per-user. Salt-belt rust is handled by the
-// "location & salt exposure" scoring criterion, not a checkbox.
+// Starter global requirements (fed to AI scoring). Broad rules first; the
+// color/taste preferences (gold, then the soft prefer-not-black) come last.
+// Salt-belt rust is handled by the "location & salt exposure" scoring criterion.
 var DEFAULT_REQS = [
   { id: "clean-title", text: "Clean title (no salvage, rebuilt, or branded)", active: true },
   { id: "no-accidents", text: "No accident history", active: true },
   { id: "no-mech", text: "No significant mechanical issues", active: true },
+  { id: "no-gold", text: "No gold exterior color", active: true },
+  { id: "no-black-pref", text: "Prefer not black exterior (soft preference)", active: true },
 ];
 
 var DEFAULT_PROFILES = [
@@ -500,29 +501,34 @@ export default function App() {
       var decorated = rec.candidates.map(function (c) {
         return Object.assign({}, c, { compositeScore: calcScore(c.scores, data.criteria), _candidate: true });
       });
-      // Don't resurface VINs the user explicitly skipped — they live in
-      // data.skipped until restored. (A skipped item can still be brought back
-      // manually from the Skipped view.)
+      // `added` = candidates genuinely NEW to the queue this run: drop VINs the
+      // user skipped (live in data.skipped until restored) and VINs already in
+      // the candidate queue from a prior sync (so we never auto-rescore them).
       var skippedVins = {};
       (data.skipped || []).forEach(function (s) { if (s.vin) skippedVins[s.vin] = true; });
+      var queueVins = {};
+      candidates.forEach(function (c) { if (c.vin) queueVins[c.vin] = true; });
+      var added = decorated.filter(function (c) { return (!c.vin || !queueVins[c.vin]) && !(c.vin && skippedVins[c.vin]); });
       setCandidates(function (prev) {
         var seen = {};
         prev.forEach(function (c) { if (c.vin) seen[c.vin] = true; });
-        return prev.concat(decorated.filter(function (c) { return (!c.vin || !seen[c.vin]) && !(c.vin && skippedVins[c.vin]); }));
+        return prev.concat(added.filter(function (c) { return !c.vin || !seen[c.vin]; }));
       });
       if (res.errors && res.errors.length) console.warn("Sync query errors:", res.errors);
-      // Which existing listings had their price change this run — candidates for
-      // a re-score alongside the brand-new candidates.
+      // Existing listings whose price changed this run — materially changed, so
+      // eligible for an auto re-score (and flagged reviewPending by reconcile).
       var prevPrice = {};
       data.listings.forEach(function (l) { if (l.id) prevPrice[l.id] = l.price; });
       var changed = rec.listings.filter(function (l) { return l.id && prevPrice[l.id] != null && l.price !== prevPrice[l.id]; });
       await save(Object.assign({}, data, { listings: rec.listings, lastSynced: new Date().toISOString() }));
       setSyncMsg({ ok: true, summary: rec.summary, errors: res.errors, mock: res.mock });
       setSyncing(false);
-      // Auto-score new candidates + price-changed listings (best-effort; quiet
-      // on failure for background syncs). Not awaited — sync is already done.
-      if (autoScore && keyStatus.valid && !scoreBusy && (decorated.length || changed.length)) {
-        scoreItems(decorated, changed);
+      // Auto-score only NEW candidates (never skipped, never already-queued, and
+      // only if not already scored) plus materially price-changed listings.
+      // Best-effort; not awaited — sync is already done.
+      if (autoScore && keyStatus.valid && !scoreBusy) {
+        var newToScore = added.filter(function (c) { return !c.scoredAt; });
+        if (newToScore.length || changed.length) scoreItems(newToScore, changed);
       }
       return;
     } catch (e) {
@@ -530,7 +536,7 @@ export default function App() {
       if (!auto) setSyncMsg({ ok: false, error: e.message });
     }
     setSyncing(false);
-  }, [data, syncing, save, autoScore, keyStatus, scoreBusy, scoreItems]);
+  }, [data, syncing, save, autoScore, keyStatus, scoreBusy, scoreItems, candidates]);
 
   // Sync-on-open: once per load, if it's been a while since the last sync.
   var didAutoSync = useRef(false);
@@ -678,6 +684,12 @@ export default function App() {
   }, [data, save]);
 
   var markChk = useCallback(function (id) { updListing(id, { lastChecked: today() }); }, [updListing]);
+  // Acknowledge a sync update: move it out of the review section back to the watchlist.
+  var ackReview = useCallback(function (id) { updListing(id, { reviewPending: false }); }, [updListing]);
+  var ackAllReviews = useCallback(function () {
+    if (!data) return;
+    save(Object.assign({}, data, { listings: data.listings.map(function (l) { return l.reviewPending ? Object.assign({}, l, { reviewPending: false }) : l; }) }));
+  }, [data, save]);
   var markAllChk = useCallback(function () {
     if (!data) return;
     var t = today();
@@ -732,6 +744,7 @@ export default function App() {
         {tab === "Results" && (
           <ResultsTab data={data} addListing={addListing} updListing={updListing} delListing={delListing}
             edListing={edListing} setEdListing={setEdListing} markChk={markChk}
+            ackReview={ackReview} ackAllReviews={ackAllReviews}
             candidates={candidates} approveCand={approveCand}
             approveAll={approveAll} dismissCand={dismissCand}
             skipped={data.skipped || []} restoreSkipped={restoreSkipped} watchSkipped={watchSkipped} purgeSkipped={purgeSkipped}
@@ -1194,7 +1207,7 @@ function Wizard({ data, onComplete }) {
           )}
           {step === 3 && (
             <div>
-              <p style={lbl}>Global rules apply to every profile and <span style={b}>guide AI scoring</span> (they don't filter the search). Toggle off any you don't want; add your own on the Profiles tab. They can be as specific as you like — e.g. <span style={b}>"avoid a gold exterior"</span>, <span style={b}>"prefer not black"</span>, or <span style={b}>"must have heated seats."</span> (Salt-belt rust is already handled by the location scoring criterion.)</p>
+              <p style={lbl}>Global rules apply to every profile and <span style={b}>guide AI scoring</span> (they don't filter the search). Toggle off any you don't want; add your own on the Profiles tab — they can be as specific as you like, e.g. <span style={b}>"must have heated seats."</span> (Salt-belt rust is already handled by the location scoring criterion.)</p>
               {reqs.length ? reqs.map(function (r) {
                 return (
                   <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid #1e2028", opacity: r.active ? 1 : 0.5 }}>
@@ -1324,16 +1337,16 @@ function HelpTab() {
       </div>
 
       <div style={S.card}>
-        <h3 style={S.cardH}>Candidates &amp; Skipped</h3>
-        <p style={li}><span style={b}>Approve</span> adds a candidate to your watchlist; <span style={b}>Approve All</span> takes the whole queue.</p>
-        <p style={li}><span style={b}>Skip</span> sets it aside — skipped items move to a collapsible <span style={b}>Skipped</span> list and won't reappear on future syncs.</p>
+        <h3 style={S.cardH}>For review vs. your watchlist</h3>
+        <p style={li}>The Results tab keeps "needs a look" separate from "saved": <span style={b}>Candidates</span> (brand-new matches, full cards) and <span style={b}>Updated — review</span> (saved listings whose price changed this sync, shown as compact cards with a link) sit up top. Your <span style={b}>Watchlist</span> below is the stuff you've already saved and reviewed.</p>
+        <p style={li}><span style={b}>Approve</span> moves a candidate to the watchlist; <span style={b}>Skip</span> sets it aside (collapsible <span style={b}>Skipped</span> list; won't reappear on future syncs, and is never auto-scored). On an Updated card, <span style={b}>✓ Reviewed</span> returns it to the watchlist; <span style={b}>Reject</span> drops it.</p>
         <p style={li}>From Skipped you can <span style={b}>Restore to queue</span>, send straight to <span style={b}>Watchlist</span>, or <span style={b}>Remove</span> the record.</p>
       </div>
 
       <div style={S.card}>
         <h3 style={S.cardH}>AI scoring (optional)</h3>
         <p style={li}>Add your <span style={b}>Anthropic API key</span> in the ✨ AI scoring panel (Results tab) to have each listing scored 1–10 per criterion with a short rationale and an overall summary.</p>
-        <p style={li}><span style={b}>Model</span> — pick Sonnet (default, balanced), Opus (most nuanced), or Haiku (fastest/cheapest). <span style={b}>Auto-score on sync</span> scores new candidates and price-changed listings for you.</p>
+        <p style={li}><span style={b}>Model</span> — pick Sonnet (default, balanced), Opus (most nuanced), or Haiku (fastest/cheapest). <span style={b}>Auto-score on sync</span> scores only brand-new candidates and listings whose price materially changed — it never re-scores untouched or skipped listings.</p>
         <p style={li}>Score (or Re-score) any single card with its ✨ button, or use <span style={b}>Score all</span> on the candidate queue.</p>
         <p style={note}>The key is validated, stored encrypted server-side, and never shown again — it's only used to score your own listings under your own account. Note: the API is pay-as-you-go and needs credits in the Anthropic Console; a Claude Pro/Max subscription does not include API access.</p>
       </div>
@@ -1357,6 +1370,7 @@ function HelpTab() {
 
 // ── Results ──
 function ResultsTab({ data, addListing, updListing, delListing, edListing, setEdListing, markChk,
+  ackReview, ackAllReviews,
   candidates, approveCand, approveAll, dismissCand,
   skipped, restoreSkipped, watchSkipped, purgeSkipped,
   importText, setImportText, doImport, importResult, setImportResult,
@@ -1388,7 +1402,10 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   }
 
   var watchRaw = data.listings.filter(function (l) { return l.status === "watch"; });
-  var watchFiltered = applyFilter(watchRaw).slice().sort(sortFn);
+  // Saved watchlist updated by the last sync (price change) is surfaced for
+  // review, separate from the rest of the watchlist, until acknowledged.
+  var updatedW = applyFilter(watchRaw.filter(function (l) { return l.reviewPending; })).slice().sort(sortFn);
+  var watchFiltered = applyFilter(watchRaw.filter(function (l) { return !l.reviewPending; })).slice().sort(sortFn);
   var staleW = watchFiltered.filter(function (l) { return daysSince(l.lastChecked) >= STALE_DAYS; });
   var freshW = watchFiltered.filter(function (l) { return daysSince(l.lastChecked) < STALE_DAYS; });
   var rejL = applyFilter(data.listings.filter(function (l) { return l.status === "rejected"; })).slice().sort(sortFn);
@@ -1474,6 +1491,21 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
             return (<CandCard key={i} cand={c} onApprove={function () { approveCand(c); }} onDismiss={function () { dismissCand(c); }} data={data}
               onScore={function () { scoreItems([c], []); }} scoreBusy={scoreBusy} keyOk={keyStatus.valid}
               scoring={scoringActive.indexOf(c.id || c.vin) > -1} />);
+          })}
+        </div>
+      )}
+
+      {/* Updated since last sync — compact review cards, separate from the saved watchlist */}
+      {updatedW.length > 0 && (
+        <div style={S.card}>
+          <div style={S.secH}>
+            <h3 style={S.cardH}>Updated — review ({updatedW.length})</h3>
+            <button style={S.secBtn} onClick={ackAllReviews}>Mark all reviewed</button>
+          </div>
+          {updatedW.map(function (l) {
+            return (<UpdateCard key={l.id} listing={l} data={data}
+              onReviewed={function () { ackReview(l.id); }}
+              onReject={function () { updListing(l.id, { status: "rejected", rejectReason: "Reviewed update", reviewPending: false }); }} />);
           })}
         </div>
       )}
@@ -1736,6 +1768,43 @@ function Thumb({ photo, link, alt }) {
         onError={function (e) { e.target.style.display = "none"; }}
         style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 8, border: "1px solid #1e2028", display: "block" }} />
     </a>
+  );
+}
+
+// Compact card for a saved listing the last sync updated (e.g. price change) —
+// distinct from the full new-candidate card. Shows the change + a link; acts
+// only "review" / "reject", since the listing is already on the watchlist.
+function UpdateCard({ listing, data, onReviewed, onReject }) {
+  var l = listing;
+  var prof = data.profiles.find(function (p) { return p.id === l.profileId; });
+  var ch = l.lastChange;
+  var sc = l.compositeScore >= 7 ? "#2d8659" : l.compositeScore >= 5 ? "#d4a017" : "#c44";
+  var url = l.link || (l.vin ? "https://www.google.com/search?q=" + encodeURIComponent(l.vin) : "");
+  return (
+    <div style={Object.assign({}, S.card, { padding: 12, marginBottom: 8, borderLeft: "3px solid #d4a017", background: "#15140e" })}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+        <div>
+          <strong style={{ fontSize: 14, color: "#f0f0f3" }}>{l.year} {l.vehicle}</strong>
+          {prof && <RoleBadge role={prof.role} extra={{ marginLeft: 6 }} />}
+          {ch && ch.type === "price" && (
+            <div style={{ fontSize: 12, color: ch.dir === "↓" ? "#2d8659" : "#d4a017", marginTop: 3 }}>
+              {ch.dir} Price ${Number(ch.from || 0).toLocaleString()} → <strong>${Number(ch.to || 0).toLocaleString()}</strong>
+            </div>
+          )}
+          <div style={{ fontSize: 12, color: "#8a8a96", marginTop: 3 }}>
+            {(l.mileage || 0).toLocaleString()} mi{l.dealer ? " · " + l.dealer : ""}{l.location ? " · " + l.location + ", " + l.state : ""}
+          </div>
+        </div>
+        {l.compositeScore > 0 && <span style={{ fontSize: 16, fontWeight: 700, color: sc }}>{l.compositeScore}</span>}
+      </div>
+      {l.aiSummary && <div style={{ fontSize: 12, color: "#9a9aa6", fontStyle: "italic", margin: "6px 0" }}>{l.aiSummary}</div>}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+        {url && <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#8ab4f8" }}>{l.link ? "View listing →" : "Search →"}</a>}
+        <span style={{ flex: 1 }} />
+        <button style={Object.assign({}, S.smBtn, { color: "#2d8659" })} onClick={onReviewed}>✓ Reviewed</button>
+        <button style={Object.assign({}, S.smBtn, { color: "#c44" })} onClick={onReject}>Reject</button>
+      </div>
+    </div>
   );
 }
 
