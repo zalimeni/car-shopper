@@ -521,7 +521,10 @@ export default function App() {
       data.listings.forEach(function (l) { if (l.id) prevPrice[l.id] = l.price; });
       var changed = rec.listings.filter(function (l) { return l.id && prevPrice[l.id] != null && l.price !== prevPrice[l.id]; });
       await save(Object.assign({}, data, { listings: rec.listings, lastSynced: new Date().toISOString() }));
-      setSyncMsg({ ok: true, summary: rec.summary, errors: res.errors, mock: res.mock });
+      // Report the count actually added to the queue (reconcile's newCount also
+      // counts skipped VINs, which we hide), and note how many matched skips.
+      var skippedSeen = decorated.filter(function (c) { return c.vin && skippedVins[c.vin]; }).length;
+      setSyncMsg({ ok: true, summary: Object.assign({}, rec.summary, { newCount: added.length }), skippedSeen: skippedSeen, errors: res.errors, mock: res.mock });
       setSyncing(false);
       // Auto-score only NEW candidates (never skipped, never already-queued, and
       // only if not already scored) plus materially price-changed listings.
@@ -1634,6 +1637,7 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
     if (s.newCount) parts.push(s.newCount + " new");
     if (s.priceUpdates) parts.push(s.priceUpdates + " price change" + (s.priceUpdates > 1 ? "s" : ""));
     if (s.notSeen) parts.push(s.notSeen + " not seen");
+    if (syncMsg.skippedSeen) parts.push(syncMsg.skippedSeen + " skipped (hidden)");
     var detail = parts.length ? parts.join(" · ") : "no changes";
     text = (syncMsg.mock ? "Mock sync" : "Synced") + " — " + detail + " (from " + (s.fetched || 0) + " found)";
     if (syncMsg.errors && syncMsg.errors.length) {
