@@ -227,7 +227,7 @@ function migrate(data) {
 }
 
 // ── Tabs ──
-var TABS = ["Dashboard", "Profiles", "Criteria", "Results"];
+var TABS = ["Dashboard", "Profiles", "Criteria", "Results", "Help"];
 
 // Session-scoped persistence for volatile UI state, so a mobile reload / tab
 // discard on app-switch doesn't wipe in-progress results (candidates, raw
@@ -680,6 +680,7 @@ export default function App() {
             scoreBusy={scoreBusy} scoreMsg={scoreMsg} scoreItems={scoreItems} scoringActive={scoringActive}
             scoreModel={scoreModel} setScoreModel={setScoreModel} />
         )}
+        {tab === "Help" && <HelpTab />}
       </main>
       <footer style={S.footer}>
         <div style={{ display: "flex", justifyContent: "center", gap: 12, alignItems: "center" }}>
@@ -961,6 +962,68 @@ function CriteriaTab({ data, saveRecalc }) {
           );
         })}
         <p style={S.help}>Auto-recalculates all scores after 0.6s.</p>
+      </div>
+    </div>
+  );
+}
+
+// ── Help / usage ──
+function HelpTab() {
+  var li = { fontSize: 13, color: "#c8c8d0", lineHeight: 1.6, margin: "0 0 6px", paddingLeft: 4 };
+  var b = { color: "#f0f0f3", fontWeight: 600 };
+  var note = { fontSize: 12, color: "#8a8a96", lineHeight: 1.55, margin: "4px 0 0" };
+  return (
+    <div>
+      <div style={S.secH}><h2 style={S.secT}>How this works</h2></div>
+
+      <div style={S.card}>
+        <h3 style={S.cardH}>The basic flow</h3>
+        <p style={li}><span style={b}>1. Profiles</span> — define the cars you're hunting (make/model/years/trims, price &amp; mileage caps, must-haves, dealbreakers). Active profiles drive every search.</p>
+        <p style={li}><span style={b}>2. Sync</span> — pulls matching dealer inventory and reconciles it with what you're already tracking.</p>
+        <p style={li}><span style={b}>3. Candidates</span> — brand-new matches land in a review queue. Approve the good ones to your watchlist, skip the rest.</p>
+        <p style={li}><span style={b}>4. Watchlist</span> — your tracked listings, scored and sortable, with price-change and still-available tracking.</p>
+      </div>
+
+      <div style={S.card}>
+        <h3 style={S.cardH}>Tabs</h3>
+        <p style={li}><span style={b}>Dashboard</span> — at-a-glance counts, top picks per profile, and a heads-up when watched listings are due for a re-check.</p>
+        <p style={li}><span style={b}>Profiles</span> — add/edit/enable the vehicles you're searching for. Each active profile is queried at every hub on sync.</p>
+        <p style={li}><span style={b}>Criteria</span> — the weighted factors (price, mileage, condition, etc.) behind each listing's composite score. Editing weights re-scores everything automatically.</p>
+        <p style={li}><span style={b}>Results</span> — sync, review candidates, and manage your watchlist. This is where you'll spend most of your time.</p>
+      </div>
+
+      <div style={S.card}>
+        <h3 style={S.cardH}>Sync &amp; refresh</h3>
+        <p style={li}><span style={b}>"↻ Sync"</span> (Results tab) is also your refresh. On each run it updates prices (with a note), refreshes the last-seen date, flags listings that didn't appear this time ("may be sold"), and routes new VINs to Candidates.</p>
+        <p style={note}>It runs automatically when you open the app if it's been a while, or on demand. It only refreshes listings that came from dealer sync — manually-added ones aren't touched.</p>
+      </div>
+
+      <div style={S.card}>
+        <h3 style={S.cardH}>Candidates &amp; Skipped</h3>
+        <p style={li}><span style={b}>Approve</span> adds a candidate to your watchlist; <span style={b}>Approve All</span> takes the whole queue.</p>
+        <p style={li}><span style={b}>Skip</span> sets it aside — skipped items move to a collapsible <span style={b}>Skipped</span> list and won't reappear on future syncs.</p>
+        <p style={li}>From Skipped you can <span style={b}>Restore to queue</span>, send straight to <span style={b}>Watchlist</span>, or <span style={b}>Remove</span> the record.</p>
+      </div>
+
+      <div style={S.card}>
+        <h3 style={S.cardH}>AI scoring (optional)</h3>
+        <p style={li}>Add your <span style={b}>Anthropic API key</span> in the ✨ AI scoring panel (Results tab) to have each listing scored 1–10 per criterion with a short rationale and an overall summary.</p>
+        <p style={li}><span style={b}>Model</span> — pick Sonnet (default, balanced), Opus (most nuanced), or Haiku (fastest/cheapest). <span style={b}>Auto-score on sync</span> scores new candidates and price-changed listings for you.</p>
+        <p style={li}>Score (or Re-score) any single card with its ✨ button, or use <span style={b}>Score all</span> on the candidate queue.</p>
+        <p style={note}>The key is validated, stored encrypted server-side, and never shown again — it's only used to score your own listings under your own account. Note: the API is pay-as-you-go and needs credits in the Anthropic Console; a Claude Pro/Max subscription does not include API access.</p>
+      </div>
+
+      <div style={S.card}>
+        <h3 style={S.cardH}>Listings &amp; scores</h3>
+        <p style={li}>The big number on a card is the <span style={b}>composite score</span> (your weighted criteria). AI per-criterion scores feed into it; the <span style={b}>✨ AI assessment</span> box shows the summary and a per-criterion breakdown.</p>
+        <p style={li}><span style={b}>Statuses</span>: Watchlist (active), Rejected (with a reason, restorable), Purchased. Stale watched listings surface under "Needs check" — confirm with <span style={b}>Still avail</span>.</p>
+        <p style={li}><span style={b}>Title note</span>: "✓ Carfax clean title" means confirmed; "ⓘ Title not Carfax-confirmed" just means the dealer didn't state it (verify yourself) — it's not a salvage flag and doesn't affect the score.</p>
+      </div>
+
+      <div style={S.card}>
+        <h3 style={S.cardH}>Backup &amp; reset</h3>
+        <p style={li}><span style={b}>Export Listings</span> (footer) dumps your listings as JSON to copy and back up. <span style={b}>Import</span> (Results) accepts the same shape.</p>
+        <p style={li}>Your data syncs to your account, so signing in elsewhere loads the same watchlist. <span style={b}>Reset All Data</span> (footer) wipes everything back to defaults.</p>
       </div>
     </div>
   );
