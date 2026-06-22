@@ -1636,8 +1636,9 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
     var parts = [];
     if (s.newCount) parts.push(s.newCount + " new");
     if (s.priceUpdates) parts.push(s.priceUpdates + " price change" + (s.priceUpdates > 1 ? "s" : ""));
-    if (s.notSeen) parts.push(s.notSeen + " not seen");
+    if (s.refreshed) parts.push(s.refreshed + " already watched");
     if (syncMsg.skippedSeen) parts.push(syncMsg.skippedSeen + " skipped (hidden)");
+    if (s.notSeen) parts.push(s.notSeen + " not seen");
     var detail = parts.length ? parts.join(" · ") : "no changes";
     text = (syncMsg.mock ? "Mock sync" : "Synced") + " — " + detail + " (from " + (s.fetched || 0) + " found)";
     if (syncMsg.errors && syncMsg.errors.length) {
