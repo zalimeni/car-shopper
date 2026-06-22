@@ -24,6 +24,19 @@ export function adminClient() {
   });
 }
 
+// Anon (publishable) client for public auth flows like sending a magic-link
+// sign-in email (signInWithOtp) — used to give an already-registered invitee a
+// fresh login link.
+export function anonClient() {
+  const key =
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    "sb_publishable_TlJnt8hWo6eeQ1yJV9r0KQ_IbZwbfDk";
+  return createClient(SUPABASE_URL, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
 const TABLE = "user_anthropic_keys";
 
 // Returns { configured, valid, last4 } for the user (configured=false if no row,

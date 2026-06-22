@@ -1258,8 +1258,8 @@ function AdminTab() {
       var r = await addAllowed(input.trim(), invite);
       setInput("");
       var t = "Added " + r.email;
-      if (invite) t += r.invited ? " · invite sent" : (r.inviteError ? " · invite failed: " + r.inviteError : "");
-      setMsg({ ok: true, text: t });
+      if (r.invite) t += " · " + r.invite.message;
+      setMsg({ ok: !r.invite || r.invite.ok !== false, text: t });
       load();
     } catch (e) { setMsg({ ok: false, text: e.message }); }
     setBusy(false);
