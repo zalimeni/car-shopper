@@ -10,7 +10,7 @@
 // default owner) — a non-admin authenticated user gets 403.
 
 import { authorize, isAdmin } from "./_auth.js";
-import { adminClient } from "./_supabaseAdmin.js";
+import { adminClient, anonClient } from "./_supabaseAdmin.js";
 
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
@@ -37,18 +37,11 @@ export default async function handler(req, res) {
     const { error } = await db.from("allowed_emails").upsert({ email: email });
     if (error) { res.status(500).json({ error: error.message }); return; }
 
-    let invited = false, inviteError = null;
-    if (body.invite) {
-      try {
-        const site = siteUrl(req);
-        const r = await db.auth.admin.inviteUserByEmail(email, site ? { redirectTo: site } : undefined);
-        if (r && r.error) inviteError = r.error.message || "invite failed";
-        else invited = true;
-      } catch (e) {
-        inviteError = (e && e.message) ? e.message : "invite failed";
-      }
-    }
-    res.status(200).json({ ok: true, email: email, invited: invited, inviteError: inviteError });
+    // The allowlist row is written regardless — the person is approved now.
+    // Invite is best-effort and reported separately.
+    let invite = null;
+    if (body.invite) invite = await doInvite(db, email, siteUrl(req));
+    res.status(200).json({ ok: true, email: email, invite: invite });
     return;
   }
 
@@ -61,6 +54,39 @@ export default async function handler(req, res) {
   }
 
   res.status(405).json({ error: "Use GET, POST, or DELETE" });
+}
+
+// Best-effort invite. New users get a Supabase invite email; users who already
+// exist (e.g. tried to sign in before being allowlisted) can't be invited, so we
+// send them a fresh magic-link sign-in instead. Either way they're allowlisted.
+async function doInvite(db, email, site) {
+  try {
+    const r = await db.auth.admin.inviteUserByEmail(email, site ? { redirectTo: site } : undefined);
+    if (!r || !r.error) return { ok: true, message: "invite email sent" };
+    if (alreadyRegistered(r.error)) return await resendSignIn(email, site);
+    return { ok: false, message: r.error.message || "invite failed" };
+  } catch (e) {
+    if (alreadyRegistered(e)) return await resendSignIn(email, site);
+    return { ok: false, message: (e && e.message) ? e.message : "invite failed" };
+  }
+}
+
+async function resendSignIn(email, site) {
+  const anon = anonClient();
+  try {
+    const { error } = await anon.auth.signInWithOtp({ email: email, options: site ? { emailRedirectTo: site } : undefined });
+    if (error) return { ok: true, message: "already had an account — they can sign in now (sign-in email not sent: " + error.message + ")" };
+    return { ok: true, message: "already had an account — sent a fresh sign-in link" };
+  } catch (e) {
+    return { ok: true, message: "already had an account — they can just sign in now" };
+  }
+}
+
+function alreadyRegistered(err) {
+  if (!err) return false;
+  const code = err.code || err.error_code || "";
+  const msg = String(err.message || "").toLowerCase();
+  return code === "email_exists" || msg.indexOf("already been registered") > -1 || msg.indexOf("already registered") > -1;
 }
 
 function siteUrl(req) {
