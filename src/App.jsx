@@ -689,6 +689,7 @@ export default function App() {
 
   if (loading) return (<div style={S.loading}>Loading...</div>);
   if (!data) return (<div style={S.loading}>Error loading data</div>);
+  if (!data.onboarded) return (<Wizard data={data} onComplete={function (nd) { save(nd); }} />);
 
   var watch = data.listings.filter(function (l) { return l.status === "watch"; });
   var staleN = watch.filter(function (l) { return daysSince(l.lastChecked) >= STALE_DAYS; }).length;
@@ -748,6 +749,7 @@ export default function App() {
             }
           }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>Export Listings</button>
           <button onClick={function () { runRawDebug(); }} disabled={rawBusy} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" }, rawBusy ? { opacity: 0.6 } : {})}>{rawBusy ? "Running…" : "Debug raw"}</button>
+          <button onClick={function () { save(Object.assign({}, data, { onboarded: false })); }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>Setup wizard</button>
           <button onClick={reset} style={Object.assign({}, S.resetBtn, confirmReset ? { color: "#c44" } : {})}>
             {confirmReset ? "Tap again to confirm reset" : "Reset All Data"}
           </button>
@@ -1091,6 +1093,134 @@ function CriteriaTab({ data, saveRecalc }) {
   );
 }
 
+// ── First-run setup wizard ──
+function Wizard({ data, onComplete }) {
+  var s = getSettings(data);
+  var [step, setStep] = useState(0);
+  var [budget, setBudget] = useState(String(s.budget || ""));
+  var [hubs, setHubs] = useState((s.hubs || []).map(function (h) { return { n: h.n || "", z: h.z || "", lat: h.lat, lon: h.lon }; }));
+  var [keepProfiles, setKeepProfiles] = useState(true);
+  var startReqs = (data.globalReqs && data.globalReqs.length) ? data.globalReqs : DEFAULT_REQS;
+  var [reqs, setReqs] = useState(startReqs.map(function (r) { return Object.assign({}, r); }));
+
+  function setHub(i, key, val) {
+    setHubs(function (prev) { return prev.map(function (h, j) { if (j !== i) return h; var nh = Object.assign({}, h, { [key]: val }); if (key === "z") { nh.lat = undefined; nh.lon = undefined; } return nh; }); });
+  }
+  function addHub() { setHubs(function (prev) { return prev.concat([{ n: "", z: "" }]); }); }
+  function delHub(i) { setHubs(function (prev) { return prev.filter(function (_, j) { return j !== i; }); }); }
+  function toggleReq(id) { setReqs(function (prev) { return prev.map(function (r) { return r.id === id ? Object.assign({}, r, { active: !r.active }) : r; }); }); }
+
+  var starterProfiles = data.profiles || [];
+
+  function finish() {
+    var profiles = keepProfiles ? starterProfiles : [];
+    var n = profiles.filter(function (p) { return p.active; }).length || profiles.length;
+    var hubNames = hubs.filter(function (h) { return h.z || h.n; }).map(function (h) { return h.n || h.z; });
+    var budgetNum = parseInt(budget) || 0;
+    var tagline = (n ? n + " car" + (n > 1 ? "s" : "") : "Car search")
+      + (hubNames.length ? " · " + hubNames.join(", ") : "")
+      + (budgetNum ? " · ≤$" + Math.round(budgetNum / 1000) + "K" : "");
+    var cleanHubs = hubs.filter(function (h) { return (h.z || "").trim() || (h.n || "").trim(); })
+      .map(function (h) { var o = { n: (h.n || "").trim(), z: (h.z || "").trim() }; if (h.lat != null) o.lat = h.lat; if (h.lon != null) o.lon = h.lon; return o; });
+    onComplete(Object.assign({}, data, {
+      settings: Object.assign({}, s, { budget: budgetNum, hubs: cleanHubs, tagline: tagline }),
+      profiles: profiles,
+      globalReqs: reqs,
+      onboarded: true,
+    }));
+  }
+
+  var steps = ["Welcome", "Budget & locations", "What you're shopping for", "Global rules", "Done"];
+  function next() { setStep(function (x) { return Math.min(x + 1, steps.length - 1); }); }
+  function back() { setStep(function (x) { return Math.max(x - 1, 0); }); }
+
+  var lbl = { fontSize: 13, color: "#c8c8d0", lineHeight: 1.6, margin: "0 0 8px" };
+  var b = { color: "#f0f0f3", fontWeight: 600 };
+
+  return (
+    <div style={S.app}>
+      <header style={S.header}>
+        <div style={S.hRow}><h1 style={S.title}>Set up your search</h1><span style={S.badge}>Step {step + 1}/{steps.length}</span></div>
+        <p style={S.sub}>{steps[step]}</p>
+      </header>
+      <main>
+        <div style={S.card}>
+          {step === 0 && (
+            <div>
+              <p style={lbl}>This app tracks used-car listings from dealer inventory across your search areas, scores them against your criteria (optionally with AI), and keeps a watchlist with price-change and still-available tracking.</p>
+              <p style={lbl}>A few quick questions to tailor it to you. <span style={b}>Everything here is editable later</span> on the Profiles tab — and the starter cars, locations, and rules below are opinionated defaults (a Northeast hybrid/EV, two-car search) you can keep, change, or clear.</p>
+            </div>
+          )}
+          {step === 1 && (
+            <div>
+              <p style={lbl}>What's your total budget, and where should we search? <span style={b}>ZIP is required</span> per location; the name is just a label. Each location searches ~100 mi around it.</p>
+              <div style={S.grid2}>
+                <div style={S.field}><label style={S.lbl}>Total budget ($)</label><input style={S.inp} type="number" value={budget} onChange={function (e) { setBudget(e.target.value); }} placeholder="40000" /></div>
+              </div>
+              <div style={{ marginTop: 10 }}>
+                <label style={S.lbl}>Search locations</label>
+                {hubs.map(function (h, i) {
+                  return (
+                    <div key={i} style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                      <input style={Object.assign({}, S.inp, { flex: 1 })} value={h.n} placeholder="City label" onChange={function (e) { setHub(i, "n", e.target.value); }} />
+                      <input style={Object.assign({}, S.inp, { width: 90 })} value={h.z} placeholder="ZIP" onChange={function (e) { setHub(i, "z", e.target.value); }} />
+                      <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { delHub(i); }}>×</button>
+                    </div>
+                  );
+                })}
+                <button style={Object.assign({}, S.smBtn, { marginTop: 6 })} onClick={addHub}>+ Add location</button>
+              </div>
+            </div>
+          )}
+          {step === 2 && (
+            <div>
+              <p style={lbl}>You can shop for one car or several. Each "profile" is one vehicle you're hunting (make/model/years/price). Profiles can have an optional <span style={b}>category</span> (e.g. "SUV", "Daily") to group your watchlist — single-car shoppers can ignore it.</p>
+              <p style={lbl}>The starter set is the owner's picks: <span style={b}>{starterProfiles.map(function (p) { return p.name; }).join(", ") || "none"}</span> — Northeast hybrid/EV oriented.</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <button style={Object.assign({}, S.secBtn, keepProfiles ? { borderColor: "#2563eb", color: "#fff" } : {})} onClick={function () { setKeepProfiles(true); }}>
+                  {keepProfiles ? "✓ " : ""}Keep the {starterProfiles.length} starter profile{starterProfiles.length === 1 ? "" : "s"} (edit later)
+                </button>
+                <button style={Object.assign({}, S.secBtn, !keepProfiles ? { borderColor: "#2563eb", color: "#fff" } : {})} onClick={function () { setKeepProfiles(false); }}>
+                  {!keepProfiles ? "✓ " : ""}Start blank — I'll add my own
+                </button>
+              </div>
+            </div>
+          )}
+          {step === 3 && (
+            <div>
+              <p style={lbl}>Global rules apply to every profile and <span style={b}>guide AI scoring</span> (they don't filter the search). These defaults are opinionated — toggle off any you don't want. Notable specifics: no gold exterior, prefer-not-black, and salt-belt rust awareness (Northeast bias).</p>
+              {reqs.length ? reqs.map(function (r) {
+                return (
+                  <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid #1e2028", opacity: r.active ? 1 : 0.5 }}>
+                    <button style={Object.assign({}, S.smBtn, { fontSize: 16, padding: "0 4px" })} onClick={function () { toggleReq(r.id); }}>{r.active ? "✓" : "○"}</button>
+                    <span style={{ flex: 1, fontSize: 13, color: "#c8c8d0" }}>{r.text}</span>
+                  </div>
+                );
+              }) : <p style={S.empty}>No rules — you can add them later on the Profiles tab.</p>}
+            </div>
+          )}
+          {step === 4 && (
+            <div>
+              <p style={lbl}>All set. Here's the summary:</p>
+              <p style={lbl}>• Budget: <span style={b}>${(parseInt(budget) || 0).toLocaleString()}</span><br />
+                • Locations: <span style={b}>{hubs.filter(function (h) { return h.z || h.n; }).map(function (h) { return h.n || h.z; }).join(", ") || "none"}</span><br />
+                • Profiles: <span style={b}>{keepProfiles ? starterProfiles.length + " starter" : "starting blank"}</span><br />
+                • Active rules: <span style={b}>{reqs.filter(function (r) { return r.active; }).length}</span></p>
+              <p style={lbl}>To enable AI scoring, add your Anthropic API key on the Results tab afterward.</p>
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, marginTop: 14, justifyContent: "space-between" }}>
+            <button style={Object.assign({}, S.secBtn, step === 0 ? { opacity: 0.4 } : {})} disabled={step === 0} onClick={back}>Back</button>
+            {step < steps.length - 1
+              ? <button style={S.priBtn} onClick={next}>Next</button>
+              : <button style={S.priBtn} onClick={finish}>Finish setup</button>}
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
+
 // ── Help / usage ──
 function HelpTab() {
   var li = { fontSize: 13, color: "#c8c8d0", lineHeight: 1.6, margin: "0 0 6px", paddingLeft: 4 };
@@ -1145,9 +1275,10 @@ function HelpTab() {
       </div>
 
       <div style={S.card}>
-        <h3 style={S.cardH}>Backup &amp; reset</h3>
+        <h3 style={S.cardH}>Setup, backup &amp; reset</h3>
+        <p style={li}><span style={b}>Setup wizard</span> (footer) re-runs the guided setup (budget, locations, profiles, rules) without wiping data. Budget, search locations, and tagline also live in the <span style={b}>Settings</span> card on the Profiles tab.</p>
         <p style={li}><span style={b}>Export Listings</span> (footer) dumps your listings as JSON to copy and back up. <span style={b}>Import</span> (Results) accepts the same shape.</p>
-        <p style={li}>Your data syncs to your account, so signing in elsewhere loads the same watchlist. <span style={b}>Reset All Data</span> (footer) wipes everything back to defaults.</p>
+        <p style={li}>Your data syncs to your account, so signing in elsewhere loads the same watchlist. <span style={b}>Reset All Data</span> (footer) wipes everything and restarts the wizard.</p>
       </div>
     </div>
   );
