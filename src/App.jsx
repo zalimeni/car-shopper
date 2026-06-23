@@ -1315,6 +1315,7 @@ function scoreHue(v) { return v >= 7 ? "#2d8659" : v >= 5 ? "#d4a017" : "#c44"; 
 function CompareTab({ data }) {
   var profs = data.profiles || [];
   var [sel, setSel] = useState(function () { return profs.map(function (p) { return p.id; }); });
+  var [detail, setDetail] = useState(null); // { listing, crit|null, score, text }
   function toggle(id) { setSel(function (prev) { return prev.indexOf(id) > -1 ? prev.filter(function (x) { return x !== id; }) : prev.concat(id); }); }
 
   var listings = data.listings
@@ -1366,7 +1367,10 @@ function CompareTab({ data }) {
       var v = l.scores && l.scores[c.id];
       if (v == null) return (<td key={i} style={cell}>—</td>);
       var isBest = best != null && v === best;
-      return (<td key={i} style={Object.assign({}, cell, { color: scoreHue(v), fontWeight: isBest ? 700 : 400 })}>{v}{isBest ? " ★" : ""}</td>);
+      var rat = l.aiRationales && l.aiRationales[c.id];
+      var st = Object.assign({}, cell, { color: scoreHue(v), fontWeight: isBest ? 700 : 400 });
+      if (rat) st = Object.assign({}, st, { cursor: "pointer", textDecoration: "underline dotted", textUnderlineOffset: "3px" });
+      return (<td key={i} style={st} onClick={rat ? function () { setDetail({ listing: l, crit: c, score: v, text: rat }); } : undefined}>{v}{isBest ? " ★" : ""}</td>);
     }, "crit-" + c.id);
   }
 
@@ -1374,7 +1378,7 @@ function CompareTab({ data }) {
     <div>
       <div style={S.secH}><h2 style={S.secT}>Compare</h2></div>
       <div style={S.card}>
-        <p style={S.help}>Side-by-side watchlist listings for the selected profiles, ranked by total score. Best value per row is highlighted (★ / green).</p>
+        <p style={S.help}>Side-by-side watchlist listings for the selected profiles, ranked by total score. Best value per row is highlighted (★ / green). Tap an underlined score (or the total) for the AI rationale.</p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
           {profs.map(function (p) {
             var on = sel.indexOf(p.id) > -1;
@@ -1415,13 +1419,28 @@ function CompareTab({ data }) {
                 var v = l.compositeScore || 0;
                 var best = bestVal(function (x) { return x.compositeScore; }, "max");
                 var isBest = best != null && best > 0 && v === best;
-                return (<td key={i} style={Object.assign({}, cell, { fontSize: 16, fontWeight: 700, color: v ? scoreHue(v) : "#555" })}>{v || "—"}{isBest ? " ★" : ""}</td>);
+                var sum = l.aiSummary;
+                var st = Object.assign({}, cell, { fontSize: 16, fontWeight: 700, color: v ? scoreHue(v) : "#555" });
+                if (sum) st = Object.assign({}, st, { cursor: "pointer", textDecoration: "underline dotted", textUnderlineOffset: "3px" });
+                return (<td key={i} style={st} onClick={sum ? function () { setDetail({ listing: l, crit: null, score: v, text: sum }); } : undefined}>{v || "—"}{isBest ? " ★" : ""}</td>);
               }, "total")}
               {specs.map(specRow)}
               <tr><td style={Object.assign({}, labelCell, { color: "#6b6b76", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em", paddingTop: 12 })}>Criteria (weight)</td>{listings.map(function (l, i) { return (<td key={i} style={Object.assign({}, cell, { paddingTop: 12 })} />); })}</tr>
               {(data.criteria || []).map(critRow)}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {detail && (
+        <div style={Object.assign({}, S.card, { borderLeft: "3px solid #b89edd", marginTop: 12 })}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 6 }}>
+            <strong style={{ fontSize: 13, color: "#f0f0f3" }}>
+              {detail.listing.year} {detail.listing.vehicle} — {detail.crit ? detail.crit.name + " · " + detail.score + "/10" : "Overall summary"}
+            </strong>
+            <button style={S.smBtn} onClick={function () { setDetail(null); }}>Close</button>
+          </div>
+          <div style={{ fontSize: 13, color: "#c8c8d0", lineHeight: 1.5 }}>{detail.text}</div>
         </div>
       )}
     </div>
