@@ -1322,12 +1322,11 @@ function CompareTab({ data }) {
     .filter(function (l) { return l.status === "watch" && sel.indexOf(l.profileId) > -1; })
     .slice().sort(function (a, b) { return (b.compositeScore || 0) - (a.compositeScore || 0); });
 
-  // Primary-attribute rows. `best` marks which direction "wins" for highlighting.
+  // Primary-attribute columns. `best` marks which direction "wins" (highlight).
   var specs = [
     { label: "Price", get: function (l) { return l.price; }, fmt: function (v) { return "$" + v.toLocaleString(); }, best: "min" },
     { label: "Mileage", get: function (l) { return l.mileage; }, fmt: function (v) { return v.toLocaleString() + " mi"; }, best: "min" },
     { label: "Year", get: function (l) { return l.year; }, fmt: function (v) { return String(v); }, best: "max" },
-    { label: "Trim", get: function (l) { return l.trim; }, fmt: function (v) { return v; } },
     { label: "Dealer", get: function (l) { return l.dealer ? l.dealer + " (" + (l.dealerType || "?") + ")" : ""; }, fmt: function (v) { return v; } },
     { label: "Location", get: function (l) { return [l.location, l.state].filter(Boolean).join(", ") + (isSalt(l.state) ? " 🧂" : ""); }, fmt: function (v) { return v; } },
     { label: "Color", get: function (l) { return l.color; }, fmt: function (v) { return v; } },
@@ -1341,44 +1340,45 @@ function CompareTab({ data }) {
     return dir === "min" ? Math.min.apply(null, nums) : Math.max.apply(null, nums);
   }
 
-  var labelCell = { position: "sticky", left: 0, background: "#161820", textAlign: "left", color: "#8a8a96", fontWeight: 500, padding: "7px 10px", borderBottom: "1px solid #1e2028", whiteSpace: "nowrap", zIndex: 1 };
-  var cell = { padding: "7px 10px", borderBottom: "1px solid #1e2028", textAlign: "center", whiteSpace: "nowrap", minWidth: 120, color: "#c8c8d0" };
+  // Columns: total score, primary attributes, then each scoring criterion.
+  var cols = [{ key: "score", label: "Score", kind: "score", best: "max", get: function (l) { return l.compositeScore || 0; } }]
+    .concat(specs.map(function (s) { return { key: "spec:" + s.label, label: s.label, kind: "spec", best: s.best, get: s.get, fmt: s.fmt }; }))
+    .concat((data.criteria || []).map(function (c) { return { key: "crit:" + c.id, label: c.name + " (" + c.weight + ")", kind: "crit", best: "max", crit: c, get: function (l) { return l.scores && l.scores[c.id]; } }; }));
+  var bestByCol = {};
+  cols.forEach(function (col) { bestByCol[col.key] = bestVal(col.get, col.best); });
 
-  function row(label, render, key) {
-    return (
-      <tr key={key || label}>
-        <td style={labelCell}>{label}</td>
-        {listings.map(function (l, i) { return render(l, i); })}
-      </tr>
-    );
-  }
-  function specRow(spec) {
-    var best = bestVal(spec.get, spec.best);
-    return row(spec.label, function (l, i) {
-      var v = spec.get(l);
-      var blank = v == null || v === "" || (typeof v === "number" && isNaN(v));
-      var isBest = best != null && typeof v === "number" && v === best;
-      return (<td key={i} style={Object.assign({}, cell, isBest ? { color: "#2d8659", fontWeight: 700 } : {})}>{blank ? "—" : spec.fmt(v)}</td>);
-    }, "spec-" + spec.label);
-  }
-  function critRow(c) {
-    var best = bestVal(function (l) { return l.scores && l.scores[c.id]; }, "max");
-    return row(c.name + " (" + c.weight + ")", function (l, i) {
-      var v = l.scores && l.scores[c.id];
-      if (v == null) return (<td key={i} style={cell}>—</td>);
-      var isBest = best != null && v === best;
-      var rat = l.aiRationales && l.aiRationales[c.id];
-      var st = Object.assign({}, cell, { color: scoreHue(v), fontWeight: isBest ? 700 : 400 });
-      if (rat) st = Object.assign({}, st, { cursor: "pointer", textDecoration: "underline dotted", textUnderlineOffset: "3px" });
-      return (<td key={i} style={st} onClick={rat ? function () { setDetail({ listing: l, crit: c, score: v, text: rat }); } : undefined}>{v}{isBest ? " ★" : ""}</td>);
-    }, "crit-" + c.id);
+  var rowLabel = { position: "sticky", left: 0, background: "#161820", textAlign: "left", padding: "7px 10px", borderBottom: "1px solid #1e2028", minWidth: 150, maxWidth: 210, zIndex: 1, verticalAlign: "top" };
+  var cell = { padding: "7px 10px", borderBottom: "1px solid #1e2028", textAlign: "center", whiteSpace: "nowrap", color: "#c8c8d0" };
+  var tap = { cursor: "pointer", textDecoration: "underline dotted", textUnderlineOffset: "3px" };
+
+  function renderCell(l, col) {
+    var best = bestByCol[col.key];
+    if (col.kind === "score") {
+      var sv = l.compositeScore || 0;
+      var sBest = best != null && best > 0 && sv === best;
+      var sum = l.aiSummary;
+      var ss = Object.assign({}, cell, { fontWeight: 700, color: sv ? scoreHue(sv) : "#555" }, sum ? tap : {});
+      return (<td key={col.key} style={ss} onClick={sum ? function () { setDetail({ listing: l, crit: null, score: sv, text: sum }); } : undefined}>{sv || "—"}{sBest ? " ★" : ""}</td>);
+    }
+    if (col.kind === "crit") {
+      var cv = l.scores && l.scores[col.crit.id];
+      if (cv == null) return (<td key={col.key} style={cell}>—</td>);
+      var cBest = best != null && cv === best;
+      var rat = l.aiRationales && l.aiRationales[col.crit.id];
+      var cs = Object.assign({}, cell, { color: scoreHue(cv), fontWeight: cBest ? 700 : 400 }, rat ? tap : {});
+      return (<td key={col.key} style={cs} onClick={rat ? function () { setDetail({ listing: l, crit: col.crit, score: cv, text: rat }); } : undefined}>{cv}{cBest ? " ★" : ""}</td>);
+    }
+    var v = col.get(l);
+    var blank = v == null || v === "" || (typeof v === "number" && isNaN(v));
+    var vBest = best != null && typeof v === "number" && v === best;
+    return (<td key={col.key} style={Object.assign({}, cell, vBest ? { color: "#2d8659", fontWeight: 700 } : {})}>{blank ? "—" : col.fmt(v)}</td>);
   }
 
   return (
     <div>
       <div style={S.secH}><h2 style={S.secT}>Compare</h2></div>
       <div style={S.card}>
-        <p style={S.help}>Side-by-side watchlist listings for the selected profiles, ranked by total score. Best value per row is highlighted (★ / green). Tap an underlined score (or the total) for the AI rationale.</p>
+        <p style={S.help}>Watchlist listings (rows) for the selected profiles, ranked by total score. Best value per column is highlighted (★ / green). Tap an underlined score (or a row's total) for the AI rationale.</p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
           {profs.map(function (p) {
             var on = sel.indexOf(p.id) > -1;
@@ -1402,31 +1402,32 @@ function CompareTab({ data }) {
           <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%" }}>
             <thead>
               <tr>
-                <th style={Object.assign({}, labelCell, { color: "#6b6b76", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em" })}>{listings.length} listing{listings.length > 1 ? "s" : ""}</th>
-                {listings.map(function (l, i) {
-                  var url = l.link || (l.vin ? "https://www.google.com/search?q=" + encodeURIComponent(l.vin) : "");
-                  return (
-                    <th key={i} style={Object.assign({}, cell, { color: "#f0f0f3", fontWeight: 600, verticalAlign: "top", borderBottom: "1px solid #2a2d38" })}>
-                      <div>{l.year} {l.vehicle}</div>
-                      {url && <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#8ab4f8", fontWeight: 400 }}>view →</a>}
-                    </th>
-                  );
+                <th style={Object.assign({}, rowLabel, { color: "#6b6b76", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 500, borderBottom: "1px solid #2a2d38" })}>
+                  {listings.length} listing{listings.length > 1 ? "s" : ""}
+                </th>
+                {cols.map(function (col) {
+                  return (<th key={col.key} style={Object.assign({}, cell, { fontSize: 11, fontWeight: 600, borderBottom: "1px solid #2a2d38", color: col.kind === "crit" ? "#b89edd" : "#8a8a96", verticalAlign: "bottom" })}>{col.label}</th>);
                 })}
               </tr>
             </thead>
             <tbody>
-              {row("Total score", function (l, i) {
-                var v = l.compositeScore || 0;
-                var best = bestVal(function (x) { return x.compositeScore; }, "max");
-                var isBest = best != null && best > 0 && v === best;
-                var sum = l.aiSummary;
-                var st = Object.assign({}, cell, { fontSize: 16, fontWeight: 700, color: v ? scoreHue(v) : "#555" });
-                if (sum) st = Object.assign({}, st, { cursor: "pointer", textDecoration: "underline dotted", textUnderlineOffset: "3px" });
-                return (<td key={i} style={st} onClick={sum ? function () { setDetail({ listing: l, crit: null, score: v, text: sum }); } : undefined}>{v || "—"}{isBest ? " ★" : ""}</td>);
-              }, "total")}
-              {specs.map(specRow)}
-              <tr><td style={Object.assign({}, labelCell, { color: "#6b6b76", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em", paddingTop: 12 })}>Criteria (weight)</td>{listings.map(function (l, i) { return (<td key={i} style={Object.assign({}, cell, { paddingTop: 12 })} />); })}</tr>
-              {(data.criteria || []).map(critRow)}
+              {listings.map(function (l, i) {
+                var url = l.link || (l.vin ? "https://www.google.com/search?q=" + encodeURIComponent(l.vin) : "");
+                var prof = data.profiles.find(function (p) { return p.id === l.profileId; });
+                return (
+                  <tr key={l.id || i}>
+                    <td style={rowLabel}>
+                      <div style={{ color: "#f0f0f3", fontWeight: 600 }}>{l.year} {l.vehicle}</div>
+                      {l.trim && <div style={{ fontSize: 11, color: "#8a8a96" }}>{l.trim}</div>}
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+                        {prof && <RoleBadge role={prof.role} />}
+                        {url && <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#8ab4f8" }}>view →</a>}
+                      </div>
+                    </td>
+                    {cols.map(function (col) { return renderCell(l, col); })}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
