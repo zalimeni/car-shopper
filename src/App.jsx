@@ -2104,7 +2104,9 @@ function Thumb({ photo, link, alt }) {
   var href = link || photo;
   return (
     <a href={href} target="_blank" rel="noopener noreferrer" style={{ display: "block", marginBottom: 8 }}>
-      <img src={photo} alt={alt || ""} loading="lazy"
+      {/* no-referrer defeats referer-based hotlink protection on many dealer CDNs;
+          onError hides the image if the host still blocks it or the link is dead. */}
+      <img src={photo} alt={alt || ""} loading="lazy" referrerPolicy="no-referrer"
         onError={function (e) { e.target.style.display = "none"; }}
         style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 8, border: "1px solid #1e2028", display: "block" }} />
     </a>
