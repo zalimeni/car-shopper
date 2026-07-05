@@ -41,6 +41,9 @@ var DEFAULT_PROFILES = [
   { id: "volt", name: "Volt", role: "Commuter", active: true,
     params: { make: "Chevrolet", model: "Volt", years: "2016, 2018", trims: "LT w/ DC-II, Premier", maxPrice: 14000, maxMiles: 90000,
       mustHave: "Gen 2 (2016+), BECM extended warranty", niceToHave: "Heated seats, adaptive cruise", dealbreakers: "2017 or 2019 model year" } },
+  { id: "outback", name: "Outback", role: "SUV", active: true,
+    params: { make: "Subaru", model: "Outback", years: "2020-2022", trims: "Premium, Limited, Base", maxPrice: 25000, maxMiles: 100000,
+      mustHave: "AWD (standard); non-turbo 2.5L; rear-passenger safety (IIHS Acceptable rear)", niceToHave: "Premium or Limited trim, moonroof, heated seats, power driver seat", dealbreakers: "Turbo XT / Onyx Edition XT / Wilderness (reliability); open CVT recall WRK-22 or brake-bolt recall WUL-97" } },
 ];
 
 var DEFAULT_CRITERIA = [
@@ -231,6 +234,40 @@ function parseImport(text, profileIds) {
     result.warnings.push(result.listings.length + " valid, " + result.errors.length + " error(s) — only valid listings shown for review.");
   }
   return result;
+}
+
+// ── Profile import (paste JSON array of profiles) ──
+function slug(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""); }
+function parseProfiles(text) {
+  var out = { profiles: [], errors: [] };
+  var parsed;
+  try { parsed = JSON.parse(String(text).trim()); } catch (e) { out.errors.push("Invalid JSON: " + e.message); return out; }
+  if (!Array.isArray(parsed)) { if (parsed && typeof parsed === "object") parsed = [parsed]; else { out.errors.push("Expected an array of profiles"); return out; } }
+  parsed.forEach(function (p, i) {
+    if (!p || typeof p !== "object") { out.errors.push("Profile " + (i + 1) + ": not an object"); return; }
+    var params = p.params || p;
+    var make = String(params.make || "").trim();
+    var model = String(params.model || "").trim();
+    if (!make || !model) { out.errors.push("Profile " + (i + 1) + ": needs make and model"); return; }
+    out.profiles.push({
+      id: String(p.id || slug(make + "-" + model + "-" + (params.powertrain || "")) || ("p-" + i)),
+      name: String(p.name || (make + " " + model)).trim(),
+      role: String(p.role || ""),
+      active: p.active !== false,
+      params: {
+        make: make, model: model,
+        powertrain: String(params.powertrain || ""),
+        years: String(params.years || ""),
+        trims: String(params.trims || ""),
+        maxPrice: Number(params.maxPrice) || 0,
+        maxMiles: Number(params.maxMiles) || 0,
+        mustHave: String(params.mustHave || ""),
+        niceToHave: String(params.niceToHave || ""),
+        dealbreakers: String(params.dealbreakers || ""),
+      },
+    });
+  });
+  return out;
 }
 
 // ── Dedup: VIN match keeps lower price ──
@@ -969,6 +1006,29 @@ function SettingsCard({ data, save }) {
 // ── Profiles + Global Reqs ──
 function ProfilesTab({ data, save }) {
   var [ed, setEd] = useState(null);
+  var [showIO, setShowIO] = useState(false);
+  var [impText, setImpText] = useState("");
+  var [impMsg, setImpMsg] = useState(null);
+  function importProfiles() {
+    var res = parseProfiles(impText);
+    if (!res.profiles.length) { setImpMsg({ ok: false, text: res.errors.join(" · ") || "No profiles found" }); return; }
+    var existing = data.profiles || [];
+    function have(pr) {
+      return existing.some(function (e) {
+        if (e.id === pr.id) return true;
+        var ep = e.params || {};
+        return (ep.make || "").toLowerCase() === pr.params.make.toLowerCase()
+          && (ep.model || "").toLowerCase() === pr.params.model.toLowerCase()
+          && (ep.powertrain || "").toLowerCase() === (pr.params.powertrain || "").toLowerCase();
+      });
+    }
+    var toAdd = res.profiles.filter(function (pr) { return !have(pr); });
+    var skipped = res.profiles.length - toAdd.length;
+    if (!toAdd.length) { setImpMsg({ ok: true, text: "All " + res.profiles.length + " already present — nothing to add." }); return; }
+    save(Object.assign({}, data, { profiles: existing.concat(toAdd) }));
+    setImpMsg({ ok: true, text: "Added " + toAdd.map(function (p) { return p.name; }).join(", ") + (skipped ? " · skipped " + skipped + " already present" : "") + (res.errors.length ? " · " + res.errors.length + " invalid" : "") });
+    setImpText("");
+  }
   function toggleActive(id) { save(Object.assign({}, data, { profiles: data.profiles.map(function (p) { return p.id === id ? Object.assign({}, p, { active: !p.active }) : p; }) })); }
   function delProf(id) { save(Object.assign({}, data, { profiles: data.profiles.filter(function (p) { return p.id !== id; }) })); }
   function addProf() {
@@ -1032,7 +1092,25 @@ function ProfilesTab({ data, save }) {
           );
         })}
       </div>
-      <div style={S.secH}><h2 style={S.secT}>Vehicle Profiles</h2><button style={S.priBtn} onClick={addProf}>+ Add</button></div>
+      <div style={S.secH}>
+        <h2 style={S.secT}>Vehicle Profiles</h2>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button style={S.secBtn} onClick={function () { setShowIO(!showIO); setImpMsg(null); }}>{showIO ? "Close" : "Import / export"}</button>
+          <button style={S.priBtn} onClick={addProf}>+ Add</button>
+        </div>
+      </div>
+      {showIO && (
+        <div style={S.card}>
+          <p style={S.help}>Paste a JSON array of profiles to add. Existing profiles (same make + model + powertrain, or id) are skipped — only missing ones are added.</p>
+          <textarea style={Object.assign({}, S.ta, { width: "100%", minHeight: 90, boxSizing: "border-box" })} value={impText}
+            onChange={function (e) { setImpText(e.target.value); }} placeholder={'[{"name":"Outback","role":"SUV","params":{"make":"Subaru","model":"Outback","years":"2020-2022","maxPrice":25000,"maxMiles":100000}}]'} />
+          <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button style={S.priBtn} onClick={importProfiles}>Import</button>
+            <button style={S.secBtn} onClick={function () { setImpText(JSON.stringify(data.profiles || [], null, 2)); setImpMsg({ ok: true, text: "Current profiles exported below — copy to back up." }); }}>Export current</button>
+            {impMsg && <span style={{ fontSize: 12, color: impMsg.ok ? "#2d8659" : "#c44" }}>{impMsg.text}</span>}
+          </div>
+        </div>
+      )}
       {data.profiles.map(function (p) {
         return (
           <div key={p.id} style={Object.assign({}, S.card, { opacity: p.active ? 1 : 0.5 })}>
