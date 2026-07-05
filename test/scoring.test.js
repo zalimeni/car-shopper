@@ -13,13 +13,14 @@ describe("resolveScoreModel", () => {
     expect(resolveScoreModel("claude-haiku-4-5")).toBe("claude-haiku-4-5");
   });
   it("falls back to the Sonnet default for anything not allowlisted", () => {
-    expect(resolveScoreModel("gpt-4")).toBe("claude-sonnet-4-6");
-    expect(resolveScoreModel("")).toBe("claude-sonnet-4-6");
-    expect(resolveScoreModel(undefined)).toBe("claude-sonnet-4-6");
-    expect(resolveScoreModel("constructor")).toBe("claude-sonnet-4-6"); // not a real entry despite being on Object.prototype
+    expect(resolveScoreModel("gpt-4")).toBe("claude-sonnet-5");
+    expect(resolveScoreModel("")).toBe("claude-sonnet-5");
+    expect(resolveScoreModel(undefined)).toBe("claude-sonnet-5");
+    expect(resolveScoreModel("claude-sonnet-4-6")).toBe("claude-sonnet-5"); // retired option -> default
+    expect(resolveScoreModel("constructor")).toBe("claude-sonnet-5"); // not a real entry despite being on Object.prototype
   });
-  it("default is Sonnet and is itself allowlisted", () => {
-    expect(SCORE_MODELS["claude-sonnet-4-6"]).toBeTruthy();
+  it("default is Sonnet 5 and is itself allowlisted", () => {
+    expect(SCORE_MODELS["claude-sonnet-5"]).toBeTruthy();
   });
 });
 

@@ -6,6 +6,7 @@ import { getKeyStatus, saveKey, removeKey, scoreSet, SCORE_MODEL_OPTIONS, DEFAUL
 import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
 
 var AUTO_SYNC_HOURS = 12; // sync-on-open debounce
+var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
 
 var STORAGE_KEY = "car-search-data";
 var VERSION = 6;
@@ -452,7 +453,9 @@ export default function App() {
     });
   }, []);
 
-  var scoreModel = data && data.scoreModel ? data.scoreModel : DEFAULT_SCORE_MODEL;
+  // Fall back to the default if the saved model is unknown/retired (e.g. an old
+  // Sonnet 4.6 selection) so the picker and requests stay valid.
+  var scoreModel = (data && data.scoreModel && SCORE_MODEL_OPTIONS.some(function (o) { return o.id === data.scoreModel; })) ? data.scoreModel : DEFAULT_SCORE_MODEL;
   var setScoreModel = useCallback(function (m) {
     setData(function (prev) {
       if (!prev) return prev;
@@ -581,8 +584,14 @@ export default function App() {
           var p = profById[c.profileId];
           return !p || !p.params ? true : trimAllowed((c.trim || "") + " " + (c.vehicle || ""), p.params.trimInclude, p.params.trimExclude);
         });
-        if (newToScore.length || changed.length) scoreItems(newToScore, changed);
-        else setScoreMsg({ ok: true, text: "Auto-score: nothing new to score." });
+        var toScoreCount = newToScore.length + changed.length;
+        if (toScoreCount > AUTO_SCORE_MAX) {
+          setScoreMsg({ ok: true, text: "Auto-score skipped — " + toScoreCount + " to score (over " + AUTO_SCORE_MAX + "). Use ✨ Score all or per-card to score selectively." });
+        } else if (toScoreCount) {
+          scoreItems(newToScore, changed);
+        } else {
+          setScoreMsg({ ok: true, text: "Auto-score: nothing new to score." });
+        }
       } else if (autoScore && !keyStatus.valid) {
         setScoreMsg({ ok: false, text: "Auto-score is on but no valid Anthropic key — add one in the AI panel." });
       }
@@ -1633,7 +1642,7 @@ function HelpTab() {
       <div style={S.card}>
         <h3 style={S.cardH}>AI scoring (optional)</h3>
         <p style={li}>Add your <span style={b}>Anthropic API key</span> in the ✨ AI scoring panel (Results tab) to have each listing scored 1–10 per criterion with a short rationale and an overall summary.</p>
-        <p style={li}><span style={b}>Model</span> — pick Sonnet (default, balanced), Opus (most nuanced), or Haiku (fastest/cheapest). <span style={b}>Auto-score on sync</span> scores only brand-new candidates and listings whose price materially changed — it never re-scores untouched or skipped listings.</p>
+        <p style={li}><span style={b}>Model</span> — pick Sonnet 5 (default, balanced), Opus 4.8 (most nuanced), or Haiku 4.5 (fastest/cheapest). <span style={b}>Auto-score on sync</span> scores only unscored candidates and listings whose price materially changed (never untouched or skipped ones), and is <span style={b}>skipped when there are more than 20 to score</span> — use Score all / per-card then, to avoid burning credits.</p>
         <p style={li}>Score (or Re-score) any single card with its ✨ button, or use <span style={b}>Score all</span> on the candidate queue.</p>
         <p style={note}>Scoring runs in batches and fills in results as each batch finishes, so partial progress is kept. If a large run is interrupted (e.g. the tab is backgrounded), the finished ones stay scored and the rest are picked up on the next sync/score. The key is validated, stored encrypted server-side, and never shown again — it's only used to score your own listings under your own account. Note: the API is pay-as-you-go and needs credits in the Anthropic Console; a Claude Pro/Max subscription does not include API access.</p>
       </div>

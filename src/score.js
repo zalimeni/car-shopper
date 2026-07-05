@@ -14,11 +14,11 @@ const REQUEST_TIMEOUT_MS = 75000; // > server function budget, so a real hang su
 // Scoring model choices shown in the UI. Must stay in sync with the server-side
 // allowlist (api/_scoring.js SCORE_MODELS); the server ignores anything else.
 export var SCORE_MODEL_OPTIONS = [
-  { id: "claude-sonnet-4-6", label: "Sonnet — balanced (recommended)" },
-  { id: "claude-opus-4-8", label: "Opus — most nuanced" },
-  { id: "claude-haiku-4-5", label: "Haiku — fastest / cheapest" },
+  { id: "claude-sonnet-5", label: "Sonnet 5 — balanced (recommended)" },
+  { id: "claude-opus-4-8", label: "Opus 4.8 — most nuanced" },
+  { id: "claude-haiku-4-5", label: "Haiku 4.5 — fastest / cheapest" },
 ];
-export var DEFAULT_SCORE_MODEL = "claude-sonnet-4-6";
+export var DEFAULT_SCORE_MODEL = "claude-sonnet-5";
 
 async function authHeaders() {
   const { data } = await supabase.auth.getSession();
