@@ -1726,8 +1726,8 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
     if ((p.params.trimInclude || "").trim()) return "not in include list";
     return "filtered";
   }
-  var shownCands = candidates.filter(candTrimPass);
-  var hiddenCands = candidates.filter(function (c) { return !candTrimPass(c); });
+  var shownCands = candidates.filter(candTrimPass).slice().sort(sortFn);
+  var hiddenCands = candidates.filter(function (c) { return !candTrimPass(c); }).slice().sort(sortFn);
 
   var [showRej, setShowRej] = useState(false);
   var [showSkipped, setShowSkipped] = useState(false);
