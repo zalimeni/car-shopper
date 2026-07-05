@@ -585,12 +585,19 @@ export default function App() {
       if (autoScore && keyStatus.valid && !scoreBusy) {
         var profById = {};
         (data.profiles || []).forEach(function (p) { profById[p.id] = p; });
-        var newToScore = added.filter(function (c) {
+        // Every still-UNSCORED candidate in the queue (new this run + any left
+        // over from a prior sync) that isn't trim-hidden — plus materially
+        // changed listings. Already-scored candidates are left alone.
+        var pool = candidates.concat(added);
+        var newToScore = pool.filter(function (c) {
           if (c.scoredAt) return false;
           var p = profById[c.profileId];
           return !p || !p.params ? true : trimAllowed((c.trim || "") + " " + (c.vehicle || ""), p.params.trimInclude, p.params.trimExclude);
         });
         if (newToScore.length || changed.length) scoreItems(newToScore, changed);
+        else setScoreMsg({ ok: true, text: "Auto-score: nothing new to score." });
+      } else if (autoScore && !keyStatus.valid) {
+        setScoreMsg({ ok: false, text: "Auto-score is on but no valid Anthropic key — add one in the AI panel." });
       }
       return;
     } catch (e) {
