@@ -486,47 +486,34 @@ export default function App() {
     setScoreBusy(true);
     setScoringActive(all.map(function (x) { return x.id || x.vin || null; }).filter(Boolean));
     setScoreMsg({ busy: true, text: "Scoring " + all.length + " listing" + (all.length > 1 ? "s" : "") + "…" });
-    try {
-      var pairs = await scoreSet(all, ctx, function (d, t) { setScoreMsg({ busy: true, text: "Scoring " + d + "/" + t + "…" }); });
-      // Index successful results by object ref AND by id/vin, so application can't
-      // miss due to a reference that churned across the async boundary.
-      var byRef = new Map();
-      var byKey = {};
+
+    // Apply one chunk's results the moment it returns — successes persist even if
+    // a later chunk fails or the tab is backgrounded. Match by ref then id/vin.
+    var okCount = 0, failCount = 0, firstErr = "";
+    function applyPairs(pairs) {
+      var byRef = new Map(), byKey = {};
       pairs.forEach(function (p) {
-        if (!p.result || !p.result.ok) return;
+        if (!p.result || !p.result.ok) { failCount++; if (!firstErr) firstErr = (p.result && p.result.error) || ""; return; }
+        okCount++;
         byRef.set(p.item, p.result);
         var k = p.item.id || p.item.vin;
         if (k) byKey[k] = p.result;
       });
-      var pick = function (x) {
-        var r = byRef.get(x);
-        if (r) return r;
-        var k = x.id || x.vin;
-        return k ? byKey[k] : null;
-      };
-      setCandidates(function (prev) {
-        return prev.map(function (c) {
-          if (c.id) return c; // candidates have no id; leave saved-shaped rows alone
-          var r = pick(c);
-          return r ? applyScore(c, r, data.criteria) : c;
-        });
+      if (!byRef.size) return;
+      var pick = function (x) { var r = byRef.get(x); if (r) return r; var k = x.id || x.vin; return k ? byKey[k] : null; };
+      setCandidates(function (prev) { return prev.map(function (c) { if (c.id) return c; var r = pick(c); return r ? applyScore(c, r, data.criteria) : c; }); });
+      patchListings(function (list) { return list.map(function (l) { var r = pick(l); return r ? applyScore(l, r, data.criteria) : l; }); });
+    }
+
+    try {
+      await scoreSet(all, ctx, {
+        onProgress: function (d, t) { setScoreMsg({ busy: true, text: "Scoring " + d + "/" + t + "…" }); },
+        onPairs: applyPairs,
       });
-      patchListings(function (list) {
-        return list.map(function (l) { var r = pick(l); return r ? applyScore(l, r, data.criteria) : l; });
-      });
-      var ok = pairs.filter(function (p) { return p.result && p.result.ok; }).length;
-      var failed = pairs.length - ok;
-      var firstErr = "";
-      for (var fi = 0; fi < pairs.length; fi++) {
-        if (!pairs[fi].result || !pairs[fi].result.ok) { firstErr = (pairs[fi].result && pairs[fi].result.error) || ""; break; }
-      }
-      setScoreMsg({
-        ok: failed === 0,
-        text: "Scored " + ok + "/" + pairs.length + (failed ? " (" + failed + " failed" + (firstErr ? ": " + firstErr : "") + ")" : ""),
-      });
+      setScoreMsg({ ok: failCount === 0, text: "Scored " + okCount + "/" + all.length + (failCount ? " (" + failCount + " failed" + (firstErr ? ": " + firstErr : "") + ")" : "") });
     } catch (e) {
       console.error("Score:", e);
-      scoreErr(e);
+      scoreErr(e); // key-level failure; any chunks that landed before it are already applied
     } finally {
       setScoreBusy(false);
       setScoringActive([]);
@@ -1648,7 +1635,7 @@ function HelpTab() {
         <p style={li}>Add your <span style={b}>Anthropic API key</span> in the ✨ AI scoring panel (Results tab) to have each listing scored 1–10 per criterion with a short rationale and an overall summary.</p>
         <p style={li}><span style={b}>Model</span> — pick Sonnet (default, balanced), Opus (most nuanced), or Haiku (fastest/cheapest). <span style={b}>Auto-score on sync</span> scores only brand-new candidates and listings whose price materially changed — it never re-scores untouched or skipped listings.</p>
         <p style={li}>Score (or Re-score) any single card with its ✨ button, or use <span style={b}>Score all</span> on the candidate queue.</p>
-        <p style={note}>The key is validated, stored encrypted server-side, and never shown again — it's only used to score your own listings under your own account. Note: the API is pay-as-you-go and needs credits in the Anthropic Console; a Claude Pro/Max subscription does not include API access.</p>
+        <p style={note}>Scoring runs in batches and fills in results as each batch finishes, so partial progress is kept. If a large run is interrupted (e.g. the tab is backgrounded), the finished ones stay scored and the rest are picked up on the next sync/score. The key is validated, stored encrypted server-side, and never shown again — it's only used to score your own listings under your own account. Note: the API is pay-as-you-go and needs credits in the Anthropic Console; a Claude Pro/Max subscription does not include API access.</p>
       </div>
 
       <div style={S.card}>

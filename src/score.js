@@ -54,61 +54,83 @@ export async function removeKey() {
 
 // ── Scoring ──
 
+const CONCURRENCY = 3; // chunks in flight at once (speed vs. Anthropic rate limits)
+
 // Score a set of listing/candidate objects. `ctx` = { criteria, globalReqs,
-// profileById }. Listings are grouped by profileId so each Anthropic call gets
-// the right buyer profile, then chunked. Returns [{ item, result }] aligned to
-// the input array — result is { ok, scores, rationales, summary } or
-// { ok:false, error }. Throws (with .code) on key-level failures so the caller
-// can prompt for a fresh key.
-export async function scoreSet(items, ctx, onProgress) {
+// profileById, model }. Listings are grouped by profileId (so each Anthropic
+// call gets the right buyer profile), chunked, and run a few chunks at a time.
+//
+// Results are delivered PROGRESSIVELY: opts.onPairs([{item, result}]) fires as
+// each chunk returns, so successes persist immediately and a later failure can't
+// discard them. A single chunk failing (HTTP error, or a timeout from the tab
+// being backgrounded) is non-fatal — just those items come back {ok:false} and
+// get re-scored on the next run. Only a key-level failure throws (with .code)
+// so the caller can prompt for a fresh key. Returns all pairs when done.
+export async function scoreSet(items, ctx, opts) {
+  opts = opts || {};
   const groups = {};
   items.forEach(function (it) {
     const pid = it.profileId || "_none";
     (groups[pid] = groups[pid] || []).push(it);
   });
-
-  const resultByItem = new Map();
-  let done = 0;
-
-  const headers = await authHeaders();
-  for (const pid of Object.keys(groups)) {
+  const chunks = [];
+  Object.keys(groups).forEach(function (pid) {
     const group = groups[pid];
     const profile = ctx.profileById ? ctx.profileById[pid] : null;
-    for (let i = 0; i < group.length; i += CHUNK) {
-      const chunk = group.slice(i, i + CHUNK);
-      const controller = new AbortController();
-      const timer = setTimeout(function () { controller.abort(); }, REQUEST_TIMEOUT_MS);
-      let res;
-      try {
-        res = await fetch("/api/score", {
-          method: "POST",
-          headers: headers,
-          body: JSON.stringify({ listings: chunk, criteria: ctx.criteria, profile: profile, globalReqs: ctx.globalReqs, model: ctx.model }),
-          signal: controller.signal,
-        });
-      } catch (e) {
-        if (e && e.name === "AbortError") throw new Error("Scoring timed out — try again, fewer listings, or the Haiku model.");
-        throw e;
-      } finally {
-        clearTimeout(timer);
-      }
+    for (let i = 0; i < group.length; i += CHUNK) chunks.push({ items: group.slice(i, i + CHUNK), profile: profile });
+  });
+
+  const headers = await authHeaders();
+  const total = items.length;
+  let done = 0;
+  let fatal = null;
+  const allPairs = [];
+
+  function failPairs(chunk, error) {
+    return chunk.items.map(function (it) { return { item: it, result: { ok: false, error: error } }; });
+  }
+
+  async function runChunk(chunk) {
+    if (fatal) return;
+    const controller = new AbortController();
+    const timer = setTimeout(function () { controller.abort(); }, REQUEST_TIMEOUT_MS);
+    let pairs;
+    try {
+      const res = await fetch("/api/score", {
+        method: "POST", headers: headers, signal: controller.signal,
+        body: JSON.stringify({ listings: chunk.items, criteria: ctx.criteria, profile: chunk.profile, globalReqs: ctx.globalReqs, model: ctx.model }),
+      });
       const j = await res.json().catch(function () { return {}; });
       if (res.status === 401 || (j && (j.error === "key_rejected" || j.error === "no_key" || j.error === "key_unreadable"))) {
         const err = new Error(j.message || j.error || "Scoring isn't authorized");
         err.code = j.error || "key_rejected";
-        throw err;
+        fatal = err;
+        return;
       }
-      if (!res.ok) throw new Error(j.error || ("Scoring failed (HTTP " + res.status + ")"));
-      (j.results || []).forEach(function (r) {
-        const item = chunk[r.index];
-        if (item) resultByItem.set(item, r);
-      });
-      done += chunk.length;
-      if (onProgress) onProgress(done, items.length);
+      if (!res.ok) {
+        pairs = failPairs(chunk, j.error || ("HTTP " + res.status));
+      } else {
+        const byIdx = {};
+        (j.results || []).forEach(function (r) { byIdx[r.index] = r; });
+        pairs = chunk.items.map(function (it, idx) { return { item: it, result: byIdx[idx] || { ok: false, error: "no result" } }; });
+      }
+    } catch (e) {
+      pairs = failPairs(chunk, e && e.name === "AbortError" ? "timed out (tab may have been backgrounded)" : ((e && e.message) || "request failed"));
+    } finally {
+      clearTimeout(timer);
     }
+    if (fatal) return;
+    allPairs.push.apply(allPairs, pairs);
+    if (opts.onPairs) opts.onPairs(pairs);
+    done += chunk.items.length;
+    if (opts.onProgress) opts.onProgress(done, total);
   }
 
-  return items.map(function (it) {
-    return { item: it, result: resultByItem.get(it) || { ok: false, error: "no result returned" } };
-  });
+  let next = 0;
+  async function worker() { while (next < chunks.length && !fatal) { await runChunk(chunks[next++]); } }
+  const workers = [];
+  for (let w = 0; w < Math.min(CONCURRENCY, chunks.length); w++) workers.push(worker());
+  await Promise.all(workers);
+  if (fatal) throw fatal;
+  return allPairs;
 }
