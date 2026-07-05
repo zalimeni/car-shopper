@@ -42,7 +42,7 @@ var DEFAULT_PROFILES = [
     params: { make: "Chevrolet", model: "Volt", years: "2016, 2018", trims: "LT w/ DC-II, Premier", maxPrice: 14000, maxMiles: 90000,
       mustHave: "Gen 2 (2016+), BECM extended warranty", niceToHave: "Heated seats, adaptive cruise", dealbreakers: "2017 or 2019 model year" } },
   { id: "outback", name: "Outback", role: "SUV", active: true,
-    params: { make: "Subaru", model: "Outback", years: "2020-2022", trims: "Premium, Limited, Base", maxPrice: 25000, maxMiles: 100000,
+    params: { make: "Subaru", model: "Outback", years: "2020-2022", trims: "Premium, Limited, Base", trimInclude: "", trimExclude: "XT, Turbo, Onyx, Wilderness", maxPrice: 25000, maxMiles: 100000,
       mustHave: "AWD (standard); non-turbo 2.5L; rear-passenger safety (IIHS Acceptable rear)", niceToHave: "Premium or Limited trim, moonroof, heated seats, power driver seat", dealbreakers: "Turbo XT / Onyx Edition XT / Wilderness (reliability); open CVT recall WRK-22 or brake-bolt recall WUL-97" } },
 ];
 
@@ -259,6 +259,8 @@ function parseProfiles(text) {
         powertrain: String(params.powertrain || ""),
         years: String(params.years || ""),
         trims: String(params.trims || ""),
+        trimInclude: String(params.trimInclude || ""),
+        trimExclude: String(params.trimExclude || ""),
         maxPrice: Number(params.maxPrice) || 0,
         maxMiles: Number(params.maxMiles) || 0,
         mustHave: String(params.mustHave || ""),
@@ -268,6 +270,19 @@ function parseProfiles(text) {
     });
   });
   return out;
+}
+
+// Fuzzy (case-insensitive substring) trim filter. `trimText` is matched against
+// comma-separated include/exclude terms: excluded if it contains any exclude
+// term; if any include terms are set, kept only if it contains one of them.
+function trimAllowed(trimText, includeStr, excludeStr) {
+  var t = String(trimText || "").toLowerCase();
+  var terms = function (s) { return String(s || "").split(",").map(function (x) { return x.trim().toLowerCase(); }).filter(Boolean); };
+  var exc = terms(excludeStr);
+  if (exc.some(function (e) { return t.indexOf(e) > -1; })) return false;
+  var inc = terms(includeStr);
+  if (inc.length && !inc.some(function (e) { return t.indexOf(e) > -1; })) return false;
+  return true;
 }
 
 // ── Dedup: VIN match keeps lower price ──
@@ -563,11 +578,18 @@ export default function App() {
       var skippedSeen = decorated.filter(function (c) { return c.vin && skippedVins[c.vin]; }).length;
       setSyncMsg({ ok: true, summary: Object.assign({}, rec.summary, { newCount: added.length }), skippedSeen: skippedSeen, errors: res.errors, mock: res.mock });
       setSyncing(false);
-      // Auto-score only NEW candidates (never skipped, never already-queued, and
-      // only if not already scored) plus materially price-changed listings.
+      // Auto-score only NEW candidates (never skipped, never already-queued, not
+      // already scored, and passing their profile's trim filter — no point
+      // scoring a trim you've excluded) plus materially price-changed listings.
       // Best-effort; not awaited — sync is already done.
       if (autoScore && keyStatus.valid && !scoreBusy) {
-        var newToScore = added.filter(function (c) { return !c.scoredAt; });
+        var profById = {};
+        (data.profiles || []).forEach(function (p) { profById[p.id] = p; });
+        var newToScore = added.filter(function (c) {
+          if (c.scoredAt) return false;
+          var p = profById[c.profileId];
+          return !p || !p.params ? true : trimAllowed((c.trim || "") + " " + (c.vehicle || ""), p.params.trimInclude, p.params.trimExclude);
+        });
         if (newToScore.length || changed.length) scoreItems(newToScore, changed);
       }
       return;
@@ -629,16 +651,23 @@ export default function App() {
 
   var approveAll = useCallback(function () {
     if (!data || !candidates.length) return;
+    var profById = {};
+    data.profiles.forEach(function (p) { profById[p.id] = p; });
     var newList = data.listings.slice();
+    var approved = [];
     candidates.forEach(function (cand) {
+      var p = profById[cand.profileId];
+      var pass = !p || !p.params ? true : trimAllowed((cand.trim || "") + " " + (cand.vehicle || ""), p.params.trimInclude, p.params.trimExclude);
+      if (!pass) return; // leave trim-hidden candidates in the queue
       var nl = Object.assign({}, cand, {
         id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
         addedDate: today(), lastChecked: today(), _candidate: undefined, _dupe: undefined, _existingPrice: undefined, _cheaper: undefined
       });
       newList = dedupInsert(newList, nl);
+      approved.push(cand);
     });
     save(Object.assign({}, data, { listings: newList }));
-    setCandidates([]);
+    setCandidates(function (prev) { return prev.filter(function (c) { return approved.indexOf(c) === -1; }); });
   }, [data, candidates, save]);
 
   // Skip → move into the persisted skipped list (so it survives reload/sync and
@@ -649,6 +678,38 @@ export default function App() {
     var entry = Object.assign({}, cand, { _candidate: undefined, _dupe: undefined, _existingPrice: undefined, _cheaper: undefined, skippedAt: today() });
     save(Object.assign({}, data, { skipped: (data.skipped || []).concat([entry]) }));
   }, [data, save]);
+
+  // Append a fuzzy trim term to a profile's include/exclude list (dedup).
+  var addTrimTerm = useCallback(function (profileId, field, term) {
+    term = String(term || "").trim();
+    if (!term || !data) return;
+    save(Object.assign({}, data, { profiles: data.profiles.map(function (p) {
+      if (p.id !== profileId) return p;
+      var terms = ((p.params && p.params[field]) || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+      if (terms.map(function (s) { return s.toLowerCase(); }).indexOf(term.toLowerCase()) === -1) terms.push(term);
+      return Object.assign({}, p, { params: Object.assign({}, p.params, { [field]: terms.join(", ") }) });
+    }) }));
+  }, [data, save]);
+
+  // Exclude a shown candidate's trim (hides it + similar from candidates).
+  var excludeTrim = useCallback(function (cand) { addTrimTerm(cand.profileId, "trimExclude", cand.trim); }, [addTrimTerm]);
+
+  // "Show" a trim-hidden candidate: drop the exclude term(s) that caught it, or
+  // (if it failed an include allowlist) add its trim to the include list.
+  var showTrim = useCallback(function (cand) {
+    if (!data) return;
+    var p = (data.profiles || []).find(function (x) { return x.id === cand.profileId; });
+    if (!p || !p.params) return;
+    var t = ((cand.trim || "") + " " + (cand.vehicle || "")).toLowerCase();
+    var exc = (p.params.trimExclude || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+    var matched = exc.filter(function (e) { return t.indexOf(e.toLowerCase()) > -1; });
+    if (matched.length) {
+      var kept = exc.filter(function (e) { return t.indexOf(e.toLowerCase()) === -1; });
+      save(Object.assign({}, data, { profiles: data.profiles.map(function (x) { return x.id === p.id ? Object.assign({}, x, { params: Object.assign({}, x.params, { trimExclude: kept.join(", ") }) }) : x; }) }));
+    } else {
+      addTrimTerm(cand.profileId, "trimInclude", cand.trim);
+    }
+  }, [data, save, addTrimTerm]);
 
   // Skipped → back into the review queue.
   var restoreSkipped = useCallback(function (entry) {
@@ -786,7 +847,7 @@ export default function App() {
             edListing={edListing} setEdListing={setEdListing} markChk={markChk}
             ackReview={ackReview} ackAllReviews={ackAllReviews}
             candidates={candidates} approveCand={approveCand}
-            approveAll={approveAll} dismissCand={dismissCand}
+            approveAll={approveAll} dismissCand={dismissCand} excludeTrim={excludeTrim} showTrim={showTrim}
             skipped={data.skipped || []} restoreSkipped={restoreSkipped} watchSkipped={watchSkipped} purgeSkipped={purgeSkipped}
             importText={importText} setImportText={setImportText} doImport={doImport} importResult={importResult} setImportResult={setImportResult}
             filterProf={filterProf} setFilterProf={setFilterProf}
@@ -1033,7 +1094,7 @@ function ProfilesTab({ data, save }) {
   function delProf(id) { save(Object.assign({}, data, { profiles: data.profiles.filter(function (p) { return p.id !== id; }) })); }
   function addProf() {
     var n = { id: "p-" + Date.now(), name: "New Profile", role: "", active: true,
-      params: { make: "", model: "", years: "", trims: "", maxPrice: 20000, maxMiles: 80000, mustHave: "", niceToHave: "", dealbreakers: "" } };
+      params: { make: "", model: "", years: "", trims: "", trimInclude: "", trimExclude: "", maxPrice: 20000, maxMiles: 80000, mustHave: "", niceToHave: "", dealbreakers: "" } };
     save(Object.assign({}, data, { profiles: data.profiles.concat(n) })); setEd(n.id);
   }
   function updProf(id, upd) {
@@ -1130,6 +1191,12 @@ function ProfilesTab({ data, save }) {
                 <div>{p.params.make} {p.params.model} · {p.params.years} · {p.params.trims}</div>
                 <div>≤${p.params.maxPrice.toLocaleString()} · ≤{p.params.maxMiles.toLocaleString()} mi</div>
                 {p.params.mustHave && <div style={{ marginTop: 4 }}><span style={{ fontSize: 11, fontWeight: 600, color: "#2d8659" }}>Must:</span> {p.params.mustHave}</div>}
+                {(p.params.trimInclude || p.params.trimExclude) && (
+                  <div style={{ marginTop: 4, fontSize: 12 }}>
+                    {p.params.trimInclude && <span><span style={{ fontSize: 11, fontWeight: 600, color: "#2d8659" }}>Only trims:</span> {p.params.trimInclude} </span>}
+                    {p.params.trimExclude && <span><span style={{ fontSize: 11, fontWeight: 600, color: "#d4a017" }}>Exclude trims:</span> {p.params.trimExclude}</span>}
+                  </div>
+                )}
                 {p.params.dealbreakers && <div style={{ marginTop: 4 }}><span style={{ fontSize: 11, fontWeight: 600, color: "#c44" }}>Breaks:</span> {p.params.dealbreakers}</div>}
               </div>
             )}
@@ -1153,10 +1220,13 @@ function ProfEd({ profile, onSave }) {
       })}
       <div style={S.field}><label style={S.lbl}>Max Price</label><input style={S.inp} type="number" value={p.maxPrice} onChange={function (e) { setP(Object.assign({}, p, { maxPrice: parseInt(e.target.value) || 0 })); }} /></div>
       <div style={S.field}><label style={S.lbl}>Max Miles</label><input style={S.inp} type="number" value={p.maxMiles} onChange={function (e) { setP(Object.assign({}, p, { maxMiles: parseInt(e.target.value) || 0 })); }} /></div>
+      {[["trimInclude", "Trim include (fuzzy, comma-sep)"], ["trimExclude", "Trim exclude (fuzzy, comma-sep)"]].map(function (pair) {
+        return (<div key={pair[0]} style={S.field}><label style={S.lbl}>{pair[1]}</label><input style={S.inp} value={p[pair[0]] || ""} onChange={function (e) { setP(Object.assign({}, p, { [pair[0]]: e.target.value })); }} placeholder={pair[0] === "trimExclude" ? "XT, Turbo, Wilderness" : "e.g. Premium, Limited"} /></div>);
+      })}
       {[["mustHave", "Must-have (scoring only)"], ["niceToHave", "Nice-to-have (scoring only)"], ["dealbreakers", "Dealbreakers (scoring only)"]].map(function (pair) {
         return (<div key={pair[0]} style={Object.assign({}, S.field, { gridColumn: "1/-1" })}><label style={S.lbl}>{pair[1]}</label><textarea style={S.ta} value={p[pair[0]] || ""} onChange={function (e) { setP(Object.assign({}, p, { [pair[0]]: e.target.value })); }} rows={2} /></div>);
       })}
-      <p style={Object.assign({}, S.help, { gridColumn: "1/-1", margin: 0 })}>Make / model / powertrain / years / max price / max miles filter the search. Trims, must/nice-to-have, and dealbreakers only guide AI scoring.</p>
+      <p style={Object.assign({}, S.help, { gridColumn: "1/-1", margin: 0 })}>Make / model / powertrain / years / max price / max miles filter the search. Trim include/exclude are fuzzy (substring) filters applied to candidates on your device (MarketCheck can't filter trims). Trims, must/nice-to-have, and dealbreakers only guide AI scoring.</p>
       <button style={S.priBtn} onClick={function () { onSave({ name: name.trim() || "Profile", role: role.trim(), params: p }); }}>Save</button>
     </div>
   );
@@ -1563,6 +1633,7 @@ function HelpTab() {
         <p style={li}>The Results tab keeps "needs a look" separate from "saved": <span style={b}>Candidates</span> (brand-new matches, full cards) and <span style={b}>Updated — review</span> (saved listings whose price changed this sync, shown as compact cards with a link) sit up top. Your <span style={b}>Watchlist</span> below is the stuff you've already saved and reviewed.</p>
         <p style={li}><span style={b}>Approve</span> moves a candidate to the watchlist; <span style={b}>Skip</span> sets it aside (collapsible <span style={b}>Skipped</span> list; won't reappear on future syncs, and is never auto-scored). On an Updated card, <span style={b}>✓ Reviewed</span> returns it to the watchlist; <span style={b}>Reject</span> drops it.</p>
         <p style={li}>From Skipped you can <span style={b}>Restore to queue</span>, send straight to <span style={b}>Watchlist</span>, or <span style={b}>Remove</span> the record.</p>
+        <p style={li}><span style={b}>Trim filters</span> (Profiles tab, per profile): fuzzy include/exclude terms applied to candidates on your device, since the search can't filter trims. Candidates that fail land in <span style={b}>Hidden by trim</span> — tap <span style={b}>🚫 Exclude trim</span> on a candidate to hide its trim, or <span style={b}>✓ Show this trim</span> in the hidden list to bring it back.</p>
       </div>
 
       <div style={S.card}>
@@ -1593,7 +1664,7 @@ function HelpTab() {
 // ── Results ──
 function ResultsTab({ data, addListing, updListing, delListing, edListing, setEdListing, markChk,
   ackReview, ackAllReviews,
-  candidates, approveCand, approveAll, dismissCand,
+  candidates, approveCand, approveAll, dismissCand, excludeTrim, showTrim,
   skipped, restoreSkipped, watchSkipped, purgeSkipped,
   importText, setImportText, doImport, importResult, setImportResult,
   filterProf, setFilterProf, doSync, syncing, syncMsg, lastSynced,
@@ -1637,8 +1708,27 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   var roleOpts = [];
   data.profiles.forEach(function (p) { if (p.role && roleOpts.indexOf(p.role) === -1) roleOpts.push(p.role); });
 
+  // Partition candidates by each one's profile trim include/exclude filter.
+  function candTrimPass(c) {
+    var p = data.profiles.find(function (x) { return x.id === c.profileId; });
+    if (!p || !p.params) return true;
+    return trimAllowed((c.trim || "") + " " + (c.vehicle || ""), p.params.trimInclude, p.params.trimExclude);
+  }
+  function trimHideReason(c) {
+    var p = data.profiles.find(function (x) { return x.id === c.profileId; });
+    if (!p || !p.params) return "filtered";
+    var t = ((c.trim || "") + " " + (c.vehicle || "")).toLowerCase();
+    var m = (p.params.trimExclude || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean).filter(function (e) { return t.indexOf(e.toLowerCase()) > -1; });
+    if (m.length) return "matches exclude: " + m.join(", ");
+    if ((p.params.trimInclude || "").trim()) return "not in include list";
+    return "filtered";
+  }
+  var shownCands = candidates.filter(candTrimPass);
+  var hiddenCands = candidates.filter(function (c) { return !candTrimPass(c); });
+
   var [showRej, setShowRej] = useState(false);
   var [showSkipped, setShowSkipped] = useState(false);
+  var [showTrimHidden, setShowTrimHidden] = useState(false);
 
   function cp(l, stale) {
     return { key: l.id, listing: l, data: data, editing: edListing === l.id,
@@ -1696,23 +1786,46 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
         </div>
       )}
 
-      {/* Import candidates */}
-      {candidates.length > 0 && (
+      {/* Candidates (trim-filtered per profile) */}
+      {shownCands.length > 0 && (
         <div style={S.card}>
           <div style={S.secH}>
-            <h3 style={S.cardH}>Candidates ({candidates.length})</h3>
+            <h3 style={S.cardH}>Candidates ({shownCands.length})</h3>
             <div style={{ display: "flex", gap: 6 }}>
               {keyStatus.valid && (
                 <button style={Object.assign({}, S.secBtn, scoreBusy ? { opacity: 0.6 } : {})} disabled={scoreBusy}
-                  onClick={function () { scoreItems(candidates, []); }}>{scoreBusy ? "Scoring…" : "✨ Score all"}</button>
+                  onClick={function () { scoreItems(shownCands, []); }}>{scoreBusy ? "Scoring…" : "✨ Score all"}</button>
               )}
-              {candidates.length > 1 && (<button style={S.priBtn} onClick={approveAll}>Approve All</button>)}
+              {shownCands.length > 1 && (<button style={S.priBtn} onClick={approveAll}>Approve All</button>)}
             </div>
           </div>
-          {candidates.map(function (c, i) {
+          {shownCands.map(function (c, i) {
             return (<CandCard key={i} cand={c} onApprove={function () { approveCand(c); }} onDismiss={function () { dismissCand(c); }} data={data}
               onScore={function () { scoreItems([c], []); }} scoreBusy={scoreBusy} keyOk={keyStatus.valid}
-              scoring={scoringActive.indexOf(c.id || c.vin) > -1} />);
+              scoring={scoringActive.indexOf(c.id || c.vin) > -1}
+              onExcludeTrim={c.trim ? function () { excludeTrim(c); } : null} />);
+          })}
+        </div>
+      )}
+
+      {/* Hidden by a profile's trim exclude/include filter — restorable */}
+      {hiddenCands.length > 0 && (
+        <div style={S.card}>
+          <h3 style={Object.assign({}, S.cardH, { cursor: "pointer", margin: 0, display: "flex", alignItems: "center", gap: 6 })}
+            onClick={function () { setShowTrimHidden(!showTrimHidden); }}>
+            {showTrimHidden ? "▾" : "▸"} Hidden by trim filter ({hiddenCands.length})
+          </h3>
+          {showTrimHidden && hiddenCands.map(function (c, i) {
+            return (
+              <div key={(c.vin || "") + i} style={{ borderTop: "1px solid #1e2028", paddingTop: 8, marginTop: 8 }}>
+                <div style={{ fontSize: 13, color: "#c8c8d0" }}>{c.year} {c.vehicle}{c.trim ? " · " + c.trim : ""}</div>
+                <div style={{ fontSize: 11, color: "#8a8a96", margin: "2px 0 6px" }}>${(c.price || 0).toLocaleString()} · {(c.mileage || 0).toLocaleString()} mi — {trimHideReason(c)}</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <button style={Object.assign({}, S.smBtn, { color: "#2d8659" })} onClick={function () { showTrim(c); }}>✓ Show this trim</button>
+                  <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { dismissCand(c); }}>Skip</button>
+                </div>
+              </div>
+            );
           })}
         </div>
       )}
@@ -2032,7 +2145,7 @@ function UpdateCard({ listing, data, onReviewed, onReject }) {
   );
 }
 
-function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk, scoring }) {
+function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk, scoring, onExcludeTrim }) {
   var prof = data.profiles.find(function (p) { return p.id === cand.profileId; });
   var scoreColor = cand.compositeScore >= 7 ? "#2d8659" : cand.compositeScore >= 5 ? "#d4a017" : "#c44";
   return (
@@ -2085,6 +2198,7 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
           <button style={Object.assign({}, S.smBtn, { color: "#b89edd" }, scoreBusy ? { opacity: 0.6 } : {})} disabled={scoreBusy}
             onClick={onScore}>{scoring ? "Scoring…" : (cand.scoredAt ? "✨ Re-score" : "✨ Score")}</button>
         )}
+        {onExcludeTrim && <button style={Object.assign({}, S.smBtn, { color: "#d4a017" })} onClick={onExcludeTrim} title={"Hide this trim (" + (cand.trim || "") + ") from candidates"}>🚫 Exclude trim</button>}
         <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={onDismiss}>Skip</button>
       </div>
     </div>
