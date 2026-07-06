@@ -41,12 +41,13 @@ export default async function handler(req, res) {
   try {
     const resp = await client.messages.create({
       model: model,
-      max_tokens: 2500,
+      max_tokens: 8000, // Claude 5 models always think — leave room before the JSON
       system: BASELINE_SYSTEM,
       messages: [{ role: "user", content: buildBaselinePrompt(profile, listings) }],
       output_config: { format: { type: "json_schema", schema: buildBaselineSchema() } },
     });
-    if (resp.stop_reason === "refusal" || resp.stop_reason === "max_tokens") { res.status(502).json({ error: "Model output was incomplete or refused" }); return; }
+    if (resp.stop_reason === "refusal") { res.status(502).json({ error: "The model declined this request" }); return; }
+    if (resp.stop_reason === "max_tokens") { res.status(502).json({ error: "Model output hit the token limit — try again" }); return; }
     const text = (resp.content || []).filter(function (b) { return b.type === "text"; }).map(function (b) { return b.text; }).join("");
     const parsed = safeParse(text);
     if (!parsed || !Array.isArray(parsed.tiers)) { res.status(502).json({ error: "Couldn't parse the generated baseline" }); return; }
