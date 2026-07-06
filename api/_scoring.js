@@ -29,7 +29,7 @@ export function resolveScoreModel(requested) {
 // Per-criterion guidance baked into the rubric so 1-10 means the same thing
 // across runs. Keyed by the default criterion ids; criteria without an entry
 // (e.g. user-added) still get scored, just without extra guidance.
-const CRITERION_GUIDANCE = {
+export const CRITERION_GUIDANCE = {
   price: "10 = well under the profile's price ceiling for the trim/mileage; 1 = at or over ceiling / overpriced for the market.",
   mileage: "10 = low miles for the model year (well under ~12k/yr); 1 = high miles for its age.",
   dealer: "10 = CPO or reputable franchise; 5 = independent; 1 = private/unknown or red flags.",
@@ -139,7 +139,9 @@ export function buildUserPrompt(listing, ctx) {
   const reqs = (ctx.globalReqs || []).filter(function (r) { return r.active; }).map(function (r) { return "- " + r.text; });
 
   const rubric = criteria.map(function (c) {
-    const g = CRITERION_GUIDANCE[c.id];
+    // Per-criterion guidance the user can override (Criteria tab) — falls back
+    // to the built-in default, then a generic line.
+    const g = (typeof c.guidance === "string" && c.guidance.trim()) ? c.guidance.trim() : CRITERION_GUIDANCE[c.id];
     return "- " + c.id + " (\"" + c.name + "\", weight " + c.weight + "): " + (g || "Score how well the listing satisfies this criterion.");
   });
 

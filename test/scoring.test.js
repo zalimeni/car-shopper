@@ -64,6 +64,11 @@ describe("buildUserPrompt", () => {
     expect(p).toContain("Clean title");
     expect(p).not.toContain("ignored");
   });
+  it("uses a criterion's custom guidance override when present", () => {
+    const crit = [{ id: "price", name: "Price", weight: 25, guidance: "10 = below $20k for this year" }];
+    const out = buildUserPrompt(listing, { criteria: crit });
+    expect(out).toContain("10 = below $20k for this year");
+  });
 });
 
 describe("coerceResult", () => {
