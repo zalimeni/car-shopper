@@ -26,6 +26,15 @@ async function authHeaders() {
   return { "Content-Type": "application/json", Authorization: token ? "Bearer " + token : "" };
 }
 
+// Default scoring system prompt + per-criterion guidance, for the prompt editor.
+export async function getScorePrompt() {
+  try {
+    const res = await fetch("/api/score", { method: "GET", headers: await authHeaders() });
+    if (!res.ok) return { system: "", guidance: {} };
+    return await res.json();
+  } catch (e) { return { system: "", guidance: {} }; }
+}
+
 // ── Key management ──
 
 export async function getKeyStatus() {
@@ -98,7 +107,7 @@ export async function scoreSet(items, ctx, opts) {
     try {
       const res = await fetch("/api/score", {
         method: "POST", headers: headers, signal: controller.signal,
-        body: JSON.stringify({ listings: chunk.items, criteria: ctx.criteria, profile: chunk.profile, globalReqs: ctx.globalReqs, model: ctx.model }),
+        body: JSON.stringify({ listings: chunk.items, criteria: ctx.criteria, profile: chunk.profile, globalReqs: ctx.globalReqs, model: ctx.model, system: ctx.system }),
       });
       const j = await res.json().catch(function () { return {}; });
       if (res.status === 401 || (j && (j.error === "key_rejected" || j.error === "no_key" || j.error === "key_unreadable"))) {

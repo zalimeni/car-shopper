@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import storage from "./storage";
 import { signOut } from "./Auth";
 import { fetchListings, fetchRawSample, reconcile } from "./sync";
-import { getKeyStatus, saveKey, removeKey, scoreSet, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
+import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
 import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
 
 var AUTO_SYNC_HOURS = 12; // sync-on-open debounce
@@ -485,7 +485,7 @@ export default function App() {
     if (!all.length) return;
     var profileById = {};
     (data.profiles || []).forEach(function (p) { profileById[p.id] = p; });
-    var ctx = { criteria: data.criteria, globalReqs: data.globalReqs || [], profileById: profileById, model: data.scoreModel || DEFAULT_SCORE_MODEL };
+    var ctx = { criteria: data.criteria, globalReqs: data.globalReqs || [], profileById: profileById, model: data.scoreModel || DEFAULT_SCORE_MODEL, system: data.scorePrompt || "" };
     setScoreBusy(true);
     setScoringActive(all.map(function (x) { return x.id || x.vin || null; }).filter(Boolean));
     setScoreMsg({ busy: true, text: "Scoring " + all.length + " listing" + (all.length > 1 ? "s" : "") + "…" });
@@ -844,7 +844,7 @@ export default function App() {
             staleN={staleN} setTab={setTab} markAllChk={markAllChk} viewProfile={viewProfile} />
         )}
         {tab === "Profiles" && <ProfilesTab data={data} save={save} />}
-        {tab === "Criteria" && <CriteriaTab data={data} saveRecalc={saveRecalc} />}
+        {tab === "Criteria" && <CriteriaTab data={data} saveRecalc={saveRecalc} save={save} />}
         {tab === "Results" && (
           <ResultsTab data={data} addListing={addListing} updListing={updListing} delListing={delListing}
             edListing={edListing} setEdListing={setEdListing} markChk={markChk}
@@ -1236,10 +1236,12 @@ function ProfEd({ profile, onSave }) {
 }
 
 // ── Criteria ──
-function CriteriaTab({ data, saveRecalc }) {
+function CriteriaTab({ data, saveRecalc, save }) {
   var [local, setLocal] = useState(data.criteria);
   var timer = useRef(null);
+  var [defaults, setDefaults] = useState({ system: "", guidance: {} });
   useEffect(function () { setLocal(data.criteria); }, [data.criteria]);
+  useEffect(function () { var c = false; getScorePrompt().then(function (d) { if (!c) setDefaults(d || { system: "", guidance: {} }); }); return function () { c = true; }; }, []);
   function commit(next) { setLocal(next); clearTimeout(timer.current); timer.current = setTimeout(function () { saveRecalc(Object.assign({}, data, { criteria: next })); }, 600); }
   var tot = local.reduce(function (s, c) { return s + c.weight; }, 0);
   return (
@@ -1247,22 +1249,59 @@ function CriteriaTab({ data, saveRecalc }) {
       <div style={S.secH}><h2 style={S.secT}>Scoring Criteria</h2>
         <button style={S.secBtn} onClick={function () { commit(local.concat({ id: "c-" + Date.now(), name: "New", weight: 5 })); }}>+ Add</button>
       </div>
+
+      <PromptEditor data={data} save={save} defaultSystem={defaults.system} />
+
       <div style={S.card}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
           <span style={S.lbl}>Total: {tot}</span>{tot !== 100 && <span style={{ color: "#c44", fontSize: 13 }}>⚠ Should = 100</span>}
         </div>
         {local.map(function (c) {
           return (
-            <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-              <input style={Object.assign({}, S.inp, { flex: 1 })} value={c.name} onChange={function (e) { commit(local.map(function (cc) { return cc.id === c.id ? Object.assign({}, cc, { name: e.target.value }) : cc; })); }} />
-              <input style={Object.assign({}, S.inp, { width: 60, textAlign: "center" })} type="number" value={c.weight} onChange={function (e) { commit(local.map(function (cc) { return cc.id === c.id ? Object.assign({}, cc, { weight: parseInt(e.target.value) || 0 }) : cc; })); }} />
-              <span style={{ fontSize: 12, color: "#6b6b76" }}>%</span>
-              <button style={{ background: "none", border: "none", color: "#c44", fontSize: 16, cursor: "pointer" }} onClick={function () { commit(local.filter(function (cc) { return cc.id !== c.id; })); }}>×</button>
+            <div key={c.id} style={{ marginBottom: 12, borderBottom: "1px solid #1e2028", paddingBottom: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input style={Object.assign({}, S.inp, { flex: 1 })} value={c.name} onChange={function (e) { commit(local.map(function (cc) { return cc.id === c.id ? Object.assign({}, cc, { name: e.target.value }) : cc; })); }} />
+                <input style={Object.assign({}, S.inp, { width: 60, textAlign: "center" })} type="number" value={c.weight} onChange={function (e) { commit(local.map(function (cc) { return cc.id === c.id ? Object.assign({}, cc, { weight: parseInt(e.target.value) || 0 }) : cc; })); }} />
+                <span style={{ fontSize: 12, color: "#6b6b76" }}>%</span>
+                <button style={{ background: "none", border: "none", color: "#c44", fontSize: 16, cursor: "pointer" }} onClick={function () { commit(local.filter(function (cc) { return cc.id !== c.id; })); }}>×</button>
+              </div>
+              <textarea style={Object.assign({}, S.ta, { width: "100%", boxSizing: "border-box", marginTop: 6, fontSize: 12 })} rows={2}
+                value={c.guidance || ""} placeholder={"How AI scores this 1-10 (leave blank for default: " + (defaults.guidance[c.id] || "score how well the listing satisfies it") + ")"}
+                onChange={function (e) { commit(local.map(function (cc) { return cc.id === c.id ? Object.assign({}, cc, { guidance: e.target.value }) : cc; })); }} />
             </div>
           );
         })}
-        <p style={S.help}>Auto-recalculates all scores after 0.6s.</p>
+        <p style={S.help}>Weights auto-recalculate scores after 0.6s. The per-criterion text is the AI scoring guidance — leave blank to use the built-in default (shown as placeholder).</p>
       </div>
+    </div>
+  );
+}
+
+// View / override the scoring system prompt (the overall instructions the AI
+// gets; the per-criterion rubric + your profile/requirements are added below it).
+function PromptEditor({ data, save, defaultSystem }) {
+  var [open, setOpen] = useState(false);
+  var custom = data.scorePrompt || "";
+  var [draft, setDraft] = useState(custom);
+  useEffect(function () { setDraft(data.scorePrompt || ""); }, [data.scorePrompt]);
+  return (
+    <div style={S.card}>
+      <div style={S.secH}>
+        <h3 style={S.cardH}>Scoring prompt {custom ? "· custom" : "· default"}</h3>
+        <button style={S.secBtn} onClick={function () { setOpen(!open); }}>{open ? "Close" : "View / edit"}</button>
+      </div>
+      {open && (
+        <div>
+          <p style={S.help}>The overall instructions given to the AI for every listing. Your buyer profile, requirements, per-criterion rubric, and the listing data are appended automatically. Leave blank to use the built-in default (shown as placeholder).</p>
+          <textarea style={Object.assign({}, S.ta, { width: "100%", boxSizing: "border-box", minHeight: 140, fontSize: 12 })}
+            value={draft} placeholder={defaultSystem || "(loading default…)"} onChange={function (e) { setDraft(e.target.value); }} />
+          <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+            <button style={S.priBtn} onClick={function () { save(Object.assign({}, data, { scorePrompt: draft.trim() })); }}>Save</button>
+            <button style={S.secBtn} onClick={function () { setDraft(defaultSystem || ""); }}>Load default to edit</button>
+            <button style={S.secBtn} onClick={function () { setDraft(""); save(Object.assign({}, data, { scorePrompt: "" })); }}>Reset to default</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1645,6 +1684,11 @@ function HelpTab() {
         <p style={li}><span style={b}>Model</span> — pick Sonnet 5 (default, balanced), Opus 4.8 (most nuanced), or Haiku 4.5 (fastest/cheapest). <span style={b}>Auto-score on sync</span> scores only unscored candidates and listings whose price materially changed (never untouched or skipped ones), and is <span style={b}>skipped when there are more than 20 to score</span> — use Score all / per-card then, to avoid burning credits.</p>
         <p style={li}>Score (or Re-score) any single card with its ✨ button, or use <span style={b}>Score all</span> on the candidate queue.</p>
         <p style={note}>Scoring runs in batches and fills in results as each batch finishes, so partial progress is kept. If a large run is interrupted (e.g. the tab is backgrounded), the finished ones stay scored and the rest are picked up on the next sync/score. The key is validated, stored encrypted server-side, and never shown again — it's only used to score your own listings under your own account. Note: the API is pay-as-you-go and needs credits in the Anthropic Console; a Claude Pro/Max subscription does not include API access.</p>
+      </div>
+
+      <div style={S.card}>
+        <h3 style={S.cardH}>Tuning the scoring</h3>
+        <p style={li}>On the <span style={b}>Criteria</span> tab you can adjust each criterion's <span style={b}>weight</span> and edit the <span style={b}>per-criterion guidance</span> (how the AI scores it 1–10 — leave blank for the built-in default). <span style={b}>Scoring prompt · View / edit</span> shows and lets you override the overall system instructions.</p>
       </div>
 
       <div style={S.card}>
