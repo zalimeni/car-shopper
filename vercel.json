@@ -4,7 +4,8 @@
   "outputDirectory": "dist",
   "functions": {
     "api/marketcheck.js": { "maxDuration": 30 },
-    "api/score.js": { "maxDuration": 60 }
+    "api/score.js": { "maxDuration": 60 },
+    "api/baseline.js": { "maxDuration": 60 }
   },
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }

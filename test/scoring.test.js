@@ -1,5 +1,25 @@
 import { describe, it, expect } from "vitest";
-import { buildScoreSchema, buildUserPrompt, coerceResult, resolveScoreModel, SCORE_MODELS } from "../api/_scoring.js";
+import { buildScoreSchema, buildUserPrompt, coerceResult, resolveScoreModel, SCORE_MODELS, resolveBaselineBands } from "../api/_scoring.js";
+
+describe("resolveBaselineBands", () => {
+  const baseline = {
+    refMileage: 60000, perThousandMi: 100,
+    tiers: [{ years: "2019-2020", trim: "XLE", good: 20000, fair: 22000, high: 24000 }],
+    default: { good: 18000, fair: 21000, high: 24000 },
+  };
+  it("matches a tier by year range + fuzzy trim and adjusts for mileage", () => {
+    // 2019 XLE at 70k mi (10k over ref) -> subtract 10 * $100 = $1000
+    const b = resolveBaselineBands(baseline, 2019, "Hybrid XLE AWD", 70000);
+    expect(b).toEqual({ good: 19000, fair: 21000, high: 23000, matchedTier: true });
+  });
+  it("falls back to the default band when no tier matches", () => {
+    const b = resolveBaselineBands(baseline, 2022, "Limited", 60000);
+    expect(b).toEqual({ good: 18000, fair: 21000, high: 24000, matchedTier: false });
+  });
+  it("returns null without a baseline", () => {
+    expect(resolveBaselineBands(null, 2020, "XLE", 60000)).toBeNull();
+  });
+});
 
 const CRIT = [
   { id: "price", name: "Price vs. budget", weight: 25 },

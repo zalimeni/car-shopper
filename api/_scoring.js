@@ -133,6 +133,69 @@ function profileFacts(p) {
   return f.join("\n");
 }
 
+// ── Price baseline (per year-range × trim anchors, mileage-adjusted) ──
+function yearInRange(str, y) {
+  if (!str || y == null) return false;
+  return String(str).split(",").some(function (part) {
+    const t = part.trim();
+    const m = t.match(/^(\d{4})\s*-\s*(\d{4})$/);
+    if (m) { let a = +m[1], b = +m[2]; if (a > b) { const tmp = a; a = b; b = tmp; } return y >= a && y <= b; }
+    return String(y) === t;
+  });
+}
+// Good/fair/high asking-price bands for a listing (matched tier by year+trim,
+// then adjusted by the per-1000-mile slope). Returns null when no baseline.
+export function resolveBaselineBands(baseline, year, trim, mileage) {
+  if (!baseline) return null;
+  const t = String(trim || "").toLowerCase();
+  const tier = (baseline.tiers || []).find(function (x) {
+    return yearInRange(x.years, year) && (!x.trim || t.indexOf(String(x.trim).toLowerCase()) > -1);
+  });
+  const band = tier || baseline.default;
+  if (!band || band.good == null) return null;
+  let good = Number(band.good), fair = Number(band.fair), high = Number(band.high);
+  const per = Number(baseline.perThousandMi) || 0, ref = Number(baseline.refMileage) || 0;
+  if (per && ref && mileage != null) {
+    const adj = ((Number(mileage) - ref) / 1000) * per; // more miles → lower fair price
+    good = Math.round(good - adj); fair = Math.round(fair - adj); high = Math.round(high - adj);
+  }
+  return { good: good, fair: fair, high: high, matchedTier: !!tier };
+}
+
+// Schema + prompt for AI baseline generation, grounded in the user's real listings.
+export function buildBaselineSchema() {
+  const tier = {
+    type: "object",
+    properties: { years: { type: "string" }, trim: { type: "string" }, good: { type: "integer" }, fair: { type: "integer" }, high: { type: "integer" } },
+    required: ["years", "trim", "good", "fair", "high"], additionalProperties: false,
+  };
+  const band = { type: "object", properties: { good: { type: "integer" }, fair: { type: "integer" }, high: { type: "integer" } }, required: ["good", "fair", "high"], additionalProperties: false };
+  return {
+    type: "object",
+    properties: { refMileage: { type: "integer" }, perThousandMi: { type: "integer" }, tiers: { type: "array", items: tier }, default: band },
+    required: ["refMileage", "perThousandMi", "tiers", "default"], additionalProperties: false,
+  };
+}
+
+export const BASELINE_SYSTEM =
+  "You are a used-car pricing analyst. Given a buyer's target vehicle and a sample of real recent local dealer listings, produce asking-price baselines a shopper can score against. For each relevant model year and trim, give a good (great-deal), fair (typical market), and high (overpriced) asking price, all quoted at one sensible reference mileage, plus perThousandMi = how much the fair price drops per 1,000 miles above that reference. Group consecutive years that share the same generation/pricing into a range (e.g. \"2019-2020\"). Cover the buyer's years and trims of interest. Ground the numbers in the provided real listings where available; use general market knowledge to fill gaps. All prices in whole US dollars.";
+
+export function buildBaselinePrompt(profile, listings) {
+  const p = (profile && profile.params) || {};
+  const rows = (listings || []).slice(0, 60).map(function (l) {
+    return "- " + (l.year || "?") + " " + (l.trim || "") + " · " + (l.mileage != null ? Number(l.mileage).toLocaleString() + " mi" : "? mi") + " · " + (l.price != null ? "$" + Number(l.price).toLocaleString() : "?");
+  });
+  return [
+    "TARGET VEHICLE: " + [profile && profile.name, p.make, p.model, p.powertrain].filter(Boolean).join(" "),
+    "Years of interest: " + (p.years || "any") + " · Trims: " + (p.trims || "any") + " · Budget ceiling: " + (p.maxPrice ? "$" + Number(p.maxPrice).toLocaleString() : "n/a"),
+    "",
+    "REAL LOCAL LISTINGS (" + (listings ? listings.length : 0) + " sampled" + (listings && listings.length > 60 ? ", showing 60" : "") + "):",
+    rows.length ? rows.join("\n") : "(none available — use general market knowledge for this model/region)",
+    "",
+    "Produce good/fair/high asking-price baselines per (year-range, trim) at a sensible reference mileage, plus the per-1,000-mile adjustment.",
+  ].join("\n");
+}
+
 export function buildUserPrompt(listing, ctx) {
   ctx = ctx || {};
   const criteria = ctx.criteria || [];
@@ -145,12 +208,21 @@ export function buildUserPrompt(listing, ctx) {
     return "- " + c.id + " (\"" + c.name + "\", weight " + c.weight + "): " + (g || "Score how well the listing satisfies this criterion.");
   });
 
+  // If the profile carries a price baseline, compute this listing's concrete
+  // good/fair/high bands and hand them to the model to anchor the price score.
+  const baseline = ctx.profile && ctx.profile.params && ctx.profile.params.priceBaseline;
+  const bands = baseline ? resolveBaselineBands(baseline, listing.year, listing.trim, listing.mileage) : null;
+  const baselineSection = bands
+    ? "PRICE BASELINE FOR THIS LISTING (" + (listing.year || "?") + " " + (listing.trim || "") + " @ " + (listing.mileage != null ? Number(listing.mileage).toLocaleString() + " mi" : "? mi") + "): good ≤ $" + bands.good.toLocaleString() + " · fair ≈ $" + bands.fair.toLocaleString() + " · high ≥ $" + bands.high.toLocaleString() + ". For the \"price\" criterion, anchor on these: 9-10 at/below good, ~5 near fair, 1-2 at/above high; interpolate between."
+    : "";
+
   return [
     "BUYER PROFILE:",
     profileFacts(ctx.profile),
     "",
     "HARD REQUIREMENTS / PREFERENCES (apply to condition, color, etc.):",
     reqs.length ? reqs.join("\n") : "(none)",
+    baselineSection ? "\n" + baselineSection : "",
     "",
     "SCORING CRITERIA (score each 1-10):",
     rubric.join("\n"),

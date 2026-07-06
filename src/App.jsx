@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import storage from "./storage";
 import { signOut } from "./Auth";
 import { fetchListings, fetchRawSample, reconcile } from "./sync";
-import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
+import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBaseline, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
 import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
 
 var AUTO_SYNC_HOURS = 12; // sync-on-open debounce
@@ -267,6 +267,7 @@ function parseProfiles(text) {
         mustHave: String(params.mustHave || ""),
         niceToHave: String(params.niceToHave || ""),
         dealbreakers: String(params.dealbreakers || ""),
+        priceBaseline: (params.priceBaseline && typeof params.priceBaseline === "object") ? params.priceBaseline : undefined,
       },
     });
   });
@@ -843,7 +844,7 @@ export default function App() {
           <DashView data={data} watch={watch} rej={rej} bought={bought}
             staleN={staleN} setTab={setTab} markAllChk={markAllChk} viewProfile={viewProfile} />
         )}
-        {tab === "Profiles" && <ProfilesTab data={data} save={save} />}
+        {tab === "Profiles" && <ProfilesTab data={data} save={save} keyOk={keyStatus.valid} scoreModel={scoreModel} />}
         {tab === "Criteria" && <CriteriaTab data={data} saveRecalc={saveRecalc} save={save} />}
         {tab === "Results" && (
           <ResultsTab data={data} addListing={addListing} updListing={updListing} delListing={delListing}
@@ -1068,7 +1069,7 @@ function SettingsCard({ data, save }) {
 }
 
 // ── Profiles + Global Reqs ──
-function ProfilesTab({ data, save }) {
+function ProfilesTab({ data, save, keyOk, scoreModel }) {
   var [ed, setEd] = useState(null);
   var [showIO, setShowIO] = useState(false);
   var [impText, setImpText] = useState("");
@@ -1098,7 +1099,10 @@ function ProfilesTab({ data, save }) {
   function addProf() {
     var n = { id: "p-" + Date.now(), name: "New Profile", role: "", active: true,
       params: { make: "", model: "", years: "", trims: "", trimInclude: "", trimExclude: "", maxPrice: 20000, maxMiles: 80000, mustHave: "", niceToHave: "", dealbreakers: "" } };
-    save(Object.assign({}, data, { profiles: data.profiles.concat(n) })); setEd(n.id);
+    // Prepend + open the editor so the new profile is immediately visible (was
+    // appended at the bottom of a long list, which read as "nothing happened").
+    save(Object.assign({}, data, { profiles: [n].concat(data.profiles || []) }));
+    setEd(n.id);
   }
   function updProf(id, upd) {
     save(Object.assign({}, data, { profiles: data.profiles.map(function (p) {
@@ -1189,7 +1193,8 @@ function ProfilesTab({ data, save }) {
                 <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { delProf(p.id); }}>Del</button>
               </div>
             </div>
-            {ed === p.id ? (<ProfEd profile={p} onSave={function (upd) { updProf(p.id, upd); }} />) : (
+            {ed === p.id ? (<ProfEd profile={p} onSave={function (upd) { updProf(p.id, upd); }}
+              listings={data.listings.filter(function (l) { return l.profileId === p.id; })} keyOk={keyOk} model={scoreModel} />) : (
               <div style={{ fontSize: 13, color: "#8a8a96", lineHeight: 1.6 }}>
                 <div>{p.params.make} {p.params.model} · {p.params.years} · {p.params.trims}</div>
                 <div>≤${p.params.maxPrice.toLocaleString()} · ≤{p.params.maxMiles.toLocaleString()} mi</div>
@@ -1200,6 +1205,7 @@ function ProfilesTab({ data, save }) {
                     {p.params.trimExclude && <span><span style={{ fontSize: 11, fontWeight: 600, color: "#d4a017" }}>Exclude trims:</span> {p.params.trimExclude}</span>}
                   </div>
                 )}
+                {p.params.priceBaseline && <div style={{ marginTop: 4 }}><span style={{ fontSize: 11, fontWeight: 600, color: "#b89edd" }}>Price baseline:</span> {(p.params.priceBaseline.tiers || []).length} tier(s) — anchors the price score</div>}
                 {p.params.dealbreakers && <div style={{ marginTop: 4 }}><span style={{ fontSize: 11, fontWeight: 600, color: "#c44" }}>Breaks:</span> {p.params.dealbreakers}</div>}
               </div>
             )}
@@ -1210,7 +1216,7 @@ function ProfilesTab({ data, save }) {
   );
 }
 
-function ProfEd({ profile, onSave }) {
+function ProfEd({ profile, onSave, listings, keyOk, model }) {
   var [p, setP] = useState(Object.assign({}, profile.params));
   var [name, setName] = useState(profile.name || "");
   var [role, setRole] = useState(profile.role || "");
@@ -1230,7 +1236,83 @@ function ProfEd({ profile, onSave }) {
         return (<div key={pair[0]} style={Object.assign({}, S.field, { gridColumn: "1/-1" })}><label style={S.lbl}>{pair[1]}</label><textarea style={S.ta} value={p[pair[0]] || ""} onChange={function (e) { setP(Object.assign({}, p, { [pair[0]]: e.target.value })); }} rows={2} /></div>);
       })}
       <p style={Object.assign({}, S.help, { gridColumn: "1/-1", margin: 0 })}>Make / model / powertrain / years / max price / max miles filter the search. Trim include/exclude are fuzzy (substring) filters applied to candidates on your device (MarketCheck can't filter trims). Trims, must/nice-to-have, and dealbreakers only guide AI scoring.</p>
-      <button style={S.priBtn} onClick={function () { onSave({ name: name.trim() || "Profile", role: role.trim(), params: p }); }}>Save</button>
+      <div style={{ gridColumn: "1/-1" }}>
+        <BaselineSection baseline={p.priceBaseline} onChange={function (b) { setP(Object.assign({}, p, { priceBaseline: b })); }}
+          profileForGen={{ name: name, params: p }} listings={listings || []} keyOk={keyOk} model={model} />
+      </div>
+      <button style={Object.assign({}, S.priBtn, { gridColumn: "1/-1" })} onClick={function () { onSave({ name: name.trim() || "Profile", role: role.trim(), params: p }); }}>Save profile</button>
+    </div>
+  );
+}
+
+// Per-profile price baseline: AI-generate good/fair/high asking prices per
+// (year-range, trim) grounded in the profile's real listings, then edit; the
+// values anchor the "price" scoring criterion.
+function BaselineSection({ baseline, onChange, profileForGen, listings, keyOk, model }) {
+  var [busy, setBusy] = useState(false);
+  var [err, setErr] = useState("");
+  var withPrice = (listings || []).filter(function (l) { return l.price; });
+  async function generate() {
+    setBusy(true); setErr("");
+    try {
+      var sample = withPrice.map(function (l) { return { year: l.year, trim: l.trim, price: l.price, mileage: l.mileage }; });
+      var b = await generateBaseline(profileForGen, sample, model);
+      if (b) onChange(b);
+      else setErr("No baseline returned");
+    } catch (e) { setErr((e && e.message) || "Generation failed"); }
+    setBusy(false);
+  }
+  function setField(k, v) { onChange(Object.assign({}, baseline, { [k]: v })); }
+  function setTier(i, k, v) { onChange(Object.assign({}, baseline, { tiers: baseline.tiers.map(function (t, j) { return j === i ? Object.assign({}, t, { [k]: v }) : t; }) })); }
+  function addTier() { onChange(Object.assign({}, baseline, { tiers: (baseline.tiers || []).concat([{ years: "", trim: "", good: 0, fair: 0, high: 0 }]) })); }
+  function delTier(i) { onChange(Object.assign({}, baseline, { tiers: baseline.tiers.filter(function (_, j) { return j !== i; }) })); }
+  function setDefault(k, v) { onChange(Object.assign({}, baseline, { default: Object.assign({}, baseline.default, { [k]: v }) })); }
+  var numInp = Object.assign({}, S.inp, { width: 78, textAlign: "right", padding: "4px 6px", fontSize: 12 });
+
+  return (
+    <div style={{ border: "1px solid #2a3058", borderRadius: 8, padding: 10, background: "#12141c" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <label style={S.lbl}>Price baseline (anchors the "price" score)</label>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          {keyOk
+            ? <button style={Object.assign({}, S.smBtn, { color: "#b89edd" }, busy ? { opacity: 0.6 } : {})} disabled={busy} onClick={generate}>{busy ? "Generating…" : (baseline ? "↻ Regenerate (AI)" : "✨ Generate (AI)")}</button>
+            : <span style={{ fontSize: 11, color: "#888" }}>add an Anthropic key to generate</span>}
+          {baseline && <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { onChange(undefined); }}>Clear</button>}
+        </div>
+      </div>
+      <p style={Object.assign({}, S.help, { margin: "4px 0" })}>{withPrice.length} priced listing{withPrice.length === 1 ? "" : "s"} on file to ground the estimate. Good/fair/high are asking prices at the reference mileage; the $/1k-mi figure shifts them for higher/lower miles. Edit anything below.</p>
+      {err && <div style={{ fontSize: 12, color: "#c44", marginBottom: 6 }}>{err}</div>}
+      {baseline && (
+        <div>
+          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 8 }}>
+            <label style={{ fontSize: 12, color: "#8a8a96" }}>Ref mileage <input style={numInp} type="number" value={baseline.refMileage || 0} onChange={function (e) { setField("refMileage", parseInt(e.target.value) || 0); }} /></label>
+            <label style={{ fontSize: 12, color: "#8a8a96" }}>$ / 1k mi <input style={numInp} type="number" value={baseline.perThousandMi || 0} onChange={function (e) { setField("perThousandMi", parseInt(e.target.value) || 0); }} /></label>
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%" }}>
+              <thead><tr>{["Years", "Trim", "Good", "Fair", "High", ""].map(function (h) { return (<th key={h} style={{ textAlign: "left", color: "#6b6b76", padding: "2px 6px", fontWeight: 500 }}>{h}</th>); })}</tr></thead>
+              <tbody>
+                {(baseline.tiers || []).map(function (t, i) {
+                  return (
+                    <tr key={i}>
+                      <td style={{ padding: "2px 4px" }}><input style={Object.assign({}, S.inp, { width: 82, padding: "4px 6px", fontSize: 12 })} value={t.years || ""} onChange={function (e) { setTier(i, "years", e.target.value); }} placeholder="2019-2020" /></td>
+                      <td style={{ padding: "2px 4px" }}><input style={Object.assign({}, S.inp, { width: 82, padding: "4px 6px", fontSize: 12 })} value={t.trim || ""} onChange={function (e) { setTier(i, "trim", e.target.value); }} placeholder="XLE" /></td>
+                      {["good", "fair", "high"].map(function (k) { return (<td key={k} style={{ padding: "2px 4px" }}><input style={numInp} type="number" value={t[k] || 0} onChange={function (e) { setTier(i, k, parseInt(e.target.value) || 0); }} /></td>); })}
+                      <td style={{ padding: "2px 4px" }}><button style={{ background: "none", border: "none", color: "#c44", cursor: "pointer" }} onClick={function () { delTier(i); }}>×</button></td>
+                    </tr>
+                  );
+                })}
+                <tr>
+                  <td style={{ padding: "2px 4px", color: "#8a8a96" }} colSpan={2}>default (no match)</td>
+                  {["good", "fair", "high"].map(function (k) { return (<td key={k} style={{ padding: "2px 4px" }}><input style={numInp} type="number" value={(baseline.default && baseline.default[k]) || 0} onChange={function (e) { setDefault(k, parseInt(e.target.value) || 0); }} /></td>); })}
+                  <td />
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <button style={Object.assign({}, S.smBtn, { marginTop: 6 })} onClick={addTier}>+ Add tier</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1689,6 +1771,7 @@ function HelpTab() {
       <div style={S.card}>
         <h3 style={S.cardH}>Tuning the scoring</h3>
         <p style={li}>On the <span style={b}>Criteria</span> tab you can adjust each criterion's <span style={b}>weight</span> and edit the <span style={b}>per-criterion guidance</span> (how the AI scores it 1–10 — leave blank for the built-in default). <span style={b}>Scoring prompt · View / edit</span> shows and lets you override the overall system instructions.</p>
+        <p style={li}><span style={b}>Price baseline</span> (in a profile's editor): <span style={b}>Generate (AI)</span> builds good/fair/high asking prices per year-range &amp; trim, grounded in that profile's real synced listings, then you can edit them. The bands anchor the <span style={b}>price</span> criterion so it's scored against concrete numbers instead of the model's guess.</p>
       </div>
 
       <div style={S.card}>

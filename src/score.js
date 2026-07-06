@@ -26,6 +26,20 @@ async function authHeaders() {
   return { "Content-Type": "application/json", Authorization: token ? "Bearer " + token : "" };
 }
 
+// AI-assisted price baseline for a profile, grounded in its real listings.
+export async function generateBaseline(profile, listings, model) {
+  const res = await fetch("/api/baseline", {
+    method: "POST", headers: await authHeaders(),
+    body: JSON.stringify({ profile: profile, listings: listings || [], model: model }),
+  });
+  const j = await res.json().catch(function () { return {}; });
+  if (res.status === 401 || (j && (j.error === "key_rejected" || j.error === "no_key" || j.error === "key_unreadable"))) {
+    const e = new Error(j.message || j.error || "Not authorized"); e.code = j.error || "key_rejected"; throw e;
+  }
+  if (!res.ok) throw new Error(j.error || ("HTTP " + res.status));
+  return j.baseline;
+}
+
 // Default scoring system prompt + per-criterion guidance, for the prompt editor.
 export async function getScorePrompt() {
   try {
