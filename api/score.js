@@ -65,9 +65,9 @@ export default async function handler(req, res) {
   let authFailed = false;
   const results = await Promise.all(listings.map(async function (listing, index) {
     try {
-      const parsed = await scoreOne(client, model, system, listing, ctx, schema);
-      if (!parsed) return { index: index, vin: listing.vin || "", ok: false, error: "Model output was incomplete or refused" };
-      const coerced = coerceResult(parsed, criteria);
+      const r = await scoreOne(client, model, system, listing, ctx, schema);
+      if (r.fail) return { index: index, vin: listing.vin || "", ok: false, error: r.fail === "truncated" ? "Model output hit the token limit" : "Model declined this listing" };
+      const coerced = coerceResult(r.parsed, criteria);
       if (!coerced) return { index: index, vin: listing.vin || "", ok: false, error: "Model output missing required criteria" };
       return Object.assign({ index: index, vin: listing.vin || "", ok: true }, coerced);
     } catch (e) {
@@ -86,24 +86,24 @@ export default async function handler(req, res) {
 }
 
 async function scoreOne(client, model, system, listing, ctx, schema) {
-  // No extended thinking: this is a bounded, schema-constrained rubric score, so
-  // thinking mostly adds latency (20-40s/call) — which, fanned out per request,
-  // crowds the function timeout and makes the UI look stuck. The JSON output is
-  // small, so a modest cap is plenty.
+  // Generous cap: Claude 5-family models (e.g. the Sonnet 5 default) always
+  // think, spending output tokens before the JSON is emitted — a tight cap
+  // truncates to stop_reason:"max_tokens". Still non-streaming-safe (< 16k).
   const resp = await client.messages.create({
     model: model,
-    max_tokens: 3000,
+    max_tokens: 8000,
     system: system,
     messages: [{ role: "user", content: buildUserPrompt(listing, ctx) }],
     output_config: { format: { type: "json_schema", schema: schema } },
   });
-  if (resp.stop_reason === "refusal" || resp.stop_reason === "max_tokens") return null;
+  if (resp.stop_reason === "refusal") return { fail: "refused" };
+  if (resp.stop_reason === "max_tokens") return { fail: "truncated" };
   // With output_config.format the JSON lands in the (single) text block.
   const text = (resp.content || [])
     .filter(function (b) { return b.type === "text"; })
     .map(function (b) { return b.text; })
     .join("");
-  return safeParse(text);
+  return { parsed: safeParse(text) };
 }
 
 function errMsg(e) {
