@@ -2555,11 +2555,19 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
       })()}
       {st.budget ? <div style={{ fontSize: 12, color: "#6b9edd", marginBottom: 4 }}>Budget left if bought: <strong>${rem.toLocaleString()}</strong></div> : null}
       {l.lastChecked && <div style={{ fontSize: 11, color: "#555" }}>Checked: {l.lastChecked}</div>}
-      {l.source === "marketcheck" && l.lastSeen && (
-        <div style={{ fontSize: 11, color: l.lastSeen === today() ? "#555" : "#d4a017" }}>
-          {l.lastSeen === today() ? "Seen in sync today" : "Last seen in sync: " + l.lastSeen + " (may be sold)"}
-        </div>
-      )}
+      {l.source === "marketcheck" && l.lastSeen && (function () {
+        // Don't cry "may be sold" over a single missed/partial sync (the free
+        // MarketCheck tier often returns partial pages). Only warn once it's been
+        // unseen for the same window that marks a listing stale; before that,
+        // show the last-seen date plainly.
+        var seenToday = l.lastSeen === today();
+        var mightBeSold = !seenToday && daysSince(l.lastSeen) >= STALE_DAYS;
+        return (
+          <div style={{ fontSize: 11, color: seenToday ? "#555" : mightBeSold ? "#d4a017" : "#6b6b76" }}>
+            {seenToday ? "Seen in sync today" : "Last seen in sync: " + l.lastSeen + (mightBeSold ? " (may be sold)" : "")}
+          </div>
+        );
+      })()}
       {l.notes && <div style={{ fontSize: 12, color: "#6b6b76", fontStyle: "italic", marginTop: 4 }}>{l.notes}</div>}
       {l.rejectReason && <div style={{ fontSize: 12, color: "#c44", marginTop: 4 }}>Rejected: {l.rejectReason}</div>}
 

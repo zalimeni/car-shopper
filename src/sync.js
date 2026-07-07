@@ -65,16 +65,20 @@ export async function fetchRawSample(profiles, hubs) {
 export function reconcile(existing, fetched, todayStr) {
   const byVin = {};
   (fetched || []).forEach(function (f) {
-    if (!f.vin) return;
-    const prev = byVin[f.vin];
-    if (!prev || (f.price && f.price < prev.price)) byVin[f.vin] = f;
+    const k = vinKey(f.vin);
+    if (!k) return;
+    const prev = byVin[k];
+    if (!prev || (f.price && f.price < prev.price)) byVin[k] = f;
   });
 
   const matched = {};
   const summary = { fetched: (fetched || []).length, priceUpdates: 0, refreshed: 0, newCount: 0, notSeen: 0 };
 
   const listings = (existing || []).map(function (l) {
-    const f = l.vin ? byVin[l.vin] : null;
+    // Match on a normalized VIN (case/whitespace-insensitive) so a stored
+    // listing isn't mistaken for "gone" over a trivial formatting difference.
+    const k = vinKey(l.vin);
+    const f = k ? byVin[k] : null;
     if (!f) {
       // A previously-synced listing that's missing this run — flag only.
       if (l.source === "marketcheck" && l.status === "watch" && l.lastSeen && l.lastSeen !== todayStr) {
@@ -82,7 +86,7 @@ export function reconcile(existing, fetched, todayStr) {
       }
       return l;
     }
-    matched[l.vin] = true;
+    matched[k] = true;
     const next = Object.assign({}, l, { lastSeen: todayStr, lastChecked: todayStr });
     if (f.price && f.price !== l.price) {
       const dir = f.price < l.price ? "↓" : "↑";
@@ -117,6 +121,10 @@ export function reconcile(existing, fetched, todayStr) {
 
   return { listings: listings, candidates: candidates, summary: summary };
 }
+
+// Normalize a VIN for matching: VINs are uppercase alphanumeric, so trim and
+// upcase both sides before comparing (fetched vs stored).
+function vinKey(v) { return String(v || "").trim().toUpperCase(); }
 
 function appendNote(existing, note) {
   const e = (existing || "").trim();
