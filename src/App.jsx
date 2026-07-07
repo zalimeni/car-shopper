@@ -1954,12 +1954,22 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       {/* Filter & Sort bar */}
       {totalAll > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12, alignItems: "center" }}>
-          <select style={Object.assign({}, S.inp, { flex: "0 0 auto", padding: "5px 8px", fontSize: 12 })} value={filterProf} onChange={function (e) { setFilterProf(e.target.value); }}>
+          <select style={Object.assign({}, S.inp, { flex: "0 0 auto", padding: "5px 8px", fontSize: 12 })} value={filterProf} onChange={function (e) {
+            var v = e.target.value;
+            setFilterProf(v);
+            // A specific profile implies its category, so pin the category filter
+            // to that profile's role (disabled below); reset it when back to All.
+            if (v === "all") { setFilterRole("all"); }
+            else { var pr = data.profiles.find(function (p) { return p.id === v; }); setFilterRole(pr && pr.role ? pr.role : "all"); }
+          }}>
             <option value="all">All profiles</option>
             {activeProfiles.map(function (p) { return (<option key={p.id} value={p.id}>{p.name}</option>); })}
           </select>
           {roleOpts.length >= 2 && (
-            <select style={Object.assign({}, S.inp, { flex: "0 0 auto", padding: "5px 8px", fontSize: 12 })} value={filterRole} onChange={function (e) { setFilterRole(e.target.value); }}>
+            <select disabled={filterProf !== "all"}
+              style={Object.assign({}, S.inp, { flex: "0 0 auto", padding: "5px 8px", fontSize: 12 }, filterProf !== "all" ? { opacity: 0.55, cursor: "default" } : {})}
+              title={filterProf !== "all" ? "Category is set by the selected profile — choose All profiles to filter by category" : ""}
+              value={filterRole} onChange={function (e) { setFilterRole(e.target.value); }}>
               <option value="all">All categories</option>
               {roleOpts.map(function (r) { return (<option key={r} value={r}>{r} only</option>); })}
             </select>
