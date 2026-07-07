@@ -102,6 +102,10 @@ function listingFacts(l) {
   add("Mileage", l.mileage != null ? Number(l.mileage).toLocaleString() + " mi" : null);
   add("Dealer", l.dealer);
   add("Dealer type", l.dealerType);
+  // CPO is a strong positive — manufacturer-backed inspection + extended
+  // warranty. Surface it explicitly (l.dealerType === "CPO" handles listings
+  // synced before cpo became its own field).
+  if (l.cpo === true || l.dealerType === "CPO") f.push("Certified Pre-Owned (CPO): Yes — manufacturer-backed inspection & extended warranty");
   add("Location", [l.location, l.state].filter(Boolean).join(", "));
   add("Color", l.color);
   add("Days on market", l.dom);

@@ -261,6 +261,10 @@ export function normalize(row, profileId) {
     mileage: Number(row.miles) || 0,
     dealer: dealer.name || "",
     dealerType: mapDealerType(row, dealer),
+    // Certified Pre-Owned is orthogonal to dealer type (a CPO car is still sold
+    // by a franchise dealer), so it's its own signal — manufacturer-backed
+    // inspection + warranty, a strong positive the AI scores on directly.
+    cpo: isCpo(row),
     location: dealer.city || "",
     state: dealer.state || "",
     color: row.exterior_color || "",
@@ -295,12 +299,18 @@ export function pickPhoto(row) {
   return "";
 }
 
+// CPO is now tracked as its own `cpo` boolean (see normalize); dealer type keeps
+// the actual seller category so a CPO franchise car still reads as "franchise".
 export function mapDealerType(row, dealer) {
-  if (row.cpo === true || row.cpo === "True" || row.cpo === "true") return "CPO";
   const dt = String(dealer.dealer_type || row.seller_type || "").toLowerCase();
   if (dt.indexOf("independ") > -1) return "independent";
   if (dt.indexOf("private") > -1) return "private";
   return "franchise";
+}
+
+// MarketCheck flags certified inventory via row.cpo (bool or "True"/"true").
+export function isCpo(row) {
+  return row.cpo === true || row.cpo === "True" || row.cpo === "true";
 }
 
 function safeParse(s) {
@@ -333,7 +343,8 @@ function mockListings(profiles, hubs) {
         price: Math.max(5000, maxP - 1500 - k * 1200),
         mileage: 40000 + k * 9000,
         dealer: "Mock Motors " + (k + 1),
-        dealerType: k === 0 ? "CPO" : "franchise",
+        dealerType: k === 0 ? "franchise" : "independent",
+        cpo: k === 0,
         location: hub.n.split(" ")[0],
         state: hub.n.slice(-2),
         color: k === 0 ? "Silver" : "Blue",
