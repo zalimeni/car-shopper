@@ -28,6 +28,9 @@ const ROWS = 50; // page size per request
 // page and flag still-active listings as "not seen". Bounded to keep free-tier
 // API usage in check; override with MARKETCHECK_MAX_ROWS on a paid plan.
 const MAX_ROWS = Number(process.env.MARKETCHECK_MAX_ROWS) || 200;
+// Regular used + certified pre-owned are separate MarketCheck car_types (a
+// car_type=used query does NOT include CPO), so we query both to catch CPO cars.
+const CAR_TYPES = ["used", "certified"];
 // Free tier rate-limits bursts; space sequential queries out and retry 429s.
 const THROTTLE_MS = Number(process.env.MARKETCHECK_THROTTLE_MS) || 500;
 const MAX_RETRIES = 3;
@@ -160,39 +163,41 @@ export default async function handler(req, res) {
   let first = true;
   for (const pr of profiles) {
     for (const hub of hubs) {
-      const label = (pr.name || pr.id || "?") + " @ " + (hub.n || hub.z || "?");
-      // Page through results (bounded by MAX_ROWS) so a dense query doesn't
-      // truncate at 50 and drop still-active listings.
-      for (let start = 0; start < MAX_ROWS; start += ROWS) {
-        if (!first) await sleep(THROTTLE_MS); // stay under the burst rate limit
-        first = false;
-        let numFound = null;
-        try {
-          const url = buildUrl(apiKey, pr, hub, start);
-          const r = await fetchWithRetry(url, { headers: { Accept: "application/json" } });
-          if (!r.ok) {
-            // Auto-debug: 4xx bodies name the offending param. Echo it (+ the
-            // sent query, key redacted) so the error itself is actionable.
-            let body = "";
-            try { body = (await r.text()).slice(0, 300); } catch (e) { /* ignore */ }
-            const sent = url.split("?")[1] ? url.split("?")[1].replace(/api_key=[^&]*&?/, "") : "";
-            errors.push(label + ": MarketCheck HTTP " + r.status + (body ? " — " + body : "") + (r.status >= 400 && r.status < 500 ? " [sent: " + sent + "]" : ""));
-            break; // stop paging this profile×hub on error
+      for (const carType of CAR_TYPES) {
+        const label = (pr.name || pr.id || "?") + " @ " + (hub.n || hub.z || "?") + " [" + carType + "]";
+        // Page through results (bounded by MAX_ROWS) so a dense query doesn't
+        // truncate at 50 and drop still-active listings.
+        for (let start = 0; start < MAX_ROWS; start += ROWS) {
+          if (!first) await sleep(THROTTLE_MS); // stay under the burst rate limit
+          first = false;
+          let numFound = null;
+          try {
+            const url = buildUrl(apiKey, pr, hub, start, carType);
+            const r = await fetchWithRetry(url, { headers: { Accept: "application/json" } });
+            if (!r.ok) {
+              // Auto-debug: 4xx bodies name the offending param. Echo it (+ the
+              // sent query, key redacted) so the error itself is actionable.
+              let body = "";
+              try { body = (await r.text()).slice(0, 300); } catch (e) { /* ignore */ }
+              const sent = url.split("?")[1] ? url.split("?")[1].replace(/api_key=[^&]*&?/, "") : "";
+              errors.push(label + ": MarketCheck HTTP " + r.status + (body ? " — " + body : "") + (r.status >= 400 && r.status < 500 ? " [sent: " + sent + "]" : ""));
+              break; // stop paging this profile×hub on error
+            }
+            const json = await r.json();
+            numFound = typeof json.num_found === "number" ? json.num_found : null;
+            const rows = Array.isArray(json.listings) ? json.listings : [];
+            for (const row of rows) {
+              const norm = normalize(row, pr.id);
+              if (!norm || !norm.vin) continue;
+              const prev = seen[norm.vin];
+              if (!prev || (norm.price && norm.price < prev.price)) seen[norm.vin] = norm;
+            }
+            // Last page: fewer than a full page back, or we've covered num_found.
+            if (rows.length < ROWS || (numFound != null && start + ROWS >= numFound)) break;
+          } catch (e) {
+            errors.push(label + ": " + (e && e.message ? e.message : "fetch failed"));
+            break;
           }
-          const json = await r.json();
-          numFound = typeof json.num_found === "number" ? json.num_found : null;
-          const rows = Array.isArray(json.listings) ? json.listings : [];
-          for (const row of rows) {
-            const norm = normalize(row, pr.id);
-            if (!norm || !norm.vin) continue;
-            const prev = seen[norm.vin];
-            if (!prev || (norm.price && norm.price < prev.price)) seen[norm.vin] = norm;
-          }
-          // Last page: fewer than a full page back, or we've covered num_found.
-          if (rows.length < ROWS || (numFound != null && start + ROWS >= numFound)) break;
-        } catch (e) {
-          errors.push(label + ": " + (e && e.message ? e.message : "fetch failed"));
-          break;
         }
       }
     }
@@ -202,11 +207,13 @@ export default async function handler(req, res) {
 }
 
 // ── MarketCheck query construction ──
-export function buildUrl(apiKey, profile, hub, start) {
+export function buildUrl(apiKey, profile, hub, start, carType) {
   const p = profile.params || {};
   const q = new URLSearchParams();
   q.set("api_key", apiKey);
-  q.set("car_type", "used"); // /search/car/active is dealer inventory by default
+  // "used" and "certified" are distinct car_types (used excludes CPO), so the
+  // sync runs both to cover regular + certified inventory.
+  q.set("car_type", carType || "used");
   if (p.make) q.set("make", p.make);
   if (p.model) q.set("model", p.model);
   if (p.powertrain) q.set("powertrain_type", mapPowertrain(p.powertrain));
@@ -322,9 +329,12 @@ export function mapDealerType(row, dealer) {
   return "franchise";
 }
 
-// MarketCheck flags certified inventory via row.cpo (bool or "True"/"true").
+// MarketCheck flags certified inventory with is_certified (value 1; the field is
+// only present on certified cars). NOTE: car_type=used does NOT return certified
+// vehicles — they're a distinct car_type=certified category — so the sync queries
+// both (see CAR_TYPES) and this labels which came back certified.
 export function isCpo(row) {
-  return row.cpo === true || row.cpo === "True" || row.cpo === "true";
+  return !!row && (row.is_certified === 1 || row.is_certified === "1" || row.is_certified === true);
 }
 
 function safeParse(s) {

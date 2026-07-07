@@ -41,6 +41,11 @@ describe("buildUrl", () => {
     const u = buildUrl("K", { id: "x", params: { make: "Toyota", model: "RAV4" } }, { z: "02101" }, 100);
     expect(new URLSearchParams(u.split("?")[1]).get("start")).toBe("100");
   });
+  it("defaults car_type to used and accepts a certified override", () => {
+    const base = { id: "x", params: { make: "Toyota", model: "RAV4" } };
+    expect(new URLSearchParams(buildUrl("K", base, { z: "02101" }).split("?")[1]).get("car_type")).toBe("used");
+    expect(new URLSearchParams(buildUrl("K", base, { z: "02101" }, 0, "certified").split("?")[1]).get("car_type")).toBe("certified");
+  });
   it("sends exact years for a non-contiguous profile, excluding the gap year", () => {
     const u = buildUrl("K", { id: "volt", params: { make: "Chevrolet", model: "Volt", years: "2016, 2018" } }, { z: "02101" });
     const p = new URLSearchParams(u.split("?")[1]);
@@ -155,18 +160,18 @@ describe("mapDealerType", () => {
 });
 
 describe("isCpo", () => {
-  it("detects boolean and string flags", () => {
-    expect(isCpo({ cpo: true })).toBe(true);
-    expect(isCpo({ cpo: "True" })).toBe(true);
-    expect(isCpo({ cpo: "true" })).toBe(true);
+  it("detects the MarketCheck is_certified flag (1 / '1' / true)", () => {
+    expect(isCpo({ is_certified: 1 })).toBe(true);
+    expect(isCpo({ is_certified: "1" })).toBe(true);
+    expect(isCpo({ is_certified: true })).toBe(true);
   });
-  it("is false when absent or falsy", () => {
+  it("is false when absent or not certified", () => {
     expect(isCpo({})).toBe(false);
-    expect(isCpo({ cpo: false })).toBe(false);
-    expect(isCpo({ cpo: "no" })).toBe(false);
+    expect(isCpo({ is_certified: 0 })).toBe(false);
+    expect(isCpo({ cpo: "True" })).toBe(false); // the old (wrong) field is ignored
   });
-  it("normalize surfaces cpo as a first-class field", () => {
-    expect(normalize({ vin: "X", cpo: true, build: {} }, "p").cpo).toBe(true);
+  it("normalize surfaces cpo from is_certified", () => {
+    expect(normalize({ vin: "X", is_certified: 1, build: {} }, "p").cpo).toBe(true);
     expect(normalize({ vin: "Y", build: {} }, "p").cpo).toBe(false);
   });
 });
