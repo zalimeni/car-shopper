@@ -1642,12 +1642,22 @@ function scoreHue(v) { return v >= 7 ? "#2d8659" : v >= 5 ? "#d4a017" : "#c44"; 
 function CompareTab({ data }) {
   var profs = data.profiles || [];
   var [sel, setSel] = useState(function () { return profs.map(function (p) { return p.id; }); });
+  var [cmpDealer, setCmpDealer] = useState("all");
   var [detail, setDetail] = useState(null); // { listing, crit|null, score, text }
   function toggle(id) { setSel(function (prev) { return prev.indexOf(id) > -1 ? prev.filter(function (x) { return x !== id; }) : prev.concat(id); }); }
 
-  var listings = data.listings
-    .filter(function (l) { return l.status === "watch" && sel.indexOf(l.profileId) > -1; })
-    .slice().sort(function (a, b) { return (b.compositeScore || 0) - (a.compositeScore || 0); });
+  var base = data.listings.filter(function (l) { return l.status === "watch" && sel.indexOf(l.profileId) > -1; });
+  // Dealer-type filter options (Results-style), from the types actually present;
+  // CPO is the separate cross-cutting option (legacy "CPO" dealerType excluded).
+  var dealerOpts = [];
+  base.forEach(function (l) { if (l.dealerType && l.dealerType !== "CPO" && dealerOpts.indexOf(l.dealerType) === -1) dealerOpts.push(l.dealerType); });
+  dealerOpts.sort();
+  var anyCpo = base.some(isCpo);
+  var listings = base.filter(function (l) {
+    if (cmpDealer === DEALER_CPO) return isCpo(l);
+    if (cmpDealer !== "all") return (l.dealerType || "") === cmpDealer;
+    return true;
+  }).slice().sort(function (a, b) { return (b.compositeScore || 0) - (a.compositeScore || 0); });
 
   // Primary-attribute columns. `best` marks which direction "wins" (highlight).
   var specs = [
@@ -1667,15 +1677,16 @@ function CompareTab({ data }) {
     return dir === "min" ? Math.min.apply(null, nums) : Math.max.apply(null, nums);
   }
 
-  // Columns: total score, primary attributes, then each scoring criterion.
+  // Columns: total score, primary attributes, CPO, then each scoring criterion.
   var cols = [{ key: "score", label: "Score", kind: "score", best: "max", get: function (l) { return l.compositeScore || 0; } }]
     .concat(specs.map(function (s) { return { key: "spec:" + s.label, label: s.label, kind: "spec", best: s.best, get: s.get, fmt: s.fmt }; }))
+    .concat([{ key: "cpo", label: "CPO", kind: "cpo", get: isCpo }])
     .concat((data.criteria || []).map(function (c) { return { key: "crit:" + c.id, label: c.name + " (" + c.weight + ")", kind: "crit", best: "max", crit: c, get: function (l) { return l.scores && l.scores[c.id]; } }; }));
   var bestByCol = {};
   cols.forEach(function (col) { bestByCol[col.key] = bestVal(col.get, col.best); });
 
   var rowLabel = { position: "sticky", left: 0, background: "#161820", textAlign: "left", padding: "7px 10px", borderBottom: "1px solid #1e2028", minWidth: 150, maxWidth: 210, zIndex: 1, verticalAlign: "top" };
-  var cell = { padding: "7px 10px", borderBottom: "1px solid #1e2028", textAlign: "center", whiteSpace: "nowrap", color: "#c8c8d0" };
+  var cell = { padding: "7px 10px", borderBottom: "1px solid #1e2028", textAlign: "left", whiteSpace: "nowrap", color: "#c8c8d0" };
   var tap = { cursor: "pointer", textDecoration: "underline dotted", textUnderlineOffset: "3px" };
 
   function renderCell(l, col) {
@@ -1695,6 +1706,10 @@ function CompareTab({ data }) {
       var cs = Object.assign({}, cell, { color: scoreHue(cv), fontWeight: cBest ? 700 : 400 }, rat ? tap : {});
       return (<td key={col.key} style={cs} onClick={rat ? function () { setDetail({ listing: l, crit: col.crit, score: cv, text: rat }); } : undefined}>{cv}{cBest ? " ★" : ""}</td>);
     }
+    if (col.kind === "cpo") {
+      var yes = isCpo(l);
+      return (<td key={col.key} style={Object.assign({}, cell, yes ? { color: "#3fae74", fontWeight: 700 } : { color: "#555" })}>{yes ? "✓ CPO" : "—"}</td>);
+    }
     var v = col.get(l);
     var blank = v == null || v === "" || (typeof v === "number" && isNaN(v));
     var vBest = best != null && typeof v === "number" && v === best;
@@ -1705,7 +1720,7 @@ function CompareTab({ data }) {
     <div>
       <div style={S.secH}><h2 style={S.secT}>Compare</h2></div>
       <div style={S.card}>
-        <p style={S.help}>Watchlist listings (rows) for the selected profiles, ranked by total score. Best value per column is highlighted (★ / green). Tap an underlined score (or a row's total) for the AI rationale.</p>
+        <p style={S.help}>Watchlist listings (rows) for the selected profiles, ranked by total score, with each listing's price/mileage and a CPO column. Filter by dealer type below. Best value per column is highlighted (★ / green). Tap an underlined score (or a row's total) for the AI rationale.</p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
           {profs.map(function (p) {
             var on = sel.indexOf(p.id) > -1;
@@ -1720,6 +1735,15 @@ function CompareTab({ data }) {
           <button style={S.smBtn} onClick={function () { setSel(profs.map(function (p) { return p.id; })); }}>All</button>
           <button style={S.smBtn} onClick={function () { setSel([]); }}>None</button>
         </div>
+        {(dealerOpts.length >= 2 || anyCpo) && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 8 }}>
+            <select style={Object.assign({}, S.inp, { flex: "0 0 auto", padding: "5px 8px", fontSize: 12 })} value={cmpDealer} onChange={function (e) { setCmpDealer(e.target.value); }}>
+              <option value="all">All dealers</option>
+              {dealerOpts.map(function (d) { return (<option key={d} value={d}>{dealerLabel(d)}</option>); })}
+              {anyCpo && <option value={DEALER_CPO}>CPO (certified)</option>}
+            </select>
+          </div>
+        )}
       </div>
 
       {listings.length === 0 ? (
@@ -1746,6 +1770,10 @@ function CompareTab({ data }) {
                     <td style={rowLabel}>
                       <div style={{ color: "#f0f0f3", fontWeight: 600 }}>{l.year} {l.vehicle}</div>
                       {l.trim && <div style={{ fontSize: 11, color: "#8a8a96" }}>{l.trim}</div>}
+                      <div style={{ fontSize: 11, color: "#c8c8d0", marginTop: 2 }}>
+                        ${(l.price || 0).toLocaleString()} · {(l.mileage || 0).toLocaleString()} mi
+                        {isCpo(l) && <span style={S.cpoB}>✓ CPO</span>}
+                      </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
                         {prof && <RoleBadge role={prof.role} />}
                         {url && <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#8ab4f8" }}>view →</a>}
@@ -2399,6 +2427,7 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
         <div>
           <strong style={{ fontSize: 14, color: "#f0f0f3" }}>{cand.year} {cand.vehicle}</strong>
           {cand.trim && <span style={S.trimB}>{cand.trim}</span>}
+          {isCpo(cand) && <span style={S.cpoB}>✓ CPO</span>}
           {prof && <RoleBadge role={prof.role} extra={{ marginLeft: 6 }} />}
           {cand._dupe && (
             <span style={{ fontSize: 10, color: cand._cheaper ? "#2d8659" : "#888", marginLeft: 6 }}>
@@ -2412,7 +2441,7 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
         <span>${(cand.price || 0).toLocaleString()}</span>
         <span>{(cand.mileage || 0).toLocaleString()} mi</span>
         {cand.color && <span>{cand.color}</span>}
-        {cand.dealer && <span>{cand.dealer} ({cand.dealerType || "?"}){isCpo(cand) && <span style={S.cpoB}>CPO</span>}</span>}
+        {cand.dealer && <span>{cand.dealer} ({cand.dealerType || "?"})</span>}
         {cand.location && <span>{cand.location}, {cand.state} {isSalt(cand.state) ? "🧂" : ""}</span>}
         {cand.dealRating && <span>Deal: {cand.dealRating}</span>}
         <TitleNote listing={cand} />
@@ -2521,6 +2550,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
         <div>
           <strong style={{ fontSize: 15, color: "#f0f0f3" }}>{l.year} {l.vehicle}</strong>
           {l.trim && <span style={S.trimB}>{l.trim}</span>}
+          {isCpo(l) && <span style={S.cpoB}>✓ CPO</span>}
           <RoleBadge role={profRole} extra={{ marginLeft: 6 }} />
           {!prof && <span style={{ fontSize: 10, color: "#c44", marginLeft: 4 }}>(deleted)</span>}
           {stale && <span style={S.staleB}>⏰ {age}d</span>}
@@ -2531,7 +2561,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
         <span>${(l.price || 0).toLocaleString()}</span>
         <span>{(l.mileage || 0).toLocaleString()} mi</span>
         {l.color && <span>{l.color}</span>}
-        <span>{l.dealer} ({l.dealerType}){isCpo(l) && <span style={S.cpoB}>CPO</span>}</span>
+        <span>{l.dealer} ({l.dealerType})</span>
         <span>{l.location}, {l.state} {salt ? "🧂" : ""}</span>
         {l.dealRating && <span>Deal: {l.dealRating}</span>}
         {l.vin && <span style={{ fontFamily: "monospace", fontSize: 11 }}>VIN: …{l.vin.slice(-6)}</span>}
@@ -2634,7 +2664,7 @@ var S = {
   stale: { background: "#2a2210", border: "1px solid #3d3218", borderRadius: 10, padding: 16, marginBottom: 12 },
   staleT: { fontSize: 13, color: "#e8c96a", marginBottom: 10, lineHeight: 1.5 },
   staleB: { fontSize: 10, color: "#e8c96a", background: "#2a2210", padding: "2px 6px", borderRadius: 3, marginLeft: 6 },
-  cpoB: { fontSize: 9, fontWeight: 700, letterSpacing: "0.03em", color: "#3fae74", background: "#12261c", border: "1px solid #1f4230", padding: "1px 5px", borderRadius: 3, marginLeft: 6, verticalAlign: "middle" },
+  cpoB: { fontSize: 10, fontWeight: 700, letterSpacing: "0.03em", color: "#0f1114", background: "#3fae74", padding: "1px 6px", borderRadius: 4, marginLeft: 6, verticalAlign: "middle", whiteSpace: "nowrap" },
   card: { background: "#161820", borderRadius: 10, padding: 16, marginBottom: 12, border: "1px solid #1e2028" },
   cardH: { fontSize: 14, fontWeight: 600, color: "#c8c8d0", margin: "0 0 10px" },
   secH: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
