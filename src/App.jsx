@@ -9,7 +9,7 @@ var AUTO_SYNC_HOURS = 12; // sync-on-open debounce
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
 
 var STORAGE_KEY = "car-search-data";
-var VERSION = 6;
+var VERSION = 7;
 var STALE_DAYS = 5;
 var BUDGET = 40000; // default budget; per-user override in data.settings.budget
 var TAX = 0.07;
@@ -180,7 +180,7 @@ function scoreIsStale(item, sig) {
 
 // ── Import Validation ──
 var REQUIRED_FIELDS = ["vehicle", "year", "price", "profileId"];
-var VALID_STATUSES = ["watch", "rejected", "purchased", "sold"];
+var VALID_STATUSES = ["watch", "rejected", "sold"];
 var VALID_DEALER_TYPES = ["CPO", "franchise", "independent", "private"];
 // Display label for a dealer type ("CPO" stays initialism; others capitalized).
 function dealerLabel(d) { return d === "CPO" ? "CPO" : (d || "").charAt(0).toUpperCase() + (d || "").slice(1); }
@@ -368,6 +368,12 @@ function migrate(data) {
       if (p.params.model === "RAV4 Hybrid") return Object.assign({}, p, { params: Object.assign({}, p.params, { model: "RAV4", powertrain: "Hybrid" }) });
       if (p.params.model === "RAV4 Prime") return Object.assign({}, p, { params: Object.assign({}, p.params, { model: "RAV4", powertrain: "PHEV" }) });
       return p;
+    });
+  }
+  if (v < 7) {
+    // The "purchased" (Bought) status is retired; fold it into "sold".
+    data.listings = (data.listings || []).map(function (l) {
+      return l.status === "purchased" ? Object.assign({}, l, { status: "sold" }) : l;
     });
   }
   // v6: budget/tax/hubs/tagline moved into data.settings (was hardcoded).
@@ -1885,9 +1891,6 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   var freshW = watchFiltered.filter(function (l) { return daysSince(l.lastChecked) < STALE_DAYS; });
   var rejL = applyFilter(data.listings.filter(function (l) { return l.status === "rejected"; })).slice().sort(sortFn);
   var soldL = applyFilter(data.listings.filter(function (l) { return l.status === "sold"; })).slice().sort(sortFn);
-  // Legacy "purchased" (the retired Bought action) — shown so they can be moved
-  // to Sold. New listings never enter this state.
-  var purchL = applyFilter(data.listings.filter(function (l) { return l.status === "purchased"; })).slice().sort(sortFn);
 
   var activeProfiles = data.profiles.filter(function (p) { return p.active; });
   var roleOpts = [];
@@ -1919,7 +1922,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
 
   // The active evaluation set the "Re-score filtered" button re-applies criteria
   // to: every visible candidate + watchlist listing matching the current filters
-  // (rejected/purchased are decided, skipped are hidden — all excluded).
+  // (rejected/sold are decided, skipped are hidden — all excluded).
   var watchFilteredAll = updatedW.concat(staleW, freshW);
   var reScoreCount = shownCands.length + watchFilteredAll.length;
 
@@ -1951,7 +1954,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       scoring: scoringActive.indexOf(l.id || l.vin) > -1 };
   }
 
-  var totalShown = staleW.length + freshW.length + rejL.length + soldL.length + purchL.length;
+  var totalShown = staleW.length + freshW.length + rejL.length + soldL.length;
   var totalAll = data.listings.length;
 
   return (
@@ -2012,7 +2015,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
               staleCount > 0 && !scoreBusy ? { color: "#d4a017", borderColor: "#5a4a17" } : {},
               scoreBusy ? { opacity: 0.6, cursor: "default" } : {})}
               disabled={scoreBusy}
-              title={"Re-score every candidate and watchlist listing matching the current filters (skips rejected, purchased, and skipped). Use after editing criteria or the scoring prompt to re-apply them." + (staleCount > 0 ? " " + staleCount + " have scores from since-changed inputs." : "")}
+              title={"Re-score every candidate and watchlist listing matching the current filters (skips rejected, sold, and skipped). Use after editing criteria or the scoring prompt to re-apply them." + (staleCount > 0 ? " " + staleCount + " have scores from since-changed inputs." : "")}
               onClick={function () { scoreItems(shownCands, watchFilteredAll); }}>
               {scoreBusy ? "Scoring…" : ("✨ Re-score filtered (" + reScoreCount + ")" + (staleCount > 0 ? " · " + staleCount + " changed" : ""))}</button>
           )}
@@ -2176,12 +2179,6 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
             {showSold ? "▾" : "▸"} Sold ({soldL.length})
           </h3>
           {showSold && soldL.map(function (l) { return (<LCard {...cp(l, false)} />); })}
-        </div>
-      )}
-      {purchL.length > 0 && (
-        <div>
-          <h3 style={S.grpT}>Purchased ({purchL.length}) <span style={{ fontSize: 11, fontWeight: 400, color: "#6b6b76" }}>— legacy; use Sold</span></h3>
-          {purchL.map(function (l) { return (<LCard {...cp(l, false)} />); })}
         </div>
       )}
 
@@ -2600,8 +2597,8 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
           {keyOk && onScore && <button style={Object.assign({}, S.smBtn, { color: criteriaStale ? "#d4a017" : "#b89edd" }, scoreBusy ? { opacity: 0.6 } : {})} disabled={scoreBusy} title={criteriaStale ? "Scored under criteria/prompt that have since changed — re-score to refresh" : ""} onClick={onScore}>{scoring ? "Scoring…" : (l.scoredAt ? (criteriaStale ? "⟳ Re-score (changed)" : "✨ Re-score") : "✨ Score")}</button>}
           {l.status === "watch" && stale && <button style={Object.assign({}, S.smBtn, { color: "#2d8659" })} onClick={onChk}>Still avail</button>}
           {l.status === "watch" && <button style={Object.assign({}, S.smBtn, { color: "#c44" })} onClick={function () { setShowReject(true); }}>Reject</button>}
-          {(l.status === "watch" || l.status === "purchased") && <button style={Object.assign({}, S.smBtn, { color: "#d4a017" })} onClick={function () { onStatus("sold"); }} title="Mark as sold / no longer available">Sold</button>}
-          {(l.status === "rejected" || l.status === "sold" || l.status === "purchased") && <button style={S.smBtn} onClick={function () { onStatus("watch"); }}>Restore</button>}
+          {l.status === "watch" && <button style={Object.assign({}, S.smBtn, { color: "#d4a017" })} onClick={function () { onStatus("sold"); }} title="Mark as sold / no longer available">Sold</button>}
+          {(l.status === "rejected" || l.status === "sold") && <button style={S.smBtn} onClick={function () { onStatus("watch"); }}>Restore</button>}
           <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { setConfirmDel(true); }}>Del</button>
         </div>
       )}
