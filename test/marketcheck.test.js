@@ -35,6 +35,11 @@ describe("buildUrl", () => {
     expect(params.get("zip")).toBe("02101");
     expect(params.get("radius")).toBe("100");
     expect(params.get("rows")).toBe("50");
+    expect(params.get("start")).toBe("0"); // default page
+  });
+  it("sets the paging offset from the start arg", () => {
+    const u = buildUrl("K", { id: "x", params: { make: "Toyota", model: "RAV4" } }, { z: "02101" }, 100);
+    expect(new URLSearchParams(u.split("?")[1]).get("start")).toBe("100");
   });
   it("sends exact years for a non-contiguous profile, excluding the gap year", () => {
     const u = buildUrl("K", { id: "volt", params: { make: "Chevrolet", model: "Volt", years: "2016, 2018" } }, { z: "02101" });

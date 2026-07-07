@@ -80,4 +80,25 @@ describe("reconcile", () => {
     expect(r.candidates).toHaveLength(1);
     expect(r.candidates[0].price).toBe(20500);
   });
+
+  it("refreshes lastSeen for an unchanged (same-price) listing rather than treating it as gone", () => {
+    const ex = [{ id: "u1", vin: "VIN_SAME", price: 20000, status: "watch", source: "marketcheck", lastSeen: "2026-06-10" }];
+    const r = reconcile(ex, [{ vin: "VIN_SAME", price: 20000, source: "marketcheck" }], TODAY);
+    const u = r.listings.find((l) => l.id === "u1");
+    expect(u.lastSeen).toBe(TODAY);
+    expect(u.lastChecked).toBe(TODAY);
+    expect(u.reviewPending).toBeFalsy(); // unchanged -> not surfaced for review
+    expect(r.summary.refreshed).toBe(1);
+    expect(r.summary.notSeen).toBe(0);
+    expect(r.candidates).toHaveLength(0); // matched, not a new candidate
+  });
+
+  it("matches VINs case/whitespace-insensitively so trivial drift isn't read as 'sold'", () => {
+    const ex = [{ id: "m1", vin: "abc123 ", price: 20000, status: "watch", source: "marketcheck", lastSeen: "2026-06-10" }];
+    const r = reconcile(ex, [{ vin: "ABC123", price: 20000, source: "marketcheck" }], TODAY);
+    const m = r.listings.find((l) => l.id === "m1");
+    expect(m.lastSeen).toBe(TODAY); // matched despite case + trailing space
+    expect(r.candidates).toHaveLength(0); // not mistaken for a brand-new VIN
+    expect(r.summary.notSeen).toBe(0);
+  });
 });

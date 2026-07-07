@@ -22,7 +22,12 @@ const ENDPOINT = "/v2/search/car/active";
 // Free tier caps radius at 100mi; override with MARKETCHECK_RADIUS on a paid
 // plan. A hub may also carry its own `r` to override per-location.
 const RADIUS_MI = Number(process.env.MARKETCHECK_RADIUS) || 100;
-const ROWS = 50; // page size; one page is plenty for a tight watchlist
+const ROWS = 50; // page size per request
+// Paginate up to this many rows per profile×hub, so a dense query (e.g. a
+// popular model in a big metro) doesn't silently drop everything past the first
+// page and flag still-active listings as "not seen". Bounded to keep free-tier
+// API usage in check; override with MARKETCHECK_MAX_ROWS on a paid plan.
+const MAX_ROWS = Number(process.env.MARKETCHECK_MAX_ROWS) || 200;
 // Free tier rate-limits bursts; space sequential queries out and retry 429s.
 const THROTTLE_MS = Number(process.env.MARKETCHECK_THROTTLE_MS) || 500;
 const MAX_RETRIES = 3;
@@ -155,31 +160,40 @@ export default async function handler(req, res) {
   let first = true;
   for (const pr of profiles) {
     for (const hub of hubs) {
-      if (!first) await sleep(THROTTLE_MS); // stay under the burst rate limit
-      first = false;
       const label = (pr.name || pr.id || "?") + " @ " + (hub.n || hub.z || "?");
-      try {
-        const url = buildUrl(apiKey, pr, hub);
-        const r = await fetchWithRetry(url, { headers: { Accept: "application/json" } });
-        if (!r.ok) {
-          // Auto-debug: 4xx bodies name the offending param. Echo it (+ the
-          // sent query, key redacted) so the error itself is actionable.
-          let body = "";
-          try { body = (await r.text()).slice(0, 300); } catch (e) { /* ignore */ }
-          const sent = url.split("?")[1] ? url.split("?")[1].replace(/api_key=[^&]*&?/, "") : "";
-          errors.push(label + ": MarketCheck HTTP " + r.status + (body ? " — " + body : "") + (r.status >= 400 && r.status < 500 ? " [sent: " + sent + "]" : ""));
-          continue;
+      // Page through results (bounded by MAX_ROWS) so a dense query doesn't
+      // truncate at 50 and drop still-active listings.
+      for (let start = 0; start < MAX_ROWS; start += ROWS) {
+        if (!first) await sleep(THROTTLE_MS); // stay under the burst rate limit
+        first = false;
+        let numFound = null;
+        try {
+          const url = buildUrl(apiKey, pr, hub, start);
+          const r = await fetchWithRetry(url, { headers: { Accept: "application/json" } });
+          if (!r.ok) {
+            // Auto-debug: 4xx bodies name the offending param. Echo it (+ the
+            // sent query, key redacted) so the error itself is actionable.
+            let body = "";
+            try { body = (await r.text()).slice(0, 300); } catch (e) { /* ignore */ }
+            const sent = url.split("?")[1] ? url.split("?")[1].replace(/api_key=[^&]*&?/, "") : "";
+            errors.push(label + ": MarketCheck HTTP " + r.status + (body ? " — " + body : "") + (r.status >= 400 && r.status < 500 ? " [sent: " + sent + "]" : ""));
+            break; // stop paging this profile×hub on error
+          }
+          const json = await r.json();
+          numFound = typeof json.num_found === "number" ? json.num_found : null;
+          const rows = Array.isArray(json.listings) ? json.listings : [];
+          for (const row of rows) {
+            const norm = normalize(row, pr.id);
+            if (!norm || !norm.vin) continue;
+            const prev = seen[norm.vin];
+            if (!prev || (norm.price && norm.price < prev.price)) seen[norm.vin] = norm;
+          }
+          // Last page: fewer than a full page back, or we've covered num_found.
+          if (rows.length < ROWS || (numFound != null && start + ROWS >= numFound)) break;
+        } catch (e) {
+          errors.push(label + ": " + (e && e.message ? e.message : "fetch failed"));
+          break;
         }
-        const json = await r.json();
-        const rows = Array.isArray(json.listings) ? json.listings : [];
-        for (const row of rows) {
-          const norm = normalize(row, pr.id);
-          if (!norm || !norm.vin) continue;
-          const prev = seen[norm.vin];
-          if (!prev || (norm.price && norm.price < prev.price)) seen[norm.vin] = norm;
-        }
-      } catch (e) {
-        errors.push(label + ": " + (e && e.message ? e.message : "fetch failed"));
       }
     }
   }
@@ -188,7 +202,7 @@ export default async function handler(req, res) {
 }
 
 // ── MarketCheck query construction ──
-export function buildUrl(apiKey, profile, hub) {
+export function buildUrl(apiKey, profile, hub, start) {
   const p = profile.params || {};
   const q = new URLSearchParams();
   q.set("api_key", apiKey);
@@ -212,7 +226,7 @@ export function buildUrl(apiKey, profile, hub) {
   }
   q.set("radius", String(hub.r || RADIUS_MI));
   q.set("rows", String(ROWS));
-  q.set("start", "0");
+  q.set("start", String(start || 0));
   return HOST + ENDPOINT + "?" + q.toString();
 }
 
