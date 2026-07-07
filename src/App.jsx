@@ -124,15 +124,58 @@ function recalcAll(list, crit) {
 }
 // Merge an AI scoring result onto a listing/candidate: per-criterion scores feed
 // the existing weighted composite, plus the dedicated AI summary + rationales.
-function applyScore(obj, r, crit) {
+function applyScore(obj, r, crit, hash) {
   var scores = Object.assign({}, obj.scores || {}, r.scores || {});
   return Object.assign({}, obj, {
     scores: scores,
     aiSummary: r.summary || obj.aiSummary || "",
     aiRationales: r.rationales || obj.aiRationales || {},
     scoredAt: new Date().toISOString(),
+    scoreHash: hash != null ? hash : obj.scoreHash, // fingerprint of the inputs this score was produced under
     compositeScore: calcScore(scores, crit),
   });
+}
+
+// A stable, non-cryptographic 64-bit-ish string hash (twin FNV-1a) -> base36.
+// Collisions are astronomically unlikely at our scale, and the worst case of one
+// is a missed "re-score" nudge — so cheap + synchronous beats crypto.subtle here.
+function hashStr(s) {
+  var h1 = 0x811c9dc5, h2 = 0xc2b2ae35;
+  for (var i = 0; i < s.length; i++) {
+    var c = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+    h2 = Math.imul(h2 ^ c, 0x85ebca6b) >>> 0;
+  }
+  return h1.toString(36) + h2.toString(36);
+}
+
+// Fingerprint of everything that determines a listing's AI score for a given
+// profile: model, system prompt, criteria (id/name/weight/guidance), active
+// global requirements, and the profile facts + price baseline fed to the model
+// (mirrors api/_scoring.js buildUserPrompt). Listing-specific facts (price,
+// mileage) are intentionally excluded — those are tracked separately via
+// reviewPending. Stamped onto each item at score time so we can flag a score as
+// stale once the user edits how scoring works.
+function scoreInputHash(data, profile) {
+  var parts = [data.scoreModel || DEFAULT_SCORE_MODEL, data.scorePrompt || ""];
+  (data.criteria || []).forEach(function (c) {
+    parts.push("crit|" + c.id + "|" + (c.name || "") + "|" + (c.weight || 0) + "|" + (c.guidance || ""));
+  });
+  (data.globalReqs || []).filter(function (r) { return r.active; }).forEach(function (r) { parts.push("req|" + (r.text || "")); });
+  var p = (profile && profile.params) || {};
+  parts.push("prof|" + (profile ? profile.name || "" : ""));
+  ["make", "model", "powertrain", "years", "trims", "maxPrice", "maxMiles", "mustHave", "niceToHave", "dealbreakers"].forEach(function (k) {
+    parts.push(k + "|" + (p[k] == null ? "" : p[k]));
+  });
+  if (p.priceBaseline) parts.push("bl|" + JSON.stringify(p.priceBaseline));
+  return hashStr(parts.join("|"));
+}
+
+// A scored item is "stale" when the inputs changed since it was scored. Items
+// scored before this fingerprint existed carry no scoreHash — treated as
+// not-stale (no nagging) until their next score stamps one.
+function scoreIsStale(item, sig) {
+  return !!(item && item.scoredAt && item.scoreHash && sig && item.scoreHash !== sig);
 }
 
 // ── Import Validation ──
@@ -505,8 +548,8 @@ export default function App() {
       });
       if (!byRef.size) return;
       var pick = function (x) { var r = byRef.get(x); if (r) return r; var k = x.id || x.vin; return k ? byKey[k] : null; };
-      setCandidates(function (prev) { return prev.map(function (c) { if (c.id) return c; var r = pick(c); return r ? applyScore(c, r, data.criteria) : c; }); });
-      patchListings(function (list) { return list.map(function (l) { var r = pick(l); return r ? applyScore(l, r, data.criteria) : l; }); });
+      setCandidates(function (prev) { return prev.map(function (c) { if (c.id) return c; var r = pick(c); return r ? applyScore(c, r, data.criteria, scoreInputHash(data, profileById[c.profileId])) : c; }); });
+      patchListings(function (list) { return list.map(function (l) { var r = pick(l); return r ? applyScore(l, r, data.criteria, scoreInputHash(data, profileById[l.profileId])) : l; }); });
     }
 
     try {
@@ -1764,7 +1807,7 @@ function HelpTab() {
         <h3 style={S.cardH}>AI scoring (optional)</h3>
         <p style={li}>Add your <span style={b}>Anthropic API key</span> in the ✨ AI scoring panel (Results tab) to have each listing scored 1–10 per criterion with a short rationale and an overall summary.</p>
         <p style={li}><span style={b}>Model</span> — pick Sonnet 5 (default, balanced), Opus 4.8 (most nuanced), or Haiku 4.5 (fastest/cheapest). <span style={b}>Auto-score on sync</span> scores only unscored candidates and listings whose price materially changed (never untouched or skipped ones), and is <span style={b}>skipped when there are more than 20 to score</span> — use Score all / per-card then, to avoid burning credits.</p>
-        <p style={li}>Score (or Re-score) any single card with its ✨ button, or use <span style={b}>Score all</span> on the candidate queue.</p>
+        <p style={li}>Score (or Re-score) any single card with its ✨ button, or use <span style={b}>Score all</span> on the candidate queue. After you edit criteria, per-criterion guidance, or the scoring prompt, cards scored under the old settings show <span style={b}>⟳ Re-score (changed)</span>; <span style={b}>✨ Re-score filtered</span> (in the filter bar) re-applies to every candidate + watchlist listing matching the current filters at once.</p>
         <p style={note}>Scoring runs in batches and fills in results as each batch finishes, so partial progress is kept. If a large run is interrupted (e.g. the tab is backgrounded), the finished ones stay scored and the rest are picked up on the next sync/score. The key is validated, stored encrypted server-side, and never shown again — it's only used to score your own listings under your own account. Note: the API is pay-as-you-go and needs credits in the Anthropic Console; a Claude Pro/Max subscription does not include API access.</p>
       </div>
 
@@ -1856,6 +1899,24 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   var shownCands = candidates.filter(candTrimPass).slice().sort(sortFn);
   var hiddenCands = candidates.filter(function (c) { return !candTrimPass(c); }).slice().sort(sortFn);
 
+  // The active evaluation set the "Re-score filtered" button re-applies criteria
+  // to: every visible candidate + watchlist listing matching the current filters
+  // (rejected/purchased are decided, skipped are hidden — all excluded).
+  var watchFilteredAll = updatedW.concat(staleW, freshW);
+  var reScoreCount = shownCands.length + watchFilteredAll.length;
+
+  // Current score-input fingerprint per profile, to flag scores made under
+  // now-changed criteria/prompt/profile. Recomputed on every data change (few
+  // profiles, cheap hash). `staleOf` looks an item up by its profile.
+  var sigByProfile = {};
+  data.profiles.forEach(function (p) { sigByProfile[p.id] = scoreInputHash(data, p); });
+  var noProfSig = scoreInputHash(data, null);
+  function staleOf(item) {
+    var sig = item && item.profileId != null && sigByProfile[item.profileId] != null ? sigByProfile[item.profileId] : noProfSig;
+    return scoreIsStale(item, sig);
+  }
+  var staleCount = shownCands.filter(staleOf).length + watchFilteredAll.filter(staleOf).length;
+
   var [showRej, setShowRej] = useState(false);
   var [showSkipped, setShowSkipped] = useState(false);
   var [showTrimHidden, setShowTrimHidden] = useState(false);
@@ -1866,7 +1927,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       onUpd: function (u) { updListing(l.id, u); setEdListing(null); },
       onStatus: function (s) { updListing(l.id, { status: s }); },
       onDel: function () { delListing(l.id); },
-      onChk: function () { markChk(l.id); }, stale: stale,
+      onChk: function () { markChk(l.id); }, stale: stale, criteriaStale: staleOf(l),
       onScore: function () { scoreItems([], [l]); }, scoreBusy: scoreBusy, keyOk: keyStatus.valid,
       scoring: scoringActive.indexOf(l.id || l.vin) > -1 };
   }
@@ -1910,6 +1971,15 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
             <option value="mileage">Sort: Mileage ↑</option>
             <option value="mileageDesc">Sort: Mileage ↓</option>
           </select>
+          {keyStatus.valid && reScoreCount > 0 && (
+            <button style={Object.assign({}, S.inp, { flex: "0 0 auto", padding: "5px 10px", fontSize: 12, cursor: "pointer", color: "#b89edd" },
+              staleCount > 0 && !scoreBusy ? { color: "#d4a017", borderColor: "#5a4a17" } : {},
+              scoreBusy ? { opacity: 0.6, cursor: "default" } : {})}
+              disabled={scoreBusy}
+              title={"Re-score every candidate and watchlist listing matching the current filters (skips rejected, purchased, and skipped). Use after editing criteria or the scoring prompt to re-apply them." + (staleCount > 0 ? " " + staleCount + " have scores from since-changed inputs." : "")}
+              onClick={function () { scoreItems(shownCands, watchFilteredAll); }}>
+              {scoreBusy ? "Scoring…" : ("✨ Re-score filtered (" + reScoreCount + ")" + (staleCount > 0 ? " · " + staleCount + " changed" : ""))}</button>
+          )}
           {(filterProf !== "all" || filterRole !== "all") && (
             <span style={{ fontSize: 11, color: "#6b6b76" }}>{totalShown} of {totalAll}</span>
           )}
@@ -1931,7 +2001,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
           </div>
           {shownCands.map(function (c, i) {
             return (<CandCard key={i} cand={c} onApprove={function () { approveCand(c); }} onDismiss={function () { dismissCand(c); }} data={data}
-              onScore={function () { scoreItems([c], []); }} scoreBusy={scoreBusy} keyOk={keyStatus.valid}
+              onScore={function () { scoreItems([c], []); }} scoreBusy={scoreBusy} keyOk={keyStatus.valid} criteriaStale={staleOf(c)}
               scoring={scoringActive.indexOf(c.id || c.vin) > -1}
               onExcludeTrim={c.trim ? function () { excludeTrim(c); } : null} />);
           })}
@@ -2277,7 +2347,7 @@ function UpdateCard({ listing, data, onReviewed, onReject }) {
   );
 }
 
-function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk, scoring, onExcludeTrim }) {
+function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk, scoring, onExcludeTrim, criteriaStale }) {
   var prof = data.profiles.find(function (p) { return p.id === cand.profileId; });
   var scoreColor = cand.compositeScore >= 7 ? "#2d8659" : cand.compositeScore >= 5 ? "#d4a017" : "#c44";
   return (
@@ -2327,8 +2397,9 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <button style={Object.assign({}, S.priBtn, { padding: "6px 14px", fontSize: 12 })} onClick={onApprove}>✓ Add to Watchlist</button>
         {keyOk && onScore && (
-          <button style={Object.assign({}, S.smBtn, { color: "#b89edd" }, scoreBusy ? { opacity: 0.6 } : {})} disabled={scoreBusy}
-            onClick={onScore}>{scoring ? "Scoring…" : (cand.scoredAt ? "✨ Re-score" : "✨ Score")}</button>
+          <button style={Object.assign({}, S.smBtn, { color: criteriaStale ? "#d4a017" : "#b89edd" }, scoreBusy ? { opacity: 0.6 } : {})} disabled={scoreBusy}
+            title={criteriaStale ? "Scored under criteria/prompt that have since changed — re-score to refresh" : ""}
+            onClick={onScore}>{scoring ? "Scoring…" : (cand.scoredAt ? (criteriaStale ? "⟳ Re-score (changed)" : "✨ Re-score") : "✨ Score")}</button>
         )}
         {onExcludeTrim && <button style={Object.assign({}, S.smBtn, { color: "#d4a017" })} onClick={onExcludeTrim} title={"Hide this trim (" + (cand.trim || "") + ") from candidates"}>🚫 Exclude trim</button>}
         <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={onDismiss}>Skip</button>
@@ -2385,7 +2456,7 @@ function LForm({ profiles, criteria, onSave, initial }) {
   );
 }
 
-function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, stale, onScore, scoreBusy, keyOk, scoring }) {
+function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, stale, onScore, scoreBusy, keyOk, scoring, criteriaStale }) {
   var l = listing;
   var prof = data.profiles.find(function (p) { return p.id === l.profileId; });
   var profRole = prof ? prof.role : "";
@@ -2481,7 +2552,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
       {l.status !== "purchased" && !showReject && !confirmDel && (
         <div style={{ display: "flex", gap: 4, marginTop: 8, borderTop: "1px solid #1e2028", paddingTop: 8, flexWrap: "wrap" }}>
           <button style={S.smBtn} onClick={onEdit}>Edit</button>
-          {keyOk && onScore && <button style={Object.assign({}, S.smBtn, { color: "#b89edd" }, scoreBusy ? { opacity: 0.6 } : {})} disabled={scoreBusy} onClick={onScore}>{scoring ? "Scoring…" : (l.scoredAt ? "✨ Re-score" : "✨ Score")}</button>}
+          {keyOk && onScore && <button style={Object.assign({}, S.smBtn, { color: criteriaStale ? "#d4a017" : "#b89edd" }, scoreBusy ? { opacity: 0.6 } : {})} disabled={scoreBusy} title={criteriaStale ? "Scored under criteria/prompt that have since changed — re-score to refresh" : ""} onClick={onScore}>{scoring ? "Scoring…" : (l.scoredAt ? (criteriaStale ? "⟳ Re-score (changed)" : "✨ Re-score") : "✨ Score")}</button>}
           {l.status === "watch" && stale && <button style={Object.assign({}, S.smBtn, { color: "#2d8659" })} onClick={onChk}>Still avail</button>}
           {l.status === "watch" && <button style={Object.assign({}, S.smBtn, { color: "#c44" })} onClick={function () { setShowReject(true); }}>Reject</button>}
           {l.status === "watch" && <button style={Object.assign({}, S.smBtn, { color: "#d4a017" })} onClick={function () { onStatus("purchased"); }}>Bought</button>}
