@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { buildUrl, parseYears, normalize, mapDealerType, mapPowertrain, pickPhoto } from "../api/marketcheck.js";
+import { buildUrl, parseYears, normalize, mapDealerType, isCpo, mapPowertrain, pickPhoto } from "../api/marketcheck.js";
 
 const fixture = JSON.parse(
   readFileSync(fileURLToPath(new URL("./fixtures/marketcheck-active-search.json", import.meta.url)), "utf8")
@@ -89,6 +89,7 @@ describe("normalize", () => {
       mileage: 84755,
       dealer: "Courtesy Mitsubishi",
       dealerType: "franchise",
+      cpo: false,
       location: "Attleboro",
       state: "MA",
       color: "Midnight Black Metallic",
@@ -141,7 +142,26 @@ describe("pickPhoto", () => {
 });
 
 describe("mapDealerType", () => {
-  it("CPO wins", () => expect(mapDealerType({ cpo: "True" }, { dealer_type: "independent" })).toBe("CPO"));
+  // CPO is now decoupled — dealer type reflects the actual seller category even
+  // for certified inventory (a CPO car is typically a franchise dealer).
+  it("keeps the real type for a CPO listing", () => expect(mapDealerType({ cpo: "True" }, { dealer_type: "independent" })).toBe("independent"));
   it("independent", () => expect(mapDealerType({}, { dealer_type: "Independent" })).toBe("independent"));
   it("defaults to franchise", () => expect(mapDealerType({}, {})).toBe("franchise"));
+});
+
+describe("isCpo", () => {
+  it("detects boolean and string flags", () => {
+    expect(isCpo({ cpo: true })).toBe(true);
+    expect(isCpo({ cpo: "True" })).toBe(true);
+    expect(isCpo({ cpo: "true" })).toBe(true);
+  });
+  it("is false when absent or falsy", () => {
+    expect(isCpo({})).toBe(false);
+    expect(isCpo({ cpo: false })).toBe(false);
+    expect(isCpo({ cpo: "no" })).toBe(false);
+  });
+  it("normalize surfaces cpo as a first-class field", () => {
+    expect(normalize({ vin: "X", cpo: true, build: {} }, "p").cpo).toBe(true);
+    expect(normalize({ vin: "Y", build: {} }, "p").cpo).toBe(false);
+  });
 });

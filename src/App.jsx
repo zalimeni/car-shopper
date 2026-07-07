@@ -180,10 +180,14 @@ function scoreIsStale(item, sig) {
 
 // ── Import Validation ──
 var REQUIRED_FIELDS = ["vehicle", "year", "price", "profileId"];
-var VALID_STATUSES = ["watch", "rejected", "purchased"];
+var VALID_STATUSES = ["watch", "rejected", "purchased", "sold"];
 var VALID_DEALER_TYPES = ["CPO", "franchise", "independent", "private"];
 // Display label for a dealer type ("CPO" stays initialism; others capitalized).
 function dealerLabel(d) { return d === "CPO" ? "CPO" : (d || "").charAt(0).toUpperCase() + (d || "").slice(1); }
+// Certified Pre-Owned: its own boolean now, but tolerate listings synced before
+// that field existed (they carry the legacy dealerType === "CPO").
+function isCpo(l) { return !!(l && (l.cpo === true || l.dealerType === "CPO")); }
+var DEALER_CPO = "__cpo__"; // synthetic dealer-filter value: certified only (cross-cuts dealer type)
 
 function validateListing(obj, index, profileIds) {
   var errors = [];
@@ -861,7 +865,7 @@ export default function App() {
   var watch = data.listings.filter(function (l) { return l.status === "watch"; });
   var staleN = watch.filter(function (l) { return daysSince(l.lastChecked) >= STALE_DAYS; }).length;
   var rej = data.listings.filter(function (l) { return l.status === "rejected"; });
-  var bought = data.listings.filter(function (l) { return l.status === "purchased"; });
+  var sold = data.listings.filter(function (l) { return l.status === "sold"; });
 
   return (
     <div style={S.app}>
@@ -886,7 +890,7 @@ export default function App() {
 
       <main>
         {tab === "Dashboard" && (
-          <DashView data={data} watch={watch} rej={rej} bought={bought}
+          <DashView data={data} watch={watch} rej={rej} sold={sold}
             staleN={staleN} setTab={setTab} markAllChk={markAllChk} viewProfile={viewProfile} />
         )}
         {tab === "Profiles" && <ProfilesTab data={data} save={save} keyOk={keyStatus.valid} scoreModel={scoreModel} />}
@@ -952,7 +956,7 @@ export default function App() {
 }
 
 // ── Dashboard ──
-function DashView({ data, watch, rej, bought, staleN, setTab, markAllChk, viewProfile }) {
+function DashView({ data, watch, rej, sold, staleN, setTab, markAllChk, viewProfile }) {
   var act = data.profiles.filter(function (p) { return p.active; });
   var settings = getSettings(data);
 
@@ -978,7 +982,7 @@ function DashView({ data, watch, rej, bought, staleN, setTab, markAllChk, viewPr
   return (
     <div>
       <div style={S.stats}>
-        {[["Watching", watch.length], ["Rejected", rej.length], ["Bought", bought.length], ["Profiles", act.length]].map(function (p) {
+        {[["Watching", watch.length], ["Rejected", rej.length], ["Sold", sold.length], ["Profiles", act.length]].map(function (p) {
           return (<div key={p[0]} style={S.stat}><span style={S.statN}>{p[1]}</span><span style={S.statL}>{p[0]}</span></div>);
         })}
       </div>
@@ -1822,7 +1826,7 @@ function HelpTab() {
       <div style={S.card}>
         <h3 style={S.cardH}>Listings &amp; scores</h3>
         <p style={li}>The big number on a card is the <span style={b}>composite score</span> (your weighted criteria). AI per-criterion scores feed into it; the <span style={b}>✨ AI assessment</span> box shows the summary and a per-criterion breakdown.</p>
-        <p style={li}><span style={b}>Statuses</span>: Watchlist (active), Rejected (with a reason, restorable), Purchased. Stale watched listings surface under "Needs check" — confirm with <span style={b}>Still avail</span>.</p>
+        <p style={li}><span style={b}>Statuses</span>: Watchlist (active), Rejected (with a reason, restorable), and <span style={b}>Sold</span> (no longer available — archived, restorable). Stale watched listings surface under "Needs check" — confirm with <span style={b}>Still avail</span>.</p>
         <p style={li}><span style={b}>Title note</span>: "✓ Carfax clean title" means confirmed; "ⓘ Title not Carfax-confirmed" just means the dealer didn't state it (verify yourself) — it's not a salvage flag and doesn't affect the score.</p>
       </div>
 
@@ -1866,7 +1870,8 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
         if (pr && pr.role !== filterRole) return false;
         if (!pr && filterRole !== "?") return false;
       }
-      if (filterDealer !== "all" && (l.dealerType || "") !== filterDealer) return false;
+      if (filterDealer === DEALER_CPO) { if (!isCpo(l)) return false; }
+      else if (filterDealer !== "all" && (l.dealerType || "") !== filterDealer) return false;
       return true;
     });
   }
@@ -1879,15 +1884,20 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   var staleW = watchFiltered.filter(function (l) { return daysSince(l.lastChecked) >= STALE_DAYS; });
   var freshW = watchFiltered.filter(function (l) { return daysSince(l.lastChecked) < STALE_DAYS; });
   var rejL = applyFilter(data.listings.filter(function (l) { return l.status === "rejected"; })).slice().sort(sortFn);
+  var soldL = applyFilter(data.listings.filter(function (l) { return l.status === "sold"; })).slice().sort(sortFn);
+  // Legacy "purchased" (the retired Bought action) — shown so they can be moved
+  // to Sold. New listings never enter this state.
   var purchL = applyFilter(data.listings.filter(function (l) { return l.status === "purchased"; })).slice().sort(sortFn);
 
   var activeProfiles = data.profiles.filter(function (p) { return p.active; });
   var roleOpts = [];
   data.profiles.forEach(function (p) { if (p.role && roleOpts.indexOf(p.role) === -1) roleOpts.push(p.role); });
-  // Dealer-type filter options, drawn from the types actually present.
+  // Dealer-type filter options, drawn from the types actually present (legacy
+  // "CPO" excluded — certification is now the separate cross-cutting option below).
   var dealerOpts = [];
-  data.listings.forEach(function (l) { if (l.dealerType && dealerOpts.indexOf(l.dealerType) === -1) dealerOpts.push(l.dealerType); });
+  data.listings.forEach(function (l) { if (l.dealerType && l.dealerType !== "CPO" && dealerOpts.indexOf(l.dealerType) === -1) dealerOpts.push(l.dealerType); });
   dealerOpts.sort();
+  var anyCpo = data.listings.some(isCpo);
 
   // Partition candidates by each one's profile trim include/exclude filter.
   function candTrimPass(c) {
@@ -1926,6 +1936,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   var staleCount = shownCands.filter(staleOf).length + watchFilteredAll.filter(staleOf).length;
 
   var [showRej, setShowRej] = useState(false);
+  var [showSold, setShowSold] = useState(false);
   var [showSkipped, setShowSkipped] = useState(false);
   var [showTrimHidden, setShowTrimHidden] = useState(false);
 
@@ -1940,7 +1951,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       scoring: scoringActive.indexOf(l.id || l.vin) > -1 };
   }
 
-  var totalShown = staleW.length + freshW.length + rejL.length + purchL.length;
+  var totalShown = staleW.length + freshW.length + rejL.length + soldL.length + purchL.length;
   var totalAll = data.listings.length;
 
   return (
@@ -1982,10 +1993,11 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
               {roleOpts.map(function (r) { return (<option key={r} value={r}>{r} only</option>); })}
             </select>
           )}
-          {dealerOpts.length >= 2 && (
+          {(dealerOpts.length >= 2 || anyCpo) && (
             <select style={Object.assign({}, S.inp, { flex: "0 0 auto", padding: "5px 8px", fontSize: 12 })} value={filterDealer} onChange={function (e) { setFilterDealer(e.target.value); }}>
               <option value="all">All dealers</option>
               {dealerOpts.map(function (d) { return (<option key={d} value={d}>{dealerLabel(d)}</option>); })}
+              {anyCpo && <option value={DEALER_CPO}>CPO (certified)</option>}
             </select>
           )}
           <select style={Object.assign({}, S.inp, { flex: "0 0 auto", padding: "5px 8px", fontSize: 12 })} value={sortBy} onChange={function (e) { setSortBy(e.target.value); }}>
@@ -2157,10 +2169,19 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
           {showRej && rejL.map(function (l) { return (<LCard {...cp(l, false)} />); })}
         </div>
       )}
+      {soldL.length > 0 && (
+        <div>
+          <h3 style={Object.assign({}, S.grpT, { cursor: "pointer", display: "flex", alignItems: "center", gap: 6 })}
+            onClick={function () { setShowSold(!showSold); }}>
+            {showSold ? "▾" : "▸"} Sold ({soldL.length})
+          </h3>
+          {showSold && soldL.map(function (l) { return (<LCard {...cp(l, false)} />); })}
+        </div>
+      )}
       {purchL.length > 0 && (
         <div>
-          <h3 style={S.grpT}>Purchased ({purchL.length})</h3>
-          {purchL.map(function (l) { return (<LCard key={l.id} listing={l} data={data} editing={false} onEdit={function () {}} onUpd={function () {}} onStatus={function () {}} onDel={function () {}} onChk={function () {}} stale={false} />); })}
+          <h3 style={S.grpT}>Purchased ({purchL.length}) <span style={{ fontSize: 11, fontWeight: 400, color: "#6b6b76" }}>— legacy; use Sold</span></h3>
+          {purchL.map(function (l) { return (<LCard {...cp(l, false)} />); })}
         </div>
       )}
 
@@ -2394,7 +2415,7 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
         <span>${(cand.price || 0).toLocaleString()}</span>
         <span>{(cand.mileage || 0).toLocaleString()} mi</span>
         {cand.color && <span>{cand.color}</span>}
-        {cand.dealer && <span>{cand.dealer} ({cand.dealerType || "?"})</span>}
+        {cand.dealer && <span>{cand.dealer} ({cand.dealerType || "?"}){isCpo(cand) && <span style={S.cpoB}>CPO</span>}</span>}
         {cand.location && <span>{cand.location}, {cand.state} {isSalt(cand.state) ? "🧂" : ""}</span>}
         {cand.dealRating && <span>Deal: {cand.dealRating}</span>}
         <TitleNote listing={cand} />
@@ -2494,7 +2515,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
 
   if (editing) return (<LForm profiles={data.profiles} criteria={data.criteria} initial={l} onSave={onUpd} />);
 
-  var bc = stale ? "#d4a017" : l.status === "watch" ? "#2d8659" : l.status === "rejected" ? "#888" : "#d4a017";
+  var bc = stale ? "#d4a017" : l.status === "watch" ? "#2d8659" : (l.status === "rejected" || l.status === "sold") ? "#888" : "#d4a017";
   var sc = l.compositeScore >= 7 ? "#2d8659" : l.compositeScore >= 5 ? "#d4a017" : "#c44";
   return (
     <div style={Object.assign({}, S.card, { borderLeft: "3px solid " + bc })}>
@@ -2513,7 +2534,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
         <span>${(l.price || 0).toLocaleString()}</span>
         <span>{(l.mileage || 0).toLocaleString()} mi</span>
         {l.color && <span>{l.color}</span>}
-        <span>{l.dealer} ({l.dealerType})</span>
+        <span>{l.dealer} ({l.dealerType}){isCpo(l) && <span style={S.cpoB}>CPO</span>}</span>
         <span>{l.location}, {l.state} {salt ? "🧂" : ""}</span>
         {l.dealRating && <span>Deal: {l.dealRating}</span>}
         {l.vin && <span style={{ fontFamily: "monospace", fontSize: 11 }}>VIN: …{l.vin.slice(-6)}</span>}
@@ -2573,14 +2594,14 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
         </div>
       )}
 
-      {l.status !== "purchased" && !showReject && !confirmDel && (
+      {!showReject && !confirmDel && (
         <div style={{ display: "flex", gap: 4, marginTop: 8, borderTop: "1px solid #1e2028", paddingTop: 8, flexWrap: "wrap" }}>
           <button style={S.smBtn} onClick={onEdit}>Edit</button>
           {keyOk && onScore && <button style={Object.assign({}, S.smBtn, { color: criteriaStale ? "#d4a017" : "#b89edd" }, scoreBusy ? { opacity: 0.6 } : {})} disabled={scoreBusy} title={criteriaStale ? "Scored under criteria/prompt that have since changed — re-score to refresh" : ""} onClick={onScore}>{scoring ? "Scoring…" : (l.scoredAt ? (criteriaStale ? "⟳ Re-score (changed)" : "✨ Re-score") : "✨ Score")}</button>}
           {l.status === "watch" && stale && <button style={Object.assign({}, S.smBtn, { color: "#2d8659" })} onClick={onChk}>Still avail</button>}
           {l.status === "watch" && <button style={Object.assign({}, S.smBtn, { color: "#c44" })} onClick={function () { setShowReject(true); }}>Reject</button>}
-          {l.status === "watch" && <button style={Object.assign({}, S.smBtn, { color: "#d4a017" })} onClick={function () { onStatus("purchased"); }}>Bought</button>}
-          {l.status === "rejected" && <button style={S.smBtn} onClick={function () { onStatus("watch"); }}>Restore</button>}
+          {(l.status === "watch" || l.status === "purchased") && <button style={Object.assign({}, S.smBtn, { color: "#d4a017" })} onClick={function () { onStatus("sold"); }} title="Mark as sold / no longer available">Sold</button>}
+          {(l.status === "rejected" || l.status === "sold" || l.status === "purchased") && <button style={S.smBtn} onClick={function () { onStatus("watch"); }}>Restore</button>}
           <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { setConfirmDel(true); }}>Del</button>
         </div>
       )}
@@ -2608,6 +2629,7 @@ var S = {
   stale: { background: "#2a2210", border: "1px solid #3d3218", borderRadius: 10, padding: 16, marginBottom: 12 },
   staleT: { fontSize: 13, color: "#e8c96a", marginBottom: 10, lineHeight: 1.5 },
   staleB: { fontSize: 10, color: "#e8c96a", background: "#2a2210", padding: "2px 6px", borderRadius: 3, marginLeft: 6 },
+  cpoB: { fontSize: 9, fontWeight: 700, letterSpacing: "0.03em", color: "#3fae74", background: "#12261c", border: "1px solid #1f4230", padding: "1px 5px", borderRadius: 3, marginLeft: 6, verticalAlign: "middle" },
   card: { background: "#161820", borderRadius: 10, padding: 16, marginBottom: 12, border: "1px solid #1e2028" },
   cardH: { fontSize: 14, fontWeight: 600, color: "#c8c8d0", margin: "0 0 10px" },
   secH: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
