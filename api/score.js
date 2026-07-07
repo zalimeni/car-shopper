@@ -88,14 +88,15 @@ export default async function handler(req, res) {
 async function scoreOne(client, model, system, listing, ctx, schema) {
   // Generous cap: Claude 5-family models (e.g. the Sonnet 5 default) always
   // think, spending output tokens before the JSON is emitted — a tight cap
-  // truncates to stop_reason:"max_tokens". Still non-streaming-safe (< 16k).
-  const resp = await client.messages.create({
+  // truncates to stop_reason:"max_tokens". Streamed so a long/slow response
+  // can't trip an HTTP read timeout; .finalMessage() assembles the full Message.
+  const resp = await client.messages.stream({
     model: model,
     max_tokens: 8000,
     system: system,
     messages: [{ role: "user", content: buildUserPrompt(listing, ctx) }],
     output_config: { format: { type: "json_schema", schema: schema } },
-  });
+  }).finalMessage();
   if (resp.stop_reason === "refusal") return { fail: "refused" };
   if (resp.stop_reason === "max_tokens") return { fail: "truncated" };
   // With output_config.format the JSON lands in the (single) text block.
