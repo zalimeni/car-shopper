@@ -39,13 +39,15 @@ export default async function handler(req, res) {
   const listings = Array.isArray(body.listings) ? body.listings : [];
 
   try {
-    const resp = await client.messages.create({
+    // Streamed (+ generous cap for always-on Claude 5 thinking) so a slow
+    // response can't trip an HTTP read timeout; .finalMessage() assembles it.
+    const resp = await client.messages.stream({
       model: model,
-      max_tokens: 8000, // Claude 5 models always think — leave room before the JSON
+      max_tokens: 8000,
       system: BASELINE_SYSTEM,
       messages: [{ role: "user", content: buildBaselinePrompt(profile, listings) }],
       output_config: { format: { type: "json_schema", schema: buildBaselineSchema() } },
-    });
+    }).finalMessage();
     if (resp.stop_reason === "refusal") { res.status(502).json({ error: "The model declined this request" }); return; }
     if (resp.stop_reason === "max_tokens") { res.status(502).json({ error: "Model output hit the token limit — try again" }); return; }
     const text = (resp.content || []).filter(function (b) { return b.type === "text"; }).map(function (b) { return b.text; }).join("");
