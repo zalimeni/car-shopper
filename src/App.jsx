@@ -182,6 +182,8 @@ function scoreIsStale(item, sig) {
 var REQUIRED_FIELDS = ["vehicle", "year", "price", "profileId"];
 var VALID_STATUSES = ["watch", "rejected", "purchased"];
 var VALID_DEALER_TYPES = ["CPO", "franchise", "independent", "private"];
+// Display label for a dealer type ("CPO" stays initialism; others capitalized).
+function dealerLabel(d) { return d === "CPO" ? "CPO" : (d || "").charAt(0).toUpperCase() + (d || "").slice(1); }
 
 function validateListing(obj, index, profileIds) {
   var errors = [];
@@ -1845,6 +1847,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   var [showAdd, setShowAdd] = useState(false);
   var [showImport, setShowImport] = useState(false);
   var [filterRole, setFilterRole] = useState("all");
+  var [filterDealer, setFilterDealer] = useState("all");
   var [sortBy, setSortBy] = useState("score");
 
   function sortFn(a, b) {
@@ -1863,6 +1866,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
         if (pr && pr.role !== filterRole) return false;
         if (!pr && filterRole !== "?") return false;
       }
+      if (filterDealer !== "all" && (l.dealerType || "") !== filterDealer) return false;
       return true;
     });
   }
@@ -1880,6 +1884,10 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   var activeProfiles = data.profiles.filter(function (p) { return p.active; });
   var roleOpts = [];
   data.profiles.forEach(function (p) { if (p.role && roleOpts.indexOf(p.role) === -1) roleOpts.push(p.role); });
+  // Dealer-type filter options, drawn from the types actually present.
+  var dealerOpts = [];
+  data.listings.forEach(function (l) { if (l.dealerType && dealerOpts.indexOf(l.dealerType) === -1) dealerOpts.push(l.dealerType); });
+  dealerOpts.sort();
 
   // Partition candidates by each one's profile trim include/exclude filter.
   function candTrimPass(c) {
@@ -1974,6 +1982,12 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
               {roleOpts.map(function (r) { return (<option key={r} value={r}>{r} only</option>); })}
             </select>
           )}
+          {dealerOpts.length >= 2 && (
+            <select style={Object.assign({}, S.inp, { flex: "0 0 auto", padding: "5px 8px", fontSize: 12 })} value={filterDealer} onChange={function (e) { setFilterDealer(e.target.value); }}>
+              <option value="all">All dealers</option>
+              {dealerOpts.map(function (d) { return (<option key={d} value={d}>{dealerLabel(d)}</option>); })}
+            </select>
+          )}
           <select style={Object.assign({}, S.inp, { flex: "0 0 auto", padding: "5px 8px", fontSize: 12 })} value={sortBy} onChange={function (e) { setSortBy(e.target.value); }}>
             <option value="score">Sort: Score ↓</option>
             <option value="price">Sort: Price ↑</option>
@@ -1990,7 +2004,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
               onClick={function () { scoreItems(shownCands, watchFilteredAll); }}>
               {scoreBusy ? "Scoring…" : ("✨ Re-score filtered (" + reScoreCount + ")" + (staleCount > 0 ? " · " + staleCount + " changed" : ""))}</button>
           )}
-          {(filterProf !== "all" || filterRole !== "all") && (
+          {(filterProf !== "all" || filterRole !== "all" || filterDealer !== "all") && (
             <span style={{ fontSize: 11, color: "#6b6b76" }}>{totalShown} of {totalAll}</span>
           )}
         </div>
