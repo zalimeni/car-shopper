@@ -11,7 +11,14 @@ import Anthropic from "@anthropic-ai/sdk";
 import { authorize } from "./_auth.js";
 import { decrypt, cryptoReady } from "./_crypto.js";
 import { getKeyRow, setKeyValid } from "./_supabaseAdmin.js";
-import { resolveScoreModel, BASELINE_SYSTEM, buildBaselineSchema, buildBaselinePrompt } from "./_scoring.js";
+import { BASELINE_SYSTEM, buildBaselineSchema, buildBaselinePrompt } from "./_scoring.js";
+
+// Baseline generation uses a fixed fast model rather than the user's scoring
+// model: Sonnet 4.6 is capable enough for a one-shot pricing estimate (which the
+// user edits) but, unlike the Claude 5 scoring default, is NOT always-on
+// thinking — with thinking disabled it finishes well under the 60s function
+// wall, avoiding the 504s that a thinking model caused here.
+const BASELINE_MODEL = "claude-sonnet-4-6";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") { res.status(405).json({ error: "Use POST" }); return; }
@@ -35,15 +42,17 @@ export default async function handler(req, res) {
   catch (e) { await setKeyValid(auth.user.id, false); res.status(400).json({ error: "key_unreadable", message: "Stored key couldn't be decrypted — re-enter it" }); return; }
 
   const client = new Anthropic({ apiKey: apiKey });
-  const model = resolveScoreModel(body.model);
   const listings = Array.isArray(body.listings) ? body.listings : [];
 
   try {
-    // Streamed (+ generous cap for always-on Claude 5 thinking) so a slow
-    // response can't trip an HTTP read timeout; .finalMessage() assembles it.
+    // Streamed so a slow response can't trip an HTTP read timeout;
+    // .finalMessage() assembles it. thinking:disabled keeps Sonnet 4.6 from
+    // burning tokens/time on reasoning — a one-shot pricing estimate doesn't
+    // need it, and it's what keeps the call under the 60s function wall.
     const resp = await client.messages.stream({
-      model: model,
+      model: BASELINE_MODEL,
       max_tokens: 8000,
+      thinking: { type: "disabled" },
       system: BASELINE_SYSTEM,
       messages: [{ role: "user", content: buildBaselinePrompt(profile, listings) }],
       output_config: { format: { type: "json_schema", schema: buildBaselineSchema() } },
