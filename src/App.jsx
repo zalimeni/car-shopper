@@ -487,6 +487,7 @@ export default function App() {
 
   // ── AI scoring ──
   var [keyStatus, setKeyStatus] = useState({ configured: false, valid: false, last4: "" });
+  var [keyLoaded, setKeyLoaded] = useState(false); // has the initial key-status fetch resolved?
   var [scoreBusy, setScoreBusy] = useState(false);
   var [scoringActive, setScoringActive] = useState([]); // the exact items being scored right now (for per-card "Scoring…")
   var [scoreMsg, setScoreMsg] = useState(null);
@@ -494,7 +495,7 @@ export default function App() {
 
   useEffect(function () {
     var cancelled = false;
-    getKeyStatus().then(function (s) { if (!cancelled) setKeyStatus(s); });
+    getKeyStatus().then(function (s) { if (!cancelled) { setKeyStatus(s); setKeyLoaded(true); } });
     getMe().then(function (m) { if (!cancelled && m && m.isAdmin) setIsAdmin(true); });
     return function () { cancelled = true; };
   }, []);
@@ -648,7 +649,9 @@ export default function App() {
         } else {
           setScoreMsg({ ok: true, text: "Auto-score: nothing new to score." });
         }
-      } else if (autoScore && !keyStatus.valid) {
+      } else if (autoScore && keyLoaded && !keyStatus.valid) {
+        // Only report a missing/invalid key once the status fetch has resolved —
+        // before that keyStatus.valid is just its default false (not a verdict).
         setScoreMsg({ ok: false, text: "Auto-score is on but no valid Anthropic key — add one in the AI panel." });
       }
       return;
@@ -657,16 +660,18 @@ export default function App() {
       if (!auto) setSyncMsg({ ok: false, error: e.message });
     }
     setSyncing(false);
-  }, [data, syncing, save, autoScore, keyStatus, scoreBusy, scoreItems, candidates]);
+  }, [data, syncing, save, autoScore, keyLoaded, keyStatus, scoreBusy, scoreItems, candidates]);
 
-  // Sync-on-open: once per load, if it's been a while since the last sync.
+  // Sync-on-open: once per load, if it's been a while since the last sync. Wait
+  // for the key-status fetch to resolve first, so auto-score after this sync
+  // sees the real key state (else a valid key is misreported as missing).
   var didAutoSync = useRef(false);
   useEffect(function () {
-    if (loading || !data || didAutoSync.current) return;
+    if (loading || !data || !keyLoaded || didAutoSync.current) return;
     didAutoSync.current = true;
     var last = data.lastSynced ? new Date(data.lastSynced).getTime() : 0;
     if (Date.now() - last > AUTO_SYNC_HOURS * 3600 * 1000) doSync({ auto: true });
-  }, [loading, data, doSync]);
+  }, [loading, data, keyLoaded, doSync]);
 
   // Debug helper: run window.__rawSync() in the browser console (while signed
   // in) to see the raw MarketCheck response + how it normalizes — for
