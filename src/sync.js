@@ -38,7 +38,8 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
       (r.listings || []).forEach(function (l) {
         if (!l.vin) return;
         const prev = seen[l.vin];
-        if (!prev || (l.price && l.price < prev.price)) seen[l.vin] = l;
+        // Lowest REAL price wins — a priced row always beats an unpriced one.
+        if (!prev || (l.price && (!prev.price || l.price < prev.price))) seen[l.vin] = l;
       });
       (r.errors || []).forEach(function (m) { errors.push(m); });
       if (r.mock) mock = true;
@@ -106,7 +107,8 @@ export function reconcile(existing, fetched, todayStr) {
     const k = vinKey(f.vin);
     if (!k) return;
     const prev = byVin[k];
-    if (!prev || (f.price && f.price < prev.price)) byVin[k] = f;
+    // Lowest REAL price wins — a priced row always beats an unpriced one.
+    if (!prev || (f.price && (!prev.price || f.price < prev.price))) byVin[k] = f;
   });
 
   const matched = {};

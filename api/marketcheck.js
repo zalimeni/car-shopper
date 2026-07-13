@@ -209,7 +209,8 @@ export default async function handler(req, res) {
               // Backstop the dealer_type filter in case the API returns extras.
               if (dealerType === "franchise" && norm.dealerType !== "franchise") continue;
               const prev = seen[norm.vin];
-              if (!prev || (norm.price && norm.price < prev.price)) seen[norm.vin] = norm;
+              // Lowest REAL price wins — a priced row always beats an unpriced one.
+              if (!prev || (norm.price && (!prev.price || norm.price < prev.price))) seen[norm.vin] = norm;
             }
             // Last page: fewer than a full page back, or we've covered num_found.
             if (rows.length < ROWS || (numFound != null && start + ROWS >= numFound)) break;
@@ -286,6 +287,12 @@ export function parseYears(s) {
   return Array.from(new Set(out)).sort().join(",");
 }
 
+// Only http(s) URLs may flow into the app (they're rendered as <a href> /
+// <img src> in the client) — anything else (javascript:, data:, …) is dropped.
+export function safeHttpUrl(u) {
+  return typeof u === "string" && /^https?:\/\//i.test(u.trim()) ? u.trim() : "";
+}
+
 // ── MarketCheck listing -> app listing shape ──
 export function normalize(row, profileId) {
   if (!row || typeof row !== "object") return null;
@@ -310,7 +317,7 @@ export function normalize(row, profileId) {
     location: dealer.city || "",
     state: dealer.state || "",
     color: row.exterior_color || "",
-    link: row.vdp_url || "",
+    link: safeHttpUrl(row.vdp_url),
     photo: pickPhoto(row),
     dom: row.dom != null ? Number(row.dom) : null,
     // Extras that feed AI scoring (and persist on the listing). MarketCheck puts
@@ -334,7 +341,7 @@ export function pickPhoto(row) {
   const media = row && row.media;
   const links = media && Array.isArray(media.photo_links) ? media.photo_links : [];
   for (const u of links) {
-    if (!u || typeof u !== "string") continue;
+    if (!safeHttpUrl(u)) continue;
     if (/coming.?soon|no.?image|placeholder/i.test(u)) continue;
     return u.replace(/([?&/,]w_)(\d+|auto)/i, "$1400");
   }
@@ -372,7 +379,8 @@ function stripMedia(row) {
 
 // ── Mock data (?mock=1): two synthetic listings per active profile ──
 function mockListings(profiles, hubs) {
-  const hub = (hubs && hubs[0]) || { n: "Boston MA", z: "02101" };
+  const hub = (hubs && hubs[0]) || {};
+  const hubName = hub.n || hub.z || "Boston MA"; // a hub may carry only a ZIP
   const out = [];
   (profiles || []).forEach(function (pr, i) {
     const p = pr.params || {};
@@ -390,8 +398,8 @@ function mockListings(profiles, hubs) {
         dealer: "Mock Motors " + (k + 1),
         dealerType: k === 0 ? "franchise" : "independent",
         cpo: k === 0,
-        location: hub.n.split(" ")[0],
-        state: hub.n.slice(-2),
+        location: hubName.split(" ")[0],
+        state: hubName.slice(-2),
         color: k === 0 ? "Silver" : "Blue",
         link: "",
         dom: 12 + k * 7,
