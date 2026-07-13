@@ -436,16 +436,29 @@ function ssSet(key, val) {
   try { sessionStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* unavailable */ }
 }
 
+// URL-hash deep links: "#results" opens a tab, "#results/rav4-hybrid" opens
+// Results filtered to a profile — so a view can be bookmarked/shared. Returns
+// null when the hash names no known tab.
+function tabFromHash() {
+  try {
+    var h = decodeURIComponent((window.location.hash || "").slice(1));
+    if (!h) return null;
+    var parts = h.split("/");
+    var name = TABS.concat(["Admin"]).find(function (t) { return t.toLowerCase() === parts[0].toLowerCase(); });
+    return name ? { tab: name, prof: parts[1] || null } : null;
+  } catch (e) { return null; }
+}
+
 export default function App() {
   var [data, setData] = useState(null);
   var [loading, setLoading] = useState(true);
-  var [tab, setTab] = useState(function () { return ssGet("cs-tab", "Dashboard"); });
+  var [tab, setTab] = useState(function () { var h = tabFromHash(); return (h && h.tab) || ssGet("cs-tab", "Dashboard"); });
   var [saving, setSaving] = useState(false);
   var [edListing, setEdListing] = useState(null);
   var [candidates, setCandidates] = useState(function () { return ssGet("cs-candidates", []); });
   var [importText, setImportText] = useState("");
   var [importResult, setImportResult] = useState(null);
-  var [filterProf, setFilterProf] = useState("all");
+  var [filterProf, setFilterProf] = useState(function () { var h = tabFromHash(); return (h && h.prof) || "all"; });
   var init = useRef(false);
   // Latest state for long-running async flows: `data` captured in a callback
   // closure goes stale while a multi-location sync's fetches run, and saving
@@ -463,6 +476,29 @@ export default function App() {
   useEffect(function () { ssSet("cs-tab", tab); }, [tab]);
   useEffect(function () { ssSet("cs-candidates", candidates); }, [candidates]);
   useEffect(function () { ssSet("cs-rawDebug", rawDebug); }, [rawDebug]);
+
+  // Mirror the current view into the URL hash (replaceState — no history spam)
+  // so it's bookmarkable, and follow manual hash edits / back-nav.
+  useEffect(function () {
+    try {
+      var h = tab.toLowerCase() + (tab === "Results" && filterProf !== "all" ? "/" + encodeURIComponent(filterProf) : "");
+      if (window.location.hash.slice(1) !== h) history.replaceState(null, "", "#" + h);
+    } catch (e) { /* older browsers */ }
+  }, [tab, filterProf]);
+  useEffect(function () {
+    function onHash() {
+      var h = tabFromHash();
+      if (!h) return;
+      setTab(h.tab);
+      if (h.tab === "Results" && h.prof) setFilterProf(h.prof);
+    }
+    window.addEventListener("hashchange", onHash);
+    return function () { window.removeEventListener("hashchange", onHash); };
+  }, []);
+  // A stale/foreign profile id in the hash would filter everything out — reset it.
+  useEffect(function () {
+    if (data && filterProf !== "all" && !(data.profiles || []).some(function (p) { return p.id === filterProf; })) setFilterProf("all");
+  }, [data, filterProf]);
 
   useEffect(function () {
     if (init.current) return;
@@ -902,10 +938,28 @@ export default function App() {
     save(Object.assign({}, data, { listings: nl }));
   }, [data, save]);
 
+  // Delete is immediate but undoable for a few seconds (friendlier than a
+  // confirm step, and safe — Undo restores the exact object).
+  var [undoInfo, setUndoInfo] = useState(null); // { listing }
+  var undoTimer = useRef(null);
   var delListing = useCallback(function (id) {
     if (!data) return;
+    var doomed = data.listings.find(function (l) { return l.id === id; });
     save(Object.assign({}, data, { listings: data.listings.filter(function (l) { return l.id !== id; }) }));
+    if (doomed) {
+      setUndoInfo({ listing: doomed });
+      clearTimeout(undoTimer.current);
+      undoTimer.current = setTimeout(function () { setUndoInfo(null); }, 8000);
+    }
   }, [data, save]);
+  var undoDelete = useCallback(function () {
+    if (!undoInfo) return;
+    var l = undoInfo.listing;
+    clearTimeout(undoTimer.current);
+    setUndoInfo(null);
+    patchListings(function (list) { return list.some(function (x) { return x.id === l.id; }) ? list : list.concat([l]); });
+  }, [undoInfo, patchListings]);
+  useEffect(function () { return function () { clearTimeout(undoTimer.current); }; }, []);
 
   var markChk = useCallback(function (id) { updListing(id, { lastChecked: today() }); }, [updListing]);
   // Acknowledge a sync update: move it out of the review section back to the watchlist.
@@ -1008,6 +1062,12 @@ export default function App() {
             </div>
             <textarea readOnly value={exportJson} style={Object.assign({}, S.ta, { width: "100%", minHeight: 80, fontSize: 10, boxSizing: "border-box" })}
               onClick={function (e) { e.target.select(); }} />
+          </div>
+        )}
+        {undoInfo && (
+          <div style={S.undoBar}>
+            <span style={{ fontSize: 12, color: "#c8c8d0" }}>Deleted {undoInfo.listing.year} {undoInfo.listing.vehicle}</span>
+            <button style={Object.assign({}, S.smBtn, { fontWeight: 600 })} onClick={undoDelete}>Undo</button>
           </div>
         )}
         {(rawBusy || rawDebug) && (
@@ -2604,7 +2664,6 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
   var rem = calcRem(l.price || 0, st.budget, st.taxRate);
   var salt = isSalt(l.state);
   var age = daysSince(l.lastChecked);
-  var [confirmDel, setConfirmDel] = useState(false);
   var [showReject, setShowReject] = useState(false);
   var [rejectText, setRejectText] = useState("");
 
@@ -2686,19 +2745,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
         </div>
       )}
 
-      {/* Delete confirm inline */}
-      {confirmDel && (
-        <div style={{ marginTop: 8, padding: 10, background: "#1a1012", borderRadius: 6, border: "1px solid #3d1818" }}>
-          <div style={{ fontSize: 12, color: "#e88", marginBottom: 6 }}>Delete this listing permanently?</div>
-          <div style={{ display: "flex", gap: 6 }}>
-            <button style={Object.assign({}, S.priBtn, { background: "#c44", padding: "5px 12px", fontSize: 12 })}
-              onClick={function () { onDel(); }}>Yes, delete</button>
-            <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { setConfirmDel(false); }}>Cancel</button>
-          </div>
-        </div>
-      )}
-
-      {!showReject && !confirmDel && (
+      {!showReject && (
         <div style={{ display: "flex", gap: 4, marginTop: 8, borderTop: "1px solid #1e2028", paddingTop: 8, flexWrap: "wrap" }}>
           <button style={S.smBtn} onClick={onEdit}>Edit</button>
           {keyOk && onScore && <button style={Object.assign({}, S.smBtn, { color: criteriaStale ? "#d4a017" : "#b89edd" }, scoreBusy ? { opacity: 0.6 } : {})} disabled={scoreBusy} title={criteriaStale ? "Scored under criteria/prompt that have since changed — re-score to refresh" : ""} onClick={onScore}>{scoring ? "Scoring…" : (l.scoredAt ? (criteriaStale ? "⟳ Re-score (changed)" : "✨ Re-score") : "✨ Score")}</button>}
@@ -2706,7 +2753,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
           {l.status === "watch" && <button style={Object.assign({}, S.smBtn, { color: "#c44" })} onClick={function () { setShowReject(true); }}>Reject</button>}
           {l.status === "watch" && <button style={Object.assign({}, S.smBtn, { color: "#d4a017" })} onClick={function () { onStatus("sold"); }} title="Mark as sold / no longer available">Sold</button>}
           {(l.status === "rejected" || l.status === "sold") && <button style={S.smBtn} onClick={function () { onStatus("watch"); }}>Restore</button>}
-          <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { setConfirmDel(true); }}>Del</button>
+          <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={onDel} title="Delete (undoable for a few seconds)">Del</button>
         </div>
       )}
     </div>
@@ -2764,4 +2811,5 @@ var S = {
   budL: { fontSize: 11, color: "#6b6b76", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 },
   budR: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, color: "#c8c8d0", padding: "3px 0", flexWrap: "wrap", gap: 4 },
   budRem: { fontSize: 12, color: "#6b9edd" },
+  undoBar: { position: "fixed", bottom: 16, left: "50%", transform: "translateX(-50%)", display: "flex", alignItems: "center", gap: 10, background: "#1e2028", border: "1px solid #2a2d38", borderRadius: 8, padding: "8px 14px", boxShadow: "0 4px 16px rgba(0,0,0,0.4)", zIndex: 100 },
 };
