@@ -163,14 +163,28 @@ export default async function handler(req, res) {
   const seen = {}; // vin -> normalized listing (dedup across hubs, keep lowest price)
   const errors = [];
 
+  // Stop issuing new queries before the function wall so we return partial
+  // results instead of a 504. The client already splits by hub, so this is a
+  // backstop for a single dense hub (nationwide radius × many profiles/pages).
+  const deadline = Date.now() + (Number(process.env.MARKETCHECK_BUDGET_MS) || 50000);
+  let timeUp = false;
+
   let first = true;
   for (const pr of profiles) {
+    if (timeUp) break;
     for (const hub of hubs) {
+      if (timeUp) break;
       for (const carType of CAR_TYPES) {
+        if (timeUp) break;
         const label = (pr.name || pr.id || "?") + " @ " + (hub.n || hub.z || "?") + " [" + carType + "]";
         // Page through results (bounded by MAX_ROWS) so a dense query doesn't
         // truncate at 50 and drop still-active listings.
         for (let start = 0; start < MAX_ROWS; start += ROWS) {
+          if (Date.now() > deadline) {
+            errors.push("Stopped early to avoid a timeout — some results may be missing. Use fewer locations, a smaller radius, or narrower filters.");
+            timeUp = true;
+            break;
+          }
           if (!first) await sleep(THROTTLE_MS); // stay under the burst rate limit
           first = false;
           let numFound = null;
