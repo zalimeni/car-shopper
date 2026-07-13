@@ -4,6 +4,7 @@ import { signOut } from "./Auth";
 import { fetchListings, fetchRawSample, reconcile } from "./sync";
 import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBaseline, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
 import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
+import { listSnapshots, restoreSnapshot } from "./snapshots";
 
 var AUTO_SYNC_HOURS = 12; // sync-on-open debounce
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
@@ -473,6 +474,28 @@ export default function App() {
   dataRef.current = data;
 
   var [exportJson, setExportJson] = useState("");
+  // Backups panel (footer): automatic server-side snapshots of the whole blob.
+  var [snapsOpen, setSnapsOpen] = useState(false);
+  var [snaps, setSnaps] = useState(null); // null = loading
+  var [snapMsg, setSnapMsg] = useState("");
+  var [snapConfirm, setSnapConfirm] = useState(null); // snapshot id awaiting 2nd tap
+  var [snapBusy, setSnapBusy] = useState(false);
+  var openSnaps = useCallback(function () {
+    setSnapsOpen(function (open) {
+      if (open) return false;
+      setSnaps(null); setSnapMsg(""); setSnapConfirm(null);
+      listSnapshots().then(setSnaps).catch(function (e) { setSnaps([]); setSnapMsg(e.message || "Couldn't load backups"); });
+      return true;
+    });
+  }, []);
+  var doRestore = useCallback(async function (id) {
+    if (snapConfirm !== id) { setSnapConfirm(id); return; }
+    setSnapBusy(true); setSnapMsg("");
+    try {
+      await restoreSnapshot(id);
+      window.location.reload(); // re-init from the restored blob
+    } catch (e) { setSnapMsg(e.message || "Restore failed"); setSnapBusy(false); setSnapConfirm(null); }
+  }, [snapConfirm]);
   var [rawDebug, setRawDebug] = useState(function () { return ssGet("cs-rawDebug", ""); });
   var [rawBusy, setRawBusy] = useState(false);
   var [syncing, setSyncing] = useState(false);
@@ -1070,6 +1093,7 @@ export default function App() {
               setTab("Results");
             }
           }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>Export Listings</button>
+          <button onClick={openSnaps} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>{snapsOpen ? "Close backups" : "Backups"}</button>
           <button onClick={function () { runRawDebug(); }} disabled={rawBusy} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" }, rawBusy ? { opacity: 0.6 } : {})}>{rawBusy ? "Running…" : "Debug raw"}</button>
           <button onClick={function () { save(Object.assign({}, data, { onboarded: false })); }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>Setup wizard</button>
           <button onClick={reset} style={Object.assign({}, S.resetBtn, confirmReset ? { color: "#c44" } : {})}>
@@ -1086,6 +1110,27 @@ export default function App() {
             </div>
             <textarea readOnly value={exportJson} style={Object.assign({}, S.ta, { width: "100%", minHeight: 80, fontSize: 10, boxSizing: "border-box" })}
               onClick={function (e) { e.target.select(); }} />
+          </div>
+        )}
+        {snapsOpen && (
+          <div style={{ marginTop: 8, padding: 10, background: "#161820", borderRadius: 6, border: "1px solid #1e2028", textAlign: "left" }}>
+            <div style={{ fontSize: 11, color: "#6b6b76", marginBottom: 6 }}>
+              Backups — automatic snapshots of your whole app state (up to 30, at most one per hour of activity). Restoring reloads the app; the pre-restore state is snapshotted too, so a restore is undoable.
+            </div>
+            {snapMsg && <div style={{ fontSize: 12, color: "#c44", marginBottom: 6 }}>{snapMsg}</div>}
+            {snaps === null ? <div style={S.empty}>Loading…</div>
+              : snaps.length === 0 && !snapMsg ? <div style={S.empty}>No snapshots yet — they accrue as you use the app.</div>
+              : snaps.map(function (s) {
+                  return (
+                    <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", borderBottom: "1px solid #1e2028" }}>
+                      <span style={{ flex: 1, fontSize: 12, color: "#c8c8d0" }}>{new Date(s.saved_at).toLocaleString()}</span>
+                      <button style={Object.assign({}, S.smBtn, snapConfirm === s.id ? { color: "#c44", fontWeight: 600 } : {})} disabled={snapBusy}
+                        onClick={function () { doRestore(s.id); }}>
+                        {snapBusy && snapConfirm === s.id ? "Restoring…" : snapConfirm === s.id ? "Tap again to restore" : "Restore"}
+                      </button>
+                    </div>
+                  );
+                })}
           </div>
         )}
         {undoInfo && (
@@ -2022,6 +2067,7 @@ function HelpTab() {
         <h3 style={S.cardH}>Setup, backup &amp; reset</h3>
         <p style={li}><span style={b}>Setup wizard</span> (footer) re-runs the guided setup (budget, locations, profiles, rules) without wiping data. Budget, search locations, and tagline also live in the <span style={b}>Settings</span> card on the Profiles tab.</p>
         <p style={li}><span style={b}>Export Listings</span> (footer) dumps your listings as JSON to copy and back up. <span style={b}>Import</span> (Results) accepts the same shape.</p>
+        <p style={li}><span style={b}>Backups</span> (footer) lists automatic server-side snapshots of your whole app state (up to 30, at most one per hour of activity) — restore any of them in two taps; the pre-restore state is snapshotted too, so a restore is undoable.</p>
         <p style={li}>Your data syncs to your account, so signing in elsewhere loads the same watchlist. <span style={b}>Reset All Data</span> (footer) wipes everything and restarts the wizard.</p>
       </div>
     </div>
