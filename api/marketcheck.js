@@ -66,6 +66,9 @@ export default async function handler(req, res) {
   const body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
   const profiles = Array.isArray(body.profiles) ? body.profiles : [];
   const hubs = Array.isArray(body.hubs) ? body.hubs : [];
+  // Optional dealer-type narrowing: franchiseOnly restricts the search to
+  // franchise dealers (excludes independents).
+  const dealerType = body.franchiseOnly ? "franchise" : null;
   const mock = req.query && (req.query.mock === "1" || req.query.mock === "true");
   const raw = req.query && (req.query.raw === "1" || req.query.raw === "true");
 
@@ -172,7 +175,7 @@ export default async function handler(req, res) {
           first = false;
           let numFound = null;
           try {
-            const url = buildUrl(apiKey, pr, hub, start, carType);
+            const url = buildUrl(apiKey, pr, hub, start, carType, dealerType);
             const r = await fetchWithRetry(url, { headers: { Accept: "application/json" } });
             if (!r.ok) {
               // Auto-debug: 4xx bodies name the offending param. Echo it (+ the
@@ -189,6 +192,8 @@ export default async function handler(req, res) {
             for (const row of rows) {
               const norm = normalize(row, pr.id);
               if (!norm || !norm.vin) continue;
+              // Backstop the dealer_type filter in case the API returns extras.
+              if (dealerType === "franchise" && norm.dealerType !== "franchise") continue;
               const prev = seen[norm.vin];
               if (!prev || (norm.price && norm.price < prev.price)) seen[norm.vin] = norm;
             }
@@ -207,13 +212,15 @@ export default async function handler(req, res) {
 }
 
 // ── MarketCheck query construction ──
-export function buildUrl(apiKey, profile, hub, start, carType) {
+export function buildUrl(apiKey, profile, hub, start, carType, dealerType) {
   const p = profile.params || {};
   const q = new URLSearchParams();
   q.set("api_key", apiKey);
   // "used" and "certified" are distinct car_types (used excludes CPO), so the
   // sync runs both to cover regular + certified inventory.
   q.set("car_type", carType || "used");
+  // Optional dealer-type narrowing (e.g. "franchise" to exclude independents).
+  if (dealerType) q.set("dealer_type", dealerType);
   if (p.make) q.set("make", p.make);
   if (p.model) q.set("model", p.model);
   if (p.powertrain) q.set("powertrain_type", mapPowertrain(p.powertrain));

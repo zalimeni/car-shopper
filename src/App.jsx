@@ -72,6 +72,7 @@ var DEFAULT_SETTINGS = {
   taxRate: TAX,
   tagline: "2-car · Boston + Durham · ≤$40K",
   hubs: HUBS,
+  franchiseOnly: false, // when true, sync targets franchise dealers only (excludes independent)
 };
 function getSettings(data) { return Object.assign({}, DEFAULT_SETTINGS, (data && data.settings) || {}); }
 
@@ -595,7 +596,7 @@ export default function App() {
         setSyncing(false);
         return;
       }
-      var res = await fetchListings(active, getSettings(data).hubs, opts);
+      var res = await fetchListings(active, getSettings(data).hubs, opts, { franchiseOnly: !!getSettings(data).franchiseOnly });
       var rec = reconcile(data.listings, res.listings, today());
       var decorated = rec.candidates.map(function (c) {
         return Object.assign({}, c, { compositeScore: calcScore(c.scores, data.criteria), _candidate: true });
@@ -1072,6 +1073,7 @@ function SettingsCard({ data, save }) {
   var [open, setOpen] = useState(false);
   var [budget, setBudget] = useState(String(s.budget || ""));
   var [tagline, setTagline] = useState(s.tagline || "");
+  var [franchiseOnly, setFranchiseOnly] = useState(!!s.franchiseOnly);
   var [hubs, setHubs] = useState((s.hubs || []).map(function (h) { return { n: h.n || "", z: h.z || "", lat: h.lat, lon: h.lon }; }));
 
   function setHub(i, key, val) {
@@ -1089,7 +1091,7 @@ function SettingsCard({ data, save }) {
   function saveAll() {
     var cleanHubs = hubs.filter(function (h) { return (h.z || "").trim() || (h.n || "").trim(); })
       .map(function (h) { var o = { n: (h.n || "").trim(), z: (h.z || "").trim() }; if (h.lat != null) o.lat = h.lat; if (h.lon != null) o.lon = h.lon; return o; });
-    save(Object.assign({}, data, { settings: Object.assign({}, s, { budget: parseInt(budget) || 0, tagline: tagline.trim(), hubs: cleanHubs }) }));
+    save(Object.assign({}, data, { settings: Object.assign({}, s, { budget: parseInt(budget) || 0, tagline: tagline.trim(), franchiseOnly: franchiseOnly, hubs: cleanHubs }) }));
     setOpen(false);
   }
 
@@ -1100,7 +1102,7 @@ function SettingsCard({ data, save }) {
         <button style={S.secBtn} onClick={function () { setOpen(!open); }}>{open ? "Close" : "Edit"}</button>
       </div>
       {!open ? (
-        <p style={S.help}>Budget ${Number(s.budget || 0).toLocaleString()} · {(s.hubs || []).length} search location{(s.hubs || []).length === 1 ? "" : "s"} ({(s.hubs || []).map(function (h) { return h.n || h.z; }).join(", ") || "none"})</p>
+        <p style={S.help}>Budget ${Number(s.budget || 0).toLocaleString()} · {(s.hubs || []).length} search location{(s.hubs || []).length === 1 ? "" : "s"} ({(s.hubs || []).map(function (h) { return h.n || h.z; }).join(", ") || "none"}){s.franchiseOnly ? " · franchise dealers only" : ""}</p>
       ) : (
         <div>
           <div style={S.grid2}>
@@ -1120,7 +1122,11 @@ function SettingsCard({ data, save }) {
             })}
             <button style={Object.assign({}, S.smBtn, { marginTop: 6 })} onClick={addHub}>+ Add location</button>
           </div>
-          <p style={S.help}>Budget powers the "budget left" math; locations are where dealer inventory is searched (~100 mi radius each).</p>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, cursor: "pointer", fontSize: 13, color: "#c8c8d0" }}>
+            <input type="checkbox" checked={franchiseOnly} onChange={function (e) { setFranchiseOnly(e.target.checked); }} />
+            Franchise dealers only <span style={{ color: "#6b6b76" }}>— excludes independent dealers from sync results</span>
+          </label>
+          <p style={S.help}>Budget powers the "budget left" math; locations are where dealer inventory is searched (~100 mi radius each). Franchise-only applies to future syncs; listings already saved from independent dealers stay until you remove them.</p>
           <button style={Object.assign({}, S.priBtn, { marginTop: 6 })} onClick={saveAll}>Save settings</button>
         </div>
       )}

@@ -14,7 +14,7 @@
 
 import { supabase } from "./supabaseClient";
 
-export async function fetchListings(profiles, hubs, opts) {
+export async function fetchListings(profiles, hubs, opts, filters) {
   const qs = opts && opts.mock ? "?mock=1" : "";
   const { data: sess } = await supabase.auth.getSession();
   const token = sess && sess.session ? sess.session.access_token : "";
@@ -29,6 +29,7 @@ export async function fetchListings(profiles, hubs, opts) {
         return { id: p.id, name: p.name, params: p.params };
       }),
       hubs: hubs || [],
+      franchiseOnly: !!(filters && filters.franchiseOnly),
     }),
   });
   if (!res.ok) {

@@ -46,6 +46,11 @@ describe("buildUrl", () => {
     expect(new URLSearchParams(buildUrl("K", base, { z: "02101" }).split("?")[1]).get("car_type")).toBe("used");
     expect(new URLSearchParams(buildUrl("K", base, { z: "02101" }, 0, "certified").split("?")[1]).get("car_type")).toBe("certified");
   });
+  it("adds dealer_type only when provided", () => {
+    const base = { id: "x", params: { make: "Toyota", model: "RAV4" } };
+    expect(new URLSearchParams(buildUrl("K", base, { z: "02101" }).split("?")[1]).has("dealer_type")).toBe(false);
+    expect(new URLSearchParams(buildUrl("K", base, { z: "02101" }, 0, "used", "franchise").split("?")[1]).get("dealer_type")).toBe("franchise");
+  });
   it("sends exact years for a non-contiguous profile, excluding the gap year", () => {
     const u = buildUrl("K", { id: "volt", params: { make: "Chevrolet", model: "Volt", years: "2016, 2018" } }, { z: "02101" });
     const p = new URLSearchParams(u.split("?")[1]);
