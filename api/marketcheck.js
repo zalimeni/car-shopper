@@ -320,6 +320,9 @@ export function normalize(row, profileId) {
     link: safeHttpUrl(row.vdp_url),
     photo: pickPhoto(row),
     dom: row.dom != null ? Number(row.dom) : null,
+    // Miles from the search location (MarketCheck returns `dist` on geo/zip
+    // queries) — surfaced on cards and fed to the "location" scoring criterion.
+    distMi: row.dist != null && !isNaN(Number(row.dist)) ? Math.round(Number(row.dist)) : null,
     // Extras that feed AI scoring (and persist on the listing). MarketCheck puts
     // these at the row top level; null when absent so scoring can tell "unknown"
     // from a real false/0. msrp on used inventory often just echoes the asking

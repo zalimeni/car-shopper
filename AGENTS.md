@@ -36,7 +36,8 @@ over architecture.
 | Path | What it is |
 |---|---|
 | `src/App.jsx` | The entire UI + app logic (large; the main file). |
-| `src/sync.js` | Client side of the listing sync: `fetchListings`, `reconcile`, `fetchRawSample`. |
+| `src/sync.js` | Client side of the listing sync: `fetchListings`, `fetchRawSample` (re-exports `reconcile`). |
+| `src/reconcile.js` | `reconcile()` — pure, import-free (shared with server-side sync). |
 | `src/score.js` | Client side of AI scoring + Anthropic-key management; `scoreSet`, model list. |
 | `src/storage.js` | Supabase-backed get/set/delete of the per-user JSONB blob. |
 | `src/supabaseClient.js` | Supabase client + default URL/anon key. |

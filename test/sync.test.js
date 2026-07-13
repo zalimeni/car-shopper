@@ -25,7 +25,7 @@ describe("reconcile", () => {
   ];
 
   const fetched = [
-    { vin: "VIN_PRICE_DROP", vehicle: "Toyota RAV4 Hybrid", year: 2021, price: 25500, source: "marketcheck", profileId: "rav4-hybrid", dom: 30 },
+    { vin: "VIN_PRICE_DROP", vehicle: "Toyota RAV4 Hybrid", year: 2021, price: 25500, source: "marketcheck", profileId: "rav4-hybrid", dom: 30, distMi: 42 },
     { vin: "VIN_NEW", vehicle: "Toyota RAV4 Hybrid", year: 2022, price: 24000, source: "marketcheck", profileId: "rav4-hybrid", dom: 9 },
   ];
 
@@ -41,6 +41,20 @@ describe("reconcile", () => {
     expect(updated.lastSeen).toBe(TODAY);
     expect(updated.lastChecked).toBe(TODAY);
     expect(updated.notes).toContain("$27,000 → $25,500");
+  });
+
+  it("maintains a bounded price history, seeding the pre-tracking price", () => {
+    const updated = result.listings.find((l) => l.id === "a1");
+    expect(updated.priceHistory).toEqual([
+      { date: "2026-06-10", price: 27000 }, // seeded from lastSeen at the old price
+      { date: TODAY, price: 25500 },
+    ]);
+  });
+
+  it("refreshes drifting market facts (dom, distMi) on every sighting", () => {
+    const updated = result.listings.find((l) => l.id === "a1");
+    expect(updated.dom).toBe(30);
+    expect(updated.distMi).toBe(42);
   });
 
   it("flags a price-changed listing for review with a lastChange", () => {
@@ -68,7 +82,9 @@ describe("reconcile", () => {
     expect(c.vin).toBe("VIN_NEW");
     expect(c.status).toBe("watch");
     expect(c.lastSeen).toBe(TODAY);
-    expect(c.notes).toBe("9 days on market");
+    expect(c.notes).toBe(""); // dom shows as a card chip now, not a note
+    expect(c.dom).toBe(9);
+    expect(c.priceHistory).toEqual([{ date: TODAY, price: 24000 }]); // history starts at first sighting
   });
 
   it("keeps the lower price when a VIN appears twice in one batch", () => {
