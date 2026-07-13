@@ -569,9 +569,28 @@ export default function App() {
           revRef.current = r.rev == null ? 0 : r.rev;
           var d = migrate(JSON.parse(r.value));
           d.listings = recalcAll(d.listings || [], d.criteria || DEFAULT_CRITERIA);
+          // The scheduled background sync (api/cron-sync.js) parks new finds in
+          // pendingCandidates — drain them into this device's review queue.
+          var pend = Array.isArray(d.pendingCandidates) ? d.pendingCandidates : [];
+          var hadPending = pend.length > 0;
+          if (hadPending) {
+            var skv = {};
+            (d.skipped || []).forEach(function (s) { if (s.vin) skv[s.vin] = true; });
+            // `candidates` here is the mount-time (session-restored) queue —
+            // nothing else has touched it yet, so dedup against it directly.
+            var seenV = {};
+            candidates.forEach(function (c) { if (c.vin) seenV[c.vin] = true; });
+            var add = pend.filter(function (c) { return !(c.vin && skv[c.vin]) && (!c.vin || !seenV[c.vin]); })
+              .map(function (c) { return Object.assign({}, c, { compositeScore: calcScore(c.scores, d.criteria || DEFAULT_CRITERIA), _candidate: true }); });
+            if (add.length) {
+              setCandidates(function (prev) { return prev.concat(add); });
+              setSyncMsg({ ok: true, text: "Background sync found " + add.length + " new candidate" + (add.length > 1 ? "s" : "") + " — review below." });
+            }
+            d = Object.assign({}, d, { pendingCandidates: undefined });
+          }
           setData(d);
-          // Only write back if migration changed something
-          if (d.version !== JSON.parse(r.value).version) {
+          // Write back when migration changed the shape or we drained the queue.
+          if (hadPending || d.version !== JSON.parse(r.value).version) {
             await persist(d);
           }
         } else {
@@ -2482,6 +2501,9 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
   } else if (syncMsg && !syncMsg.ok) {
     text = "⚠ " + syncMsg.error;
     color = "#c44";
+  } else if (syncMsg && syncMsg.ok && syncMsg.text && !syncMsg.summary) {
+    text = "✓ " + syncMsg.text; // e.g. background-sync delivery note
+    color = "#2d8659";
   } else if (syncMsg && syncMsg.ok) {
     var s = syncMsg.summary || {};
     var parts = [];

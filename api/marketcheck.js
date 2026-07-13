@@ -160,13 +160,23 @@ export default async function handler(req, res) {
     return;
   }
 
+  const r = await searchListings(apiKey, profiles, hubs, { dealerType: dealerType });
+  res.status(200).json({ listings: r.listings, errors: r.errors });
+}
+
+// Core active-inventory search for a set of profiles × hubs — shared by the
+// HTTP handler above and the scheduled background sync (api/cron-sync.js).
+// opts: { dealerType, budgetMs }. Returns { listings: [<normalized>], errors }.
+export async function searchListings(apiKey, profiles, hubs, opts) {
+  opts = opts || {};
+  const dealerType = opts.dealerType || null;
   const seen = {}; // vin -> normalized listing (dedup across hubs, keep lowest price)
   const errors = [];
 
   // Stop issuing new queries before the function wall so we return partial
   // results instead of a 504. The client already splits by hub, so this is a
   // backstop for a single dense hub (nationwide radius × many profiles/pages).
-  const deadline = Date.now() + (Number(process.env.MARKETCHECK_BUDGET_MS) || 50000);
+  const deadline = Date.now() + (Number(opts.budgetMs) || Number(process.env.MARKETCHECK_BUDGET_MS) || 50000);
   let timeUp = false;
 
   let first = true;
@@ -223,7 +233,7 @@ export default async function handler(req, res) {
     }
   }
 
-  res.status(200).json({ listings: Object.values(seen), errors });
+  return { listings: Object.values(seen), errors: errors };
 }
 
 // ── MarketCheck query construction ──
