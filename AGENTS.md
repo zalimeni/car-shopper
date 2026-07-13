@@ -50,6 +50,7 @@ over architecture.
 | `api/_crypto.js` | AES-256-GCM encrypt/decrypt for the Anthropic-key vault. |
 | `api/_supabaseAdmin.js` | Service-role (`SUPABASE_SECRET_KEY`) client for the key vault. |
 | `api/anthropic-key.js` | Validate / store (encrypted) / remove the per-user Anthropic key. |
+| `api/snapshots.js` | List/restore the automatic app-state backups (`app_state_history`). |
 | `api/score.js` | Batch listing scoring with the user's decrypted key. |
 | `supabase/migrations/*.sql` | DB schema (baseline + allowlist + anthropic-key vault). |
 | `supabase/ci/shim.sql`, `supabase/config.toml` | CI migration testing + CLI config. |
