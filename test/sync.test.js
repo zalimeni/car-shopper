@@ -81,6 +81,15 @@ describe("reconcile", () => {
     expect(r.candidates[0].price).toBe(20500);
   });
 
+  it("prefers a priced duplicate over an unpriced ($0) one, regardless of order", () => {
+    const r = reconcile([], [
+      { vin: "DUP0", vehicle: "X", year: 2021, price: 0, profileId: "p", source: "marketcheck" },
+      { vin: "DUP0", vehicle: "X", year: 2021, price: 21000, profileId: "p", source: "marketcheck" },
+    ], TODAY);
+    expect(r.candidates).toHaveLength(1);
+    expect(r.candidates[0].price).toBe(21000);
+  });
+
   it("refreshes lastSeen for an unchanged (same-price) listing rather than treating it as gone", () => {
     const ex = [{ id: "u1", vin: "VIN_SAME", price: 20000, status: "watch", source: "marketcheck", lastSeen: "2026-06-10" }];
     const r = reconcile(ex, [{ vin: "VIN_SAME", price: 20000, source: "marketcheck" }], TODAY);

@@ -179,6 +179,13 @@ function scoreIsStale(item, sig) {
   return !!(item && item.scoredAt && item.scoreHash && sig && item.scoreHash !== sig);
 }
 
+// Only http(s) URLs may be stored on a listing — they're rendered as <a href>,
+// so anything else (javascript:, data:, …) is dropped rather than linked.
+function safeHttpUrl(u) {
+  u = String(u || "").trim();
+  return /^https?:\/\//i.test(u) ? u : "";
+}
+
 // ── Import Validation ──
 var REQUIRED_FIELDS = ["vehicle", "year", "price", "profileId"];
 var VALID_STATUSES = ["watch", "rejected", "sold"];
@@ -200,8 +207,10 @@ function validateListing(obj, index, profileIds) {
   if (obj.profileId && profileIds.indexOf(obj.profileId) === -1) {
     errors.push(prefix + "unknown profileId '" + obj.profileId + "' — valid IDs: " + profileIds.join(", "));
   }
-  if (obj.year && (isNaN(Number(obj.year)) || Number(obj.year) < 2010 || Number(obj.year) > 2026)) {
-    errors.push(prefix + "year " + obj.year + " looks wrong (expected 2010-2026)");
+  // Model years run ahead of the calendar (next year's models arrive mid-year).
+  var maxYear = new Date().getFullYear() + 1;
+  if (obj.year && (isNaN(Number(obj.year)) || Number(obj.year) < 1990 || Number(obj.year) > maxYear)) {
+    errors.push(prefix + "year " + obj.year + " looks wrong (expected 1990-" + maxYear + ")");
   }
   if (obj.price && (isNaN(Number(obj.price)) || Number(obj.price) <= 0)) {
     errors.push(prefix + "price must be a positive number");
@@ -271,12 +280,27 @@ function parseImport(text, profileIds) {
         state: String(obj.state || ""),
         color: String(obj.color || ""),
         vin: String(obj.vin || ""),
-        link: String(obj.link || ""),
+        link: safeHttpUrl(obj.link),
         dealRating: String(obj.dealRating || ""),
         notes: String(obj.notes || ""),
         status: VALID_STATUSES.indexOf(obj.status) > -1 ? obj.status : "watch",
         scores: obj.scores && typeof obj.scores === "object" ? obj.scores : {},
         rejectReason: String(obj.rejectReason || ""),
+        // Optional extras so an Export → Import backup round-trip is lossless:
+        // photo/CPO/Carfax facts, AI results, and the sync bookkeeping dates.
+        photo: safeHttpUrl(obj.photo),
+        cpo: obj.cpo === true,
+        carfax_1_owner: typeof obj.carfax_1_owner === "boolean" ? obj.carfax_1_owner : null,
+        carfax_clean_title: typeof obj.carfax_clean_title === "boolean" ? obj.carfax_clean_title : null,
+        dom: obj.dom != null && !isNaN(Number(obj.dom)) ? Number(obj.dom) : null,
+        source: obj.source ? String(obj.source) : undefined,
+        addedDate: obj.addedDate ? String(obj.addedDate) : undefined,
+        lastSeen: obj.lastSeen ? String(obj.lastSeen) : undefined,
+        lastChecked: obj.lastChecked ? String(obj.lastChecked) : undefined,
+        aiSummary: obj.aiSummary ? String(obj.aiSummary) : "",
+        aiRationales: obj.aiRationales && typeof obj.aiRationales === "object" ? obj.aiRationales : {},
+        scoredAt: obj.scoredAt ? String(obj.scoredAt) : undefined,
+        scoreHash: obj.scoreHash ? String(obj.scoreHash) : undefined,
       };
       result.listings.push(clean);
     }
@@ -423,6 +447,11 @@ export default function App() {
   var [importResult, setImportResult] = useState(null);
   var [filterProf, setFilterProf] = useState("all");
   var init = useRef(false);
+  // Latest state for long-running async flows: `data` captured in a callback
+  // closure goes stale while a multi-location sync's fetches run, and saving
+  // from it would clobber approvals/edits/AI scores landed mid-sync.
+  var dataRef = useRef(null);
+  dataRef.current = data;
 
   var [exportJson, setExportJson] = useState("");
   var [rawDebug, setRawDebug] = useState(function () { return ssGet("cs-rawDebug", ""); });
@@ -596,6 +625,12 @@ export default function App() {
         setSyncing(false);
         return;
       }
+      if (!(getSettings(data).hubs || []).length) {
+        // Without a location the search would silently return nothing — say why.
+        if (!auto) setSyncMsg({ ok: false, error: "No search locations configured — add one in Settings (Profiles tab)." });
+        setSyncing(false);
+        return;
+      }
       // As each location's request returns, show progress and surface any new
       // candidates found so far, so results appear progressively instead of all
       // at the end. Existing-listing updates (price/last-seen) still happen once
@@ -616,15 +651,19 @@ export default function App() {
         });
       }
       var res = await fetchListings(active, getSettings(data).hubs, opts, { franchiseOnly: !!getSettings(data).franchiseOnly }, onSyncProgress);
-      var rec = reconcile(data.listings, res.listings, today());
+      // Reconcile + save against the LATEST state, not the `data` snapshot from
+      // when the sync started — the fetches take a while and the UI stays live,
+      // so approvals/edits/scores landed mid-sync must survive the final save.
+      var base = dataRef.current || data;
+      var rec = reconcile(base.listings, res.listings, today());
       var decorated = rec.candidates.map(function (c) {
-        return Object.assign({}, c, { compositeScore: calcScore(c.scores, data.criteria), _candidate: true });
+        return Object.assign({}, c, { compositeScore: calcScore(c.scores, base.criteria), _candidate: true });
       });
       // `added` = candidates genuinely NEW to the queue this run: drop VINs the
       // user skipped (live in data.skipped until restored) and VINs already in
       // the candidate queue from a prior sync (so we never auto-rescore them).
       var skippedVins = {};
-      (data.skipped || []).forEach(function (s) { if (s.vin) skippedVins[s.vin] = true; });
+      (base.skipped || []).forEach(function (s) { if (s.vin) skippedVins[s.vin] = true; });
       var queueVins = {};
       candidates.forEach(function (c) { if (c.vin) queueVins[c.vin] = true; });
       var added = decorated.filter(function (c) { return (!c.vin || !queueVins[c.vin]) && !(c.vin && skippedVins[c.vin]); });
@@ -637,9 +676,9 @@ export default function App() {
       // Existing listings whose price changed this run — materially changed, so
       // eligible for an auto re-score (and flagged reviewPending by reconcile).
       var prevPrice = {};
-      data.listings.forEach(function (l) { if (l.id) prevPrice[l.id] = l.price; });
+      base.listings.forEach(function (l) { if (l.id) prevPrice[l.id] = l.price; });
       var changed = rec.listings.filter(function (l) { return l.id && prevPrice[l.id] != null && l.price !== prevPrice[l.id]; });
-      await save(Object.assign({}, data, { listings: rec.listings, lastSynced: new Date().toISOString() }));
+      await save(Object.assign({}, base, { listings: rec.listings, lastSynced: new Date().toISOString() }));
       // Report the count actually added to the queue (reconcile's newCount also
       // counts skipped VINs, which we hide), and note how many matched skips.
       var skippedSeen = decorated.filter(function (c) { return c.vin && skippedVins[c.vin]; }).length;
@@ -651,7 +690,7 @@ export default function App() {
       // Best-effort; not awaited — sync is already done.
       if (autoScore && keyStatus.valid && !scoreBusy) {
         var profById = {};
-        (data.profiles || []).forEach(function (p) { profById[p.id] = p; });
+        (base.profiles || []).forEach(function (p) { profById[p.id] = p; });
         // Every still-UNSCORED candidate in the queue (new this run + any left
         // over from a prior sync) that isn't trim-hidden — plus materially
         // changed listings. Already-scored candidates are left alone.
@@ -726,7 +765,7 @@ export default function App() {
     if (!data) return;
     var nl = Object.assign({}, cand, {
       id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
-      addedDate: today(), lastChecked: today(), _candidate: undefined, _dupe: undefined, _existingPrice: undefined, _cheaper: undefined
+      addedDate: cand.addedDate || today(), lastChecked: today(), _candidate: undefined, _dupe: undefined, _existingPrice: undefined, _cheaper: undefined
     });
     var newList = dedupInsert(data.listings, nl);
     save(Object.assign({}, data, { listings: newList }));
@@ -745,7 +784,7 @@ export default function App() {
       if (!pass) return; // leave trim-hidden candidates in the queue
       var nl = Object.assign({}, cand, {
         id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
-        addedDate: today(), lastChecked: today(), _candidate: undefined, _dupe: undefined, _existingPrice: undefined, _cheaper: undefined
+        addedDate: cand.addedDate || today(), lastChecked: today(), _candidate: undefined, _dupe: undefined, _existingPrice: undefined, _cheaper: undefined
       });
       newList = dedupInsert(newList, nl);
       approved.push(cand);
@@ -2518,7 +2557,7 @@ function LForm({ profiles, criteria, onSave, initial }) {
   var valid = f.vehicle && f.year && f.price;
   function doSave() {
     if (!valid) { alert("Vehicle, year, and price required."); return; }
-    onSave(Object.assign({}, f, { price: parseInt(f.price) || 0, mileage: parseInt(f.mileage) || 0, year: parseInt(f.year) || 0, compositeScore: calcScore(f.scores, criteria) }));
+    onSave(Object.assign({}, f, { price: parseInt(f.price) || 0, mileage: parseInt(f.mileage) || 0, year: parseInt(f.year) || 0, link: safeHttpUrl(f.link), compositeScore: calcScore(f.scores, criteria) }));
   }
   return (
     <div style={S.card}>

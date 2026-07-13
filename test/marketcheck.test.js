@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { buildUrl, parseYears, normalize, mapDealerType, isCpo, mapPowertrain, pickPhoto } from "../api/marketcheck.js";
+import { buildUrl, parseYears, normalize, mapDealerType, isCpo, mapPowertrain, pickPhoto, safeHttpUrl } from "../api/marketcheck.js";
 
 const fixture = JSON.parse(
   readFileSync(fileURLToPath(new URL("./fixtures/marketcheck-active-search.json", import.meta.url)), "utf8")
@@ -127,6 +127,12 @@ describe("normalize", () => {
     expect(n.state).toBe("ME");
   });
 
+  it("drops a non-http(s) vdp_url instead of passing it to the client", () => {
+    const n = normalize({ vin: "X", vdp_url: "javascript:alert(1)", build: {} }, "p");
+    expect(n.link).toBe("");
+    expect(normalize({ vin: "X", vdp_url: "https://dealer.example/car", build: {} }, "p").link).toBe("https://dealer.example/car");
+  });
+
   it("falls back to trim when build.version is absent", () => {
     const n = normalize({ vin: "X", build: { make: "Chevrolet", model: "Bolt EUV", trim: "Premier" } }, "bolt-euv");
     expect(n.vehicle).toBe("Chevrolet Bolt EUV");
@@ -153,6 +159,23 @@ describe("pickPhoto", () => {
   it("never uses photo_links_cached (key-bearing)", () => {
     const row = { media: { photo_links_cached: ["https://api.marketcheck.com/v2/image/cache/x?api_key=mc_live_SECRET"] } };
     expect(pickPhoto(row)).toBe("");
+  });
+  it("skips non-http(s) entries (rendered as <a href>/<img src> in the client)", () => {
+    const row = { media: { photo_links: ["javascript:alert(1)", "https://cdn/images/w_900/v1/real.jpg"] } };
+    expect(pickPhoto(row)).toBe("https://cdn/images/w_400/v1/real.jpg");
+  });
+});
+
+describe("safeHttpUrl", () => {
+  it("allows http(s) only", () => {
+    expect(safeHttpUrl("https://x.example/a")).toBe("https://x.example/a");
+    expect(safeHttpUrl("http://x.example/a")).toBe("http://x.example/a");
+    expect(safeHttpUrl("  https://x.example/a ")).toBe("https://x.example/a");
+    expect(safeHttpUrl("javascript:alert(1)")).toBe("");
+    expect(safeHttpUrl("data:text/html,hi")).toBe("");
+    expect(safeHttpUrl("//x.example/a")).toBe("");
+    expect(safeHttpUrl(null)).toBe("");
+    expect(safeHttpUrl(42)).toBe("");
   });
 });
 
