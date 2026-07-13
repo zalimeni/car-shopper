@@ -51,6 +51,7 @@ over architecture.
 | `api/_supabaseAdmin.js` | Service-role (`SUPABASE_SECRET_KEY`) client for the key vault. |
 | `api/anthropic-key.js` | Validate / store (encrypted) / remove the per-user Anthropic key. |
 | `api/snapshots.js` | List/restore the automatic app-state backups (`app_state_history`). |
+| `api/cron-sync.js` | Scheduled background sync (Vercel Cron; `CRON_SECRET`-gated, `CRON_SYNC_EMAILS` accounts). |
 | `api/score.js` | Batch listing scoring with the user's decrypted key. |
 | `supabase/migrations/*.sql` | DB schema (baseline + allowlist + anthropic-key vault). |
 | `supabase/ci/shim.sql`, `supabase/config.toml` | CI migration testing + CLI config. |
@@ -154,6 +155,8 @@ Defined/documented in `.env.example`. Summary:
 | `SCORING_MODEL` | server (optional) | Override default scoring model (`claude-sonnet-4-6`); must be allowlisted in `_scoring.js`. |
 | `ALLOWED_EMAILS` | server (optional) | Comma-separated allowlist; union with the `allowed_emails` DB table. |
 | `DEBUG_TOKEN` | server (optional) | ≥24-char bearer bypass for headless `/api` debugging (no DB access). |
+| `CRON_SECRET` | server (optional) | ≥16 chars; authorizes the daily `/api/cron-sync` (Vercel Cron Bearer token). Unset = scheduled sync off. |
+| `CRON_SYNC_EMAILS` | server (optional) | Accounts the scheduled sync runs for (comma-separated; default owner). |
 | `SUPABASE_DB_URL` | GitHub Actions secret | Session-pooler URL for CI `db push`. |
 
 **Golden rule:** only `VITE_`-prefixed vars reach the browser bundle. Anything

@@ -5,7 +5,9 @@
   "functions": {
     "api/marketcheck.js": { "maxDuration": 60 },
     "api/score.js": { "maxDuration": 60 },
-    "api/baseline.js": { "maxDuration": 60 }
+    "api/baseline.js": { "maxDuration": 60 },
+    "api/cron-sync.js": { "maxDuration": 60 }
   },
+  "crons": [{ "path": "/api/cron-sync", "schedule": "0 10 * * *" }],
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }

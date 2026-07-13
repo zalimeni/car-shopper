@@ -83,6 +83,8 @@ the client). See `.env.example`.
 | `SCORING_MODEL` | server | — | Overrides the default scoring model (`claude-sonnet-4-6`); must be one of the allowlisted models. |
 | `ALLOWED_EMAILS` | server | access control | **The email allowlist.** Comma-separated. Defaults to the owner's email. |
 | `DEBUG_TOKEN` | server | — | Optional ≥24-char bypass token for headless `/api` debugging (no DB access). Unset = disabled. |
+| `CRON_SECRET` | server | scheduled sync | ≥16 chars; authorizes the daily `/api/cron-sync` invocations (Vercel Cron sends it as the Bearer token). Unset = scheduled sync disabled. |
+| `CRON_SYNC_EMAILS` | server | — | Which accounts the scheduled sync runs for (comma-separated). Defaults to the owner. |
 
 ## Auth & access control
 
@@ -182,11 +184,12 @@ Shipped:
 - ✅ Configurable budget / locations / freeform categories + setup wizard
 
 - ✅ One-click archiving of listings unseen in sync for 14+ days (restorable)
+- ✅ Scheduled background sync (Vercel Cron, opt-in per account) — price
+  changes land as review flags and new finds land in the candidate queue on
+  next open
 
 Backlog:
 
-- [ ] Scheduled background sync (cron) with notifications — see
-  `docs/listing-pipeline.md`
 - [ ] Component decomposition (`App.jsx` is large)
 - [ ] Normalized per-listing tables for history/dedup
 - [ ] Realtime sync across open devices; mobile PWA

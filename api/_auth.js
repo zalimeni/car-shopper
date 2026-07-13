@@ -35,7 +35,7 @@ const SUPABASE_ANON_KEY =
   process.env.VITE_SUPABASE_ANON_KEY ||
   "sb_publishable_TlJnt8hWo6eeQ1yJV9r0KQ_IbZwbfDk";
 
-const DEFAULT_ALLOW = "mzalimeni@gmail.com";
+export const DEFAULT_ALLOW = "mzalimeni@gmail.com";
 const DEBUG_TOKEN = process.env.DEBUG_TOKEN || "";
 
 function envAllowlist() {
@@ -55,7 +55,7 @@ export function isAdmin(email) {
 }
 
 // Constant-time string compare (avoids leaking the token via timing).
-function safeEqual(a, b) {
+export function safeEqual(a, b) {
   const ab = Buffer.from(String(a));
   const bb = Buffer.from(String(b));
   if (ab.length !== bb.length) return false;
