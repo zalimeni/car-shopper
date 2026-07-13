@@ -176,9 +176,10 @@ Shipped:
   auto-score-on-sync
 - ✅ Configurable budget / locations / freeform categories + setup wizard
 
+- ✅ One-click archiving of listings unseen in sync for 14+ days (restorable)
+
 Backlog:
 
-- [ ] Sold/removed-listing auto-purge (currently flagged, not retired)
 - [ ] Scheduled background sync (cron) with notifications — see
   `docs/listing-pipeline.md`
 - [ ] Component decomposition (`App.jsx` is large)
