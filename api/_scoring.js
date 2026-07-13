@@ -107,8 +107,16 @@ function listingFacts(l) {
   // synced before cpo became its own field).
   if (l.cpo === true || l.dealerType === "CPO") f.push("Certified Pre-Owned (CPO): Yes — manufacturer-backed inspection & extended warranty");
   add("Location", [l.location, l.state].filter(Boolean).join(", "));
+  add("Distance from buyer's search location", l.distMi != null ? l.distMi + " mi" : null);
   add("Color", l.color);
   add("Days on market", l.dom);
+  // Recent asking-price trajectory — a strong deal/negotiation signal.
+  if (Array.isArray(l.priceHistory) && l.priceHistory.length >= 2) {
+    const pts = l.priceHistory.slice(-5).map(function (h) {
+      return "$" + Number(h.price).toLocaleString() + (h.date ? " (" + h.date + ")" : "");
+    });
+    f.push("Asking-price history: " + pts.join(" → "));
+  }
   add("Deal rating", l.dealRating);
   // Only surface CONFIRMED Carfax positives. A false here just means "not stated
   // on the dealer site" (the common case), not a negative finding — feeding it to

@@ -111,6 +111,7 @@ describe("normalize", () => {
       link: "https://www.courtesymitsubishima.com/auto/used-2021-toyota-rav4-hybrid-le-attleboro-ma/121137914/",
       photo: "",
       dom: 18,
+      distMi: 36, // MarketCheck `dist` 35.74, rounded
       carfax_1_owner: true,
       carfax_clean_title: false,
       price_change_percent: 0,
@@ -125,6 +126,11 @@ describe("normalize", () => {
     expect(n.dealerType).toBe("independent");
     expect(n.mileage).toBe(80857);
     expect(n.state).toBe("ME");
+    expect(n.distMi).toBe(81); // dist 81.26, rounded
+  });
+
+  it("leaves distMi null when the response has no dist", () => {
+    expect(normalize({ vin: "X", build: {} }, "p").distMi).toBe(null);
   });
 
   it("drops a non-http(s) vdp_url instead of passing it to the client", () => {

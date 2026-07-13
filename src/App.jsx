@@ -293,6 +293,8 @@ function parseImport(text, profileIds) {
         carfax_1_owner: typeof obj.carfax_1_owner === "boolean" ? obj.carfax_1_owner : null,
         carfax_clean_title: typeof obj.carfax_clean_title === "boolean" ? obj.carfax_clean_title : null,
         dom: obj.dom != null && !isNaN(Number(obj.dom)) ? Number(obj.dom) : null,
+        distMi: obj.distMi != null && !isNaN(Number(obj.distMi)) ? Number(obj.distMi) : null,
+        priceHistory: Array.isArray(obj.priceHistory) ? obj.priceHistory : undefined,
         source: obj.source ? String(obj.source) : undefined,
         addedDate: obj.addedDate ? String(obj.addedDate) : undefined,
         lastSeen: obj.lastSeen ? String(obj.lastSeen) : undefined,
@@ -1795,6 +1797,7 @@ function CompareTab({ data }) {
     { label: "Year", get: function (l) { return l.year; }, fmt: function (v) { return String(v); }, best: "max" },
     { label: "Dealer", get: function (l) { return l.dealer ? l.dealer + " (" + (l.dealerType || "?") + ")" : ""; }, fmt: function (v) { return v; } },
     { label: "Location", get: function (l) { return [l.location, l.state].filter(Boolean).join(", ") + (isSalt(l.state) ? " 🧂" : ""); }, fmt: function (v) { return v; } },
+    { label: "Distance", get: function (l) { return l.distMi; }, fmt: function (v) { return v + " mi"; }, best: "min" },
     { label: "Color", get: function (l) { return l.color; }, fmt: function (v) { return v; } },
     { label: "Days on market", get: function (l) { return l.dom; }, fmt: function (v) { return String(v); } },
   ];
@@ -2487,6 +2490,35 @@ function AiBox({ listing, criteria }) {
   );
 }
 
+// Asking-price trajectory: tiny sparkline + net change, from the priceHistory
+// reconcile() maintains. Renders nothing until there are ≥2 price points.
+function PriceHist({ listing }) {
+  var h = listing.priceHistory;
+  if (!Array.isArray(h) || h.length < 2) return null;
+  var first = h[0], last = h[h.length - 1];
+  var diff = (last.price || 0) - (first.price || 0);
+  var color = diff <= 0 ? "#2d8659" : "#d4a017";
+  var W = 72, H = 18;
+  var prices = h.map(function (x) { return x.price || 0; });
+  var min = Math.min.apply(null, prices), max = Math.max.apply(null, prices);
+  var pts = prices.map(function (p, i) {
+    var x = (i / (prices.length - 1)) * (W - 4) + 2;
+    var y = max === min ? H / 2 : H - 2 - ((p - min) / (max - min)) * (H - 6);
+    return x + "," + Math.round(y * 10) / 10;
+  }).join(" ");
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "#8a8a96", margin: "2px 0 4px" }}>
+      <svg width={W} height={H} style={{ flex: "0 0 auto" }} aria-hidden="true">
+        <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" />
+      </svg>
+      <span style={{ color: color }}>
+        {diff <= 0 ? "↓" : "↑"} ${Math.abs(diff).toLocaleString()}
+      </span>
+      <span>over {h.length - 1} change{h.length > 2 ? "s" : ""}{first.date ? " since " + first.date : ""}</span>
+    </div>
+  );
+}
+
 // Non-scoring title note. carfax_clean_title true = confirmed clean; false =
 // just "not stated on the dealer site" (verify), NOT a branded title.
 function TitleNote({ listing }) {
@@ -2535,6 +2567,7 @@ function UpdateCard({ listing, data, onReviewed, onReject }) {
         </div>
         {l.compositeScore > 0 && <span style={{ fontSize: 16, fontWeight: 700, color: sc }}>{l.compositeScore}</span>}
       </div>
+      <PriceHist listing={l} />
       {l.aiSummary && <div style={{ fontSize: 12, color: "#9a9aa6", fontStyle: "italic", margin: "6px 0" }}>{l.aiSummary}</div>}
       <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
         {url && <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: "#8ab4f8" }}>{l.link ? "View listing →" : "Search →"}</a>}
@@ -2572,6 +2605,8 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
         {cand.color && <span>{cand.color}</span>}
         {cand.dealer && <span>{cand.dealer} ({cand.dealerType || "?"})</span>}
         {cand.location && <span>{cand.location}, {cand.state} {isSalt(cand.state) ? "🧂" : ""}</span>}
+        {cand.distMi != null && <span>📍 {cand.distMi} mi</span>}
+        {cand.dom != null && <span>{cand.dom}d listed</span>}
         {cand.dealRating && <span>Deal: {cand.dealRating}</span>}
         <TitleNote listing={cand} />
       </div>
@@ -2691,10 +2726,13 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
         {l.color && <span>{l.color}</span>}
         <span>{l.dealer} ({l.dealerType})</span>
         <span>{l.location}, {l.state} {salt ? "🧂" : ""}</span>
+        {l.distMi != null && <span>📍 {l.distMi} mi</span>}
+        {l.dom != null && <span>{l.dom}d listed</span>}
         {l.dealRating && <span>Deal: {l.dealRating}</span>}
         {l.vin && <span style={{ fontFamily: "monospace", fontSize: 11 }}>VIN: …{l.vin.slice(-6)}</span>}
         <TitleNote listing={l} />
       </div>
+      <PriceHist listing={l} />
       {/* Listing link - prominent button style */}
       {(function () {
         var url = l.link || "";
