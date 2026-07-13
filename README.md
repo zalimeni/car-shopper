@@ -107,7 +107,9 @@ with the same email on any device loads the same data. **Export Listings**
 (footer) gives a manual JSON backup; **Import** (Results) restores/seeds.
 A DB trigger also keeps automatic rolling snapshots of the blob (up to 30 per
 user, at most one per hour of activity) in `app_state_history`; the footer
-**Backups** panel lists and restores them.
+**Backups** panel lists and restores them. Writes are compare-and-swap on a
+`rev` counter, so two open devices can't silently overwrite each other — the
+losing session reloads the latest data and says so.
 
 Each user's Anthropic API key (for AI scoring) is stored **encrypted** in a
 separate, server-only `user_anthropic_keys` table — RLS-locked with no client

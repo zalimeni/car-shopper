@@ -473,6 +473,36 @@ export default function App() {
   var dataRef = useRef(null);
   dataRef.current = data;
 
+  // Optimistic concurrency for the single-blob state: `revRef` is the row
+  // revision we loaded, writes go through a serialized queue (rapid saves CAS
+  // in order), and a generation counter drops queued writes once a conflict
+  // forces a reload — so a second device's changes are never clobbered.
+  var revRef = useRef(null);
+  var writeQ = useRef(Promise.resolve());
+  var genRef = useRef(0);
+  var [conflictMsg, setConflictMsg] = useState("");
+  var persist = useCallback(function (nd) {
+    var gen = genRef.current;
+    writeQ.current = writeQ.current.then(async function () {
+      if (gen !== genRef.current) return; // superseded by a conflict reload
+      var r = await storage.set(STORAGE_KEY, JSON.stringify(nd), revRef.current);
+      if (!r) return; // storage error (already logged) — same as before
+      if (r.conflict) {
+        genRef.current++;
+        try {
+          var d = migrate(JSON.parse(r.value));
+          d.listings = recalcAll(d.listings || [], d.criteria || DEFAULT_CRITERIA);
+          revRef.current = r.rev;
+          setData(d);
+          setConflictMsg("Your data was updated on another device, so this session reloaded the latest version. Your most recent change here wasn't saved — please redo it.");
+        } catch (e) { console.error("Conflict reload:", e); }
+        return;
+      }
+      if (r.rev != null) revRef.current = r.rev;
+    });
+    return writeQ.current;
+  }, []);
+
   var [exportJson, setExportJson] = useState("");
   // Backups panel (footer): automatic server-side snapshots of the whole blob.
   var [snapsOpen, setSnapsOpen] = useState(false);
@@ -536,17 +566,19 @@ export default function App() {
       try {
         var r = await storage.get(STORAGE_KEY);
         if (r && r.value && r.value !== "undefined") {
+          revRef.current = r.rev == null ? 0 : r.rev;
           var d = migrate(JSON.parse(r.value));
           d.listings = recalcAll(d.listings || [], d.criteria || DEFAULT_CRITERIA);
           setData(d);
           // Only write back if migration changed something
           if (d.version !== JSON.parse(r.value).version) {
-            await storage.set(STORAGE_KEY, JSON.stringify(d));
+            await persist(d);
           }
         } else {
           var d2 = freshData(false); // brand-new user: defaults + wizard (onboarded:false)
+          revRef.current = 0; // no row yet — first persist inserts at rev 1
           setData(d2);
-          await storage.set(STORAGE_KEY, JSON.stringify(d2));
+          await persist(d2);
         }
       } catch (e) {
         console.error("Init:", e);
@@ -560,9 +592,9 @@ export default function App() {
   var save = useCallback(async function (nd) {
     setData(nd);
     setSaving(true);
-    try { await storage.set(STORAGE_KEY, JSON.stringify(nd)); } catch (e) { console.error(e); }
+    try { await persist(nd); } catch (e) { console.error(e); }
     setSaving(false);
-  }, []);
+  }, [persist]);
 
   var saveRecalc = useCallback(async function (nd) {
     nd.listings = recalcAll(nd.listings, nd.criteria);
@@ -575,10 +607,10 @@ export default function App() {
     setData(function (prev) {
       if (!prev) return prev;
       var nd = Object.assign({}, prev, { listings: updater(prev.listings || []) });
-      storage.set(STORAGE_KEY, JSON.stringify(nd)).catch(function (e) { console.error(e); });
+      persist(nd);
       return nd;
     });
-  }, []);
+  }, [persist]);
 
   // ── AI scoring ──
   var [keyStatus, setKeyStatus] = useState({ configured: false, valid: false, last4: "" });
@@ -600,10 +632,10 @@ export default function App() {
     setData(function (prev) {
       if (!prev) return prev;
       var nd = Object.assign({}, prev, { autoScore: !!v });
-      storage.set(STORAGE_KEY, JSON.stringify(nd)).catch(function (e) { console.error(e); });
+      persist(nd);
       return nd;
     });
-  }, []);
+  }, [persist]);
 
   // Fall back to the default if the saved model is unknown/retired (e.g. an old
   // Sonnet 4.6 selection) so the picker and requests stay valid.
@@ -612,10 +644,10 @@ export default function App() {
     setData(function (prev) {
       if (!prev) return prev;
       var nd = Object.assign({}, prev, { scoreModel: m });
-      storage.set(STORAGE_KEY, JSON.stringify(nd)).catch(function (e) { console.error(e); });
+      persist(nd);
       return nd;
     });
-  }, []);
+  }, [persist]);
 
   function scoreErr(e) {
     if (e && e.code === "no_key") {
@@ -1057,6 +1089,13 @@ export default function App() {
           })}
         </nav>
       </header>
+
+      {conflictMsg && (
+        <div style={S.conflictBar}>
+          <span style={{ flex: 1 }}>⚠ {conflictMsg}</span>
+          <button style={S.smBtn} onClick={function () { setConflictMsg(""); }}>Dismiss</button>
+        </div>
+      )}
 
       <main>
         {tab === "Dashboard" && (
@@ -2928,4 +2967,5 @@ var S = {
   budR: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, color: "#c8c8d0", padding: "3px 0", flexWrap: "wrap", gap: 4 },
   budRem: { fontSize: 12, color: "#6b9edd" },
   undoBar: { position: "fixed", bottom: 16, left: "50%", transform: "translateX(-50%)", display: "flex", alignItems: "center", gap: 10, background: "#1e2028", border: "1px solid #2a2d38", borderRadius: 8, padding: "8px 14px", boxShadow: "0 4px 16px rgba(0,0,0,0.4)", zIndex: 100 },
+  conflictBar: { display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#e8c96a", background: "#2a2210", border: "1px solid #3d3218", borderRadius: 8, padding: "8px 12px", marginBottom: 12, lineHeight: 1.5 },
 };

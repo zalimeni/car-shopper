@@ -52,16 +52,28 @@ export default async function handler(req, res) {
 
   // Snapshot the CURRENT state before overwriting it, so the restore itself
   // can be undone from the same list.
-  const cur = await db.from("app_state").select("data").eq("user_id", userId).maybeSingle();
+  let cur = await db.from("app_state").select("data,rev").eq("user_id", userId).maybeSingle();
+  if (cur.error && (cur.error.code === "42703" || cur.error.code === "PGRST204")) {
+    cur = await db.from("app_state").select("data").eq("user_id", userId).maybeSingle();
+  }
   if (!cur.error && cur.data && cur.data.data != null) {
     await db.from("app_state_history").insert({ user_id: userId, data: cur.data.data });
   }
 
-  const up = await db.from("app_state").upsert({
+  // Bump rev so any still-open session's compare-and-swap write loses to the
+  // restore (it reloads) instead of silently clobbering it.
+  const payload = {
     user_id: userId,
     data: snap.data.data,
     updated_at: new Date().toISOString(),
-  }, { onConflict: "user_id" });
+    rev: ((cur.data && cur.data.rev) || 0) + 1,
+  };
+  let up = await db.from("app_state").upsert(payload, { onConflict: "user_id" });
+  if (up.error && (up.error.code === "PGRST204" || up.error.code === "42703")) {
+    // rev column not migrated yet — degrade to the plain write.
+    delete payload.rev;
+    up = await db.from("app_state").upsert(payload, { onConflict: "user_id" });
+  }
   if (up.error) { res.status(500).json({ error: up.error.message }); return; }
 
   res.status(200).json({ ok: true, restored: snap.data.saved_at });
