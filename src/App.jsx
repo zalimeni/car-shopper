@@ -596,7 +596,26 @@ export default function App() {
         setSyncing(false);
         return;
       }
-      var res = await fetchListings(active, getSettings(data).hubs, opts, { franchiseOnly: !!getSettings(data).franchiseOnly });
+      // As each location's request returns, show progress and surface any new
+      // candidates found so far, so results appear progressively instead of all
+      // at the end. Existing-listing updates (price/last-seen) still happen once
+      // at the end over the full merged set, so nothing is falsely flagged
+      // "not seen" mid-sync.
+      var skV = {};
+      (data.skipped || []).forEach(function (s) { if (s.vin) skV[s.vin] = true; });
+      function onSyncProgress(info) {
+        if (!auto) setSyncMsg({ busy: true, text: "Searching… " + info.done + "/" + info.total + " location" + (info.total > 1 ? "s" : "") + " · " + info.listings.length + " found" });
+        var pr = reconcile(data.listings, info.listings, today());
+        var dec = pr.candidates
+          .map(function (c) { return Object.assign({}, c, { compositeScore: calcScore(c.scores, data.criteria), _candidate: true }); })
+          .filter(function (c) { return !(c.vin && skV[c.vin]); });
+        setCandidates(function (prev) {
+          var seen = {};
+          prev.forEach(function (c) { if (c.vin) seen[c.vin] = true; });
+          return prev.concat(dec.filter(function (c) { return !c.vin || !seen[c.vin]; }));
+        });
+      }
+      var res = await fetchListings(active, getSettings(data).hubs, opts, { franchiseOnly: !!getSettings(data).franchiseOnly }, onSyncProgress);
       var rec = reconcile(data.listings, res.listings, today());
       var decorated = rec.candidates.map(function (c) {
         return Object.assign({}, c, { compositeScore: calcScore(c.scores, data.criteria), _candidate: true });
@@ -2240,7 +2259,7 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
   }
   var text, color = "#6b6b76";
   if (syncing) {
-    text = "Fetching dealer inventory…";
+    text = (syncMsg && syncMsg.busy && syncMsg.text) ? syncMsg.text : "Fetching dealer inventory…";
   } else if (syncMsg && !syncMsg.ok) {
     text = "⚠ " + syncMsg.error;
     color = "#c44";
