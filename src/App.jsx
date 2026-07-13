@@ -11,6 +11,10 @@ var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning
 var STORAGE_KEY = "car-search-data";
 var VERSION = 7;
 var STALE_DAYS = 5;
+// A synced listing unseen in results for this long is almost certainly sold —
+// offered for one-click archiving (manual by design; MarketCheck sometimes has
+// data gaps, so nothing is archived without the user's click).
+var UNSEEN_SOLD_DAYS = 14;
 var BUDGET = 40000; // default budget; per-user override in data.settings.budget
 var TAX = 0.07;
 var SALT = new Set("CT,MA,NH,VT,ME,NY,NJ,PA,OH,MI,WI,MN,IL,IN,IA,MD,DE,WV,RI".split(","));
@@ -976,6 +980,23 @@ export default function App() {
     save(Object.assign({}, data, { listings: data.listings.map(function (l) { return l.status === "watch" ? Object.assign({}, l, { lastChecked: t }) : l; }) }));
   }, [data, save]);
 
+  // Synced watch listings unseen in results for UNSEEN_SOLD_DAYS+ — offered for
+  // one-click archiving to Sold (restorable from the Sold section).
+  function isUnseenOld(l) {
+    return l.source === "marketcheck" && l.status === "watch" && l.lastSeen && daysSince(l.lastSeen) >= UNSEEN_SOLD_DAYS;
+  }
+  var archiveUnseen = useCallback(function () {
+    if (!data) return;
+    save(Object.assign({}, data, { listings: data.listings.map(function (l) {
+      if (!isUnseenOld(l)) return l;
+      return Object.assign({}, l, {
+        status: "sold",
+        reviewPending: false,
+        notes: ((l.notes || "") + " · Archived " + today() + " — not seen in sync since " + l.lastSeen).replace(/^ · /, ""),
+      });
+    }) }));
+  }, [data, save]);
+
   var [confirmReset, setConfirmReset] = useState(false);
   var reset = useCallback(async function () {
     if (!confirmReset) { setConfirmReset(true); return; }
@@ -1031,6 +1052,7 @@ export default function App() {
             importText={importText} setImportText={setImportText} doImport={doImport} importResult={importResult} setImportResult={setImportResult}
             filterProf={filterProf} setFilterProf={setFilterProf}
             doSync={doSync} syncing={syncing} syncMsg={syncMsg} lastSynced={data.lastSynced}
+            unseenCount={data.listings.filter(isUnseenOld).length} archiveUnseen={archiveUnseen}
             keyStatus={keyStatus} setKeyStatus={setKeyStatus} autoScore={autoScore} setAutoScore={setAutoScore}
             scoreBusy={scoreBusy} scoreMsg={scoreMsg} scoreItems={scoreItems} scoringActive={scoringActive}
             scoreModel={scoreModel} setScoreModel={setScoreModel} />
@@ -1964,7 +1986,7 @@ function HelpTab() {
       <div style={S.card}>
         <h3 style={S.cardH}>Sync &amp; refresh</h3>
         <p style={li}><span style={b}>"↻ Sync"</span> (Results tab) is also your refresh. On each run it updates prices (with a note), refreshes the last-seen date, flags listings that didn't appear this time ("may be sold"), and routes new VINs to Candidates.</p>
-        <p style={note}>It runs automatically when you open the app if it's been a while, or on demand. It only refreshes listings that came from dealer sync — manually-added ones aren't touched.</p>
+        <p style={note}>It runs automatically when you open the app if it's been a while, or on demand. It only refreshes listings that came from dealer sync — manually-added ones aren't touched. When synced listings go unseen for 14+ days, a banner offers to archive them to <span style={b}>Sold</span> in one click (restorable).</p>
       </div>
 
       <div style={S.card}>
@@ -2012,7 +2034,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   candidates, approveCand, approveAll, dismissCand, excludeTrim, showTrim,
   skipped, restoreSkipped, watchSkipped, purgeSkipped,
   importText, setImportText, doImport, importResult, setImportResult,
-  filterProf, setFilterProf, doSync, syncing, syncMsg, lastSynced,
+  filterProf, setFilterProf, doSync, syncing, syncMsg, lastSynced, unseenCount, archiveUnseen,
   keyStatus, setKeyStatus, autoScore, setAutoScore, scoreBusy, scoreMsg, scoreItems, scoringActive, scoreModel, setScoreModel }) {
   var [showAdd, setShowAdd] = useState(false);
   var [showImport, setShowImport] = useState(false);
@@ -2129,6 +2151,16 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       </div>
 
       <SyncStatus syncing={syncing} syncMsg={syncMsg} lastSynced={lastSynced} />
+
+      {unseenCount > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", background: "#2a2210", border: "1px solid #3d3218", borderRadius: 8, padding: "8px 12px", marginBottom: 12 }}>
+          <span style={{ fontSize: 12, color: "#e8c96a" }}>
+            ⏳ {unseenCount} listing{unseenCount > 1 ? "s" : ""} not seen in sync for {UNSEEN_SOLD_DAYS}+ days — probably sold.
+          </span>
+          <button style={S.secBtn} onClick={archiveUnseen}>Archive {unseenCount > 1 ? "all " + unseenCount : "it"} as Sold</button>
+          <span style={{ fontSize: 11, color: "#8a8a96" }}>(restorable from the Sold section)</span>
+        </div>
+      )}
 
       <AiPanel keyStatus={keyStatus} setKeyStatus={setKeyStatus} autoScore={autoScore} setAutoScore={setAutoScore}
         scoreBusy={scoreBusy} scoreMsg={scoreMsg} scoreModel={scoreModel} setScoreModel={setScoreModel} />
