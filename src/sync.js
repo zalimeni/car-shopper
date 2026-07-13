@@ -15,6 +15,39 @@
 import { supabase } from "./supabaseClient";
 
 export async function fetchListings(profiles, hubs, opts, filters) {
+  const hubList = Array.isArray(hubs) ? hubs : [];
+  // Split the search PER HUB, one request each, so a big multi-location sync
+  // (profiles × hubs × car_types × pages) doesn't pile into a single serverless
+  // invocation and blow Vercel's function timeout (the HTTP 504). A slow/failed
+  // hub is isolated: its error is recorded and the rest still return. Mock and
+  // single-hub searches keep the original single request.
+  if ((opts && opts.mock) || hubList.length <= 1) {
+    return fetchChunk(profiles, hubList, opts, filters);
+  }
+  const seen = {}; // vin -> listing, keeping the lowest price across hubs
+  const errors = [];
+  let mock = false;
+  for (const hub of hubList) {
+    let r;
+    try {
+      r = await fetchChunk(profiles, [hub], opts, filters);
+    } catch (e) {
+      errors.push((hub.n || hub.z || "location") + ": " + (e && e.message ? e.message : "sync failed"));
+      continue;
+    }
+    (r.listings || []).forEach(function (l) {
+      if (!l.vin) return;
+      const prev = seen[l.vin];
+      if (!prev || (l.price && l.price < prev.price)) seen[l.vin] = l;
+    });
+    (r.errors || []).forEach(function (m) { errors.push(m); });
+    if (r.mock) mock = true;
+  }
+  return { listings: Object.values(seen), errors: errors, mock: mock };
+}
+
+// One /api/marketcheck request for the given hubs (usually a single hub).
+async function fetchChunk(profiles, hubs, opts, filters) {
   const qs = opts && opts.mock ? "?mock=1" : "";
   const { data: sess } = await supabase.auth.getSession();
   const token = sess && sess.session ? sess.session.access_token : "";
