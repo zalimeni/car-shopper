@@ -14,34 +14,38 @@
 
 import { supabase } from "./supabaseClient";
 
-export async function fetchListings(profiles, hubs, opts, filters) {
+export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
   const hubList = Array.isArray(hubs) ? hubs : [];
+  const report = typeof onProgress === "function" ? onProgress : function () {};
   // Split the search PER HUB, one request each, so a big multi-location sync
   // (profiles × hubs × car_types × pages) doesn't pile into a single serverless
   // invocation and blow Vercel's function timeout (the HTTP 504). A slow/failed
-  // hub is isolated: its error is recorded and the rest still return. Mock and
-  // single-hub searches keep the original single request.
+  // hub is isolated: its error is recorded and the rest still return. `report`
+  // fires after each location so the UI can show progress + surface results as
+  // they arrive. Mock and single-hub searches keep the original single request.
   if ((opts && opts.mock) || hubList.length <= 1) {
-    return fetchChunk(profiles, hubList, opts, filters);
+    const r = await fetchChunk(profiles, hubList, opts, filters);
+    report({ done: 1, total: 1, listings: r.listings || [] });
+    return r;
   }
   const seen = {}; // vin -> listing, keeping the lowest price across hubs
   const errors = [];
   let mock = false;
-  for (const hub of hubList) {
-    let r;
+  for (let i = 0; i < hubList.length; i++) {
+    const hub = hubList[i];
     try {
-      r = await fetchChunk(profiles, [hub], opts, filters);
+      const r = await fetchChunk(profiles, [hub], opts, filters);
+      (r.listings || []).forEach(function (l) {
+        if (!l.vin) return;
+        const prev = seen[l.vin];
+        if (!prev || (l.price && l.price < prev.price)) seen[l.vin] = l;
+      });
+      (r.errors || []).forEach(function (m) { errors.push(m); });
+      if (r.mock) mock = true;
     } catch (e) {
       errors.push((hub.n || hub.z || "location") + ": " + (e && e.message ? e.message : "sync failed"));
-      continue;
     }
-    (r.listings || []).forEach(function (l) {
-      if (!l.vin) return;
-      const prev = seen[l.vin];
-      if (!prev || (l.price && l.price < prev.price)) seen[l.vin] = l;
-    });
-    (r.errors || []).forEach(function (m) { errors.push(m); });
-    if (r.mock) mock = true;
+    report({ done: i + 1, total: hubList.length, listings: Object.values(seen) });
   }
   return { listings: Object.values(seen), errors: errors, mock: mock };
 }
