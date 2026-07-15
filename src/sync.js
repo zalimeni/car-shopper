@@ -31,6 +31,7 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
   let mock = false;
   let rateLimited = false;
   let rateLimitInfo = null;
+  let quota = null; // lowest remaining across hubs
   for (let i = 0; i < hubList.length; i++) {
     const hub = hubList[i];
     try {
@@ -44,6 +45,7 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
       (r.errors || []).forEach(function (m) { errors.push(m); });
       if (r.mock) mock = true;
       if (r.rateLimited) { rateLimited = true; if (r.rateLimitInfo) rateLimitInfo = r.rateLimitInfo; }
+      if (r.quota && r.quota.remaining != null && (quota == null || r.quota.remaining < quota.remaining)) quota = r.quota;
     } catch (e) {
       errors.push((hub.n || hub.z || "location") + ": " + (e && e.message ? e.message : "sync failed"));
       if (e && e.rateLimited) rateLimited = true;
@@ -52,7 +54,7 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
     // Quota hit: further locations will fail too, so stop rather than burn more.
     if (rateLimited) break;
   }
-  return { listings: Object.values(seen), errors: errors, mock: mock, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo };
+  return { listings: Object.values(seen), errors: errors, mock: mock, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota };
 }
 
 // One /api/marketcheck request for the given hubs (usually a single hub).
@@ -88,7 +90,7 @@ async function fetchChunk(profiles, hubs, opts, filters) {
     throw err;
   }
   const json = await res.json();
-  return { listings: json.listings || [], errors: json.errors || [], mock: !!json.mock, rateLimited: !!json.rateLimited, rateLimitInfo: json.rateLimitInfo || null };
+  return { listings: json.listings || [], errors: json.errors || [], mock: !!json.mock, rateLimited: !!json.rateLimited, rateLimitInfo: json.rateLimitInfo || null, quota: json.quota || null };
 }
 
 // Debug helper: POST /api/marketcheck?raw=1 and return the raw MarketCheck

@@ -802,7 +802,7 @@ export default function App() {
       // Report the count actually added to the queue (reconcile's newCount also
       // counts skipped VINs, which we hide), and note how many matched skips.
       var skippedSeen = decorated.filter(function (c) { return c.vin && skippedVins[c.vin]; }).length;
-      setSyncMsg({ ok: true, summary: Object.assign({}, rec.summary, { newCount: added.length }), skippedSeen: skippedSeen, errors: res.errors, mock: res.mock, rateLimited: res.rateLimited, rateLimitInfo: res.rateLimitInfo });
+      setSyncMsg({ ok: true, summary: Object.assign({}, rec.summary, { newCount: added.length }), skippedSeen: skippedSeen, errors: res.errors, mock: res.mock, rateLimited: res.rateLimited, rateLimitInfo: res.rateLimitInfo, quota: res.quota });
       setSyncing(false);
       // Auto-score only NEW candidates (never skipped, never already-queued, not
       // already scored, and passing their profile's trim filter — no point
@@ -2481,17 +2481,32 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   );
 }
 
+// Compact absolute timestamp (e.g. "Aug 1, 12:00 AM") for reset times.
+function fmtResetTs(iso) {
+  if (!iso) return "";
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+// Warn when free-tier sync headroom is running low: under 10% of the monthly
+// quota left (or under an absolute floor when the limit header isn't present).
+var QUOTA_WARN_FRACTION = 0.1;
+var QUOTA_WARN_FLOOR = 1000;
+function quotaWarnNote(quota) {
+  if (!quota || quota.remaining == null) return "";
+  var threshold = quota.limit ? quota.limit * QUOTA_WARN_FRACTION : QUOTA_WARN_FLOOR;
+  if (quota.remaining > threshold) return "";
+  var of = quota.limit ? " / " + Number(quota.limit).toLocaleString() : "";
+  var reset = fmtResetTs(quota.reset);
+  return " ⚠ Low MarketCheck sync quota: " + Number(quota.remaining).toLocaleString() + of + " requests left this month" + (reset ? " (resets " + reset + ")" : "") + ".";
+}
+
 // Human-friendly "when the limit clears" note from MarketCheck's documented
 // rate/quota headers. Prefers the monthly quota reset when the monthly quota is
 // what's exhausted (the free-tier case); else the short-term reset / Retry-After.
 function rateLimitResetNote(info) {
   if (!info) return "";
-  function fmt(iso) {
-    if (!iso) return "";
-    var d = new Date(iso);
-    if (isNaN(d.getTime())) return "";
-    return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-  }
   function dur(secs) {
     if (secs >= 3600) {
       var totalH = Math.round(secs / 3600);
@@ -2502,10 +2517,10 @@ function rateLimitResetNote(info) {
     if (secs >= 60) return Math.round(secs / 60) + "m";
     return Math.max(1, Math.round(secs)) + "s";
   }
-  if (info.quotaRemaining === 0 && info.quotaReset) { var q = fmt(info.quotaReset); if (q) return " Monthly quota resets " + q + "."; }
+  if (info.quotaRemaining === 0 && info.quotaReset) { var q = fmtResetTs(info.quotaReset); if (q) return " Monthly quota resets " + q + "."; }
   if (info.retryAfter != null && info.retryAfter > 0) return " Try again in ~" + dur(info.retryAfter) + ".";
-  var rr = fmt(info.rateReset); if (rr) return " Resets " + rr + ".";
-  var qq = fmt(info.quotaReset); if (qq) return " Quota resets " + qq + ".";
+  var rr = fmtResetTs(info.rateReset); if (rr) return " Resets " + rr + ".";
+  var qq = fmtResetTs(info.quotaReset); if (qq) return " Quota resets " + qq + ".";
   return "";
 }
 
@@ -2548,6 +2563,10 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
       var reset = rateLimitResetNote(syncMsg.rateLimitInfo);
       text = "⚠ MarketCheck rate limit / free-tier quota reached — results are incomplete." + (reset || " Wait a bit and sync again.") + " (" + detail + ")";
       color = "#c44";
+    } else {
+      // Not yet limited, but warn if we're getting close to the monthly cap.
+      var lowNote = quotaWarnNote(syncMsg.quota);
+      if (lowNote) { text += lowNote; if (color === "#6b6b76") color = "#d4a017"; }
     }
   } else {
     text = "Last synced: " + fmtWhen(lastSynced);

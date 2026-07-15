@@ -161,7 +161,7 @@ export default async function handler(req, res) {
   }
 
   const r = await searchListings(apiKey, profiles, hubs, { dealerType: dealerType });
-  res.status(200).json({ listings: r.listings, errors: r.errors, rateLimited: !!r.rateLimited, rateLimitInfo: r.rateLimitInfo || null });
+  res.status(200).json({ listings: r.listings, errors: r.errors, rateLimited: !!r.rateLimited, rateLimitInfo: r.rateLimitInfo || null, quota: r.quota || null });
 }
 
 // Core active-inventory search for a set of profiles × hubs — shared by the
@@ -177,9 +177,11 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
   // results instead of a 504. The client already splits by hub, so this is a
   // backstop for a single dense hub (nationwide radius × many profiles/pages).
   const deadline = Date.now() + (Number(opts.budgetMs) || Number(process.env.MARKETCHECK_BUDGET_MS) || 50000);
+  const num = function (v) { const n = parseFloat(v); return isFinite(n) ? n : null; };
   let timeUp = false;
   let rateLimited = false; // set on a 429/503/402 so the caller can warn clearly
   let rateLimitInfo = null; // reset/remaining headers from MarketCheck, when present
+  let quota = null; // monthly quota snapshot from response headers (for a low-quota warning)
 
   let first = true;
   for (const pr of profiles) {
@@ -213,7 +215,6 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
                 timeUp = true;
                 // Surface MarketCheck's documented reset/remaining headers so the
                 // UI can say when the limit clears (headers are case-insensitive).
-                const num = function (v) { const n = parseFloat(v); return isFinite(n) ? n : null; };
                 rateLimitInfo = {
                   status: r.status,
                   retryAfter: num(r.headers.get("retry-after")),
@@ -231,6 +232,11 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
               errors.push(label + ": MarketCheck HTTP " + r.status + (body ? " — " + body : "") + (r.status >= 400 && r.status < 500 ? " [sent: " + sent + "]" : ""));
               break; // stop paging this profile×hub on error
             }
+            // Track monthly quota from response headers (present on OK responses,
+            // per MarketCheck's tracking headers). Remaining only drops, so the
+            // latest snapshot is the most conservative.
+            const qrem = num(r.headers.get("quota-remaining"));
+            if (qrem != null) quota = { remaining: qrem, limit: num(r.headers.get("quota-limit")), reset: r.headers.get("quota-reset-time") || null };
             const json = await r.json();
             numFound = typeof json.num_found === "number" ? json.num_found : null;
             const rows = Array.isArray(json.listings) ? json.listings : [];
@@ -254,7 +260,7 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
     }
   }
 
-  return { listings: Object.values(seen), errors: errors, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo };
+  return { listings: Object.values(seen), errors: errors, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota };
 }
 
 // ── MarketCheck query construction ──
