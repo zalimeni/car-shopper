@@ -161,7 +161,7 @@ export default async function handler(req, res) {
   }
 
   const r = await searchListings(apiKey, profiles, hubs, { dealerType: dealerType });
-  res.status(200).json({ listings: r.listings, errors: r.errors, rateLimited: !!r.rateLimited });
+  res.status(200).json({ listings: r.listings, errors: r.errors, rateLimited: !!r.rateLimited, rateLimitInfo: r.rateLimitInfo || null });
 }
 
 // Core active-inventory search for a set of profiles × hubs — shared by the
@@ -179,6 +179,7 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
   const deadline = Date.now() + (Number(opts.budgetMs) || Number(process.env.MARKETCHECK_BUDGET_MS) || 50000);
   let timeUp = false;
   let rateLimited = false; // set on a 429/503/402 so the caller can warn clearly
+  let rateLimitInfo = null; // reset/remaining headers from MarketCheck, when present
 
   let first = true;
   for (const pr of profiles) {
@@ -210,6 +211,17 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
               if (r.status === 429 || r.status === 503 || r.status === 402) {
                 rateLimited = true;
                 timeUp = true;
+                // Surface MarketCheck's documented reset/remaining headers so the
+                // UI can say when the limit clears (headers are case-insensitive).
+                const num = function (v) { const n = parseFloat(v); return isFinite(n) ? n : null; };
+                rateLimitInfo = {
+                  status: r.status,
+                  retryAfter: num(r.headers.get("retry-after")),
+                  rateReset: r.headers.get("ratelimit-reset-time") || null,
+                  quotaReset: r.headers.get("quota-reset-time") || null,
+                  rateRemaining: num(r.headers.get("ratelimit-remaining")),
+                  quotaRemaining: num(r.headers.get("quota-remaining")),
+                };
                 errors.push("MarketCheck rate limit / free-tier quota reached (HTTP " + r.status + ") — results are incomplete; wait a bit and sync again." + (body ? " [" + body.slice(0, 120) + "]" : ""));
                 break;
               }
@@ -242,7 +254,7 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
     }
   }
 
-  return { listings: Object.values(seen), errors: errors, rateLimited: rateLimited };
+  return { listings: Object.values(seen), errors: errors, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo };
 }
 
 // ── MarketCheck query construction ──

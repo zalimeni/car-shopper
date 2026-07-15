@@ -798,7 +798,7 @@ export default function App() {
       // Report the count actually added to the queue (reconcile's newCount also
       // counts skipped VINs, which we hide), and note how many matched skips.
       var skippedSeen = decorated.filter(function (c) { return c.vin && skippedVins[c.vin]; }).length;
-      setSyncMsg({ ok: true, summary: Object.assign({}, rec.summary, { newCount: added.length }), skippedSeen: skippedSeen, errors: res.errors, mock: res.mock, rateLimited: res.rateLimited });
+      setSyncMsg({ ok: true, summary: Object.assign({}, rec.summary, { newCount: added.length }), skippedSeen: skippedSeen, errors: res.errors, mock: res.mock, rateLimited: res.rateLimited, rateLimitInfo: res.rateLimitInfo });
       setSyncing(false);
       // Auto-score only NEW candidates (never skipped, never already-queued, not
       // already scored, and passing their profile's trim filter — no point
@@ -2477,6 +2477,29 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   );
 }
 
+// Human-friendly "when the limit clears" note from MarketCheck's documented
+// rate/quota headers. Prefers the monthly quota reset when the monthly quota is
+// what's exhausted (the free-tier case); else the short-term reset / Retry-After.
+function rateLimitResetNote(info) {
+  if (!info) return "";
+  function fmt(iso) {
+    if (!iso) return "";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  }
+  function dur(secs) {
+    if (secs >= 3600) return Math.round(secs / 3600) + "h";
+    if (secs >= 60) return Math.round(secs / 60) + "m";
+    return Math.max(1, Math.round(secs)) + "s";
+  }
+  if (info.quotaRemaining === 0 && info.quotaReset) { var q = fmt(info.quotaReset); if (q) return " Monthly quota resets " + q + "."; }
+  if (info.retryAfter != null && info.retryAfter > 0) return " Try again in ~" + dur(info.retryAfter) + ".";
+  var rr = fmt(info.rateReset); if (rr) return " Resets " + rr + ".";
+  var qq = fmt(info.quotaReset); if (qq) return " Quota resets " + qq + ".";
+  return "";
+}
+
 function SyncStatus({ syncing, syncMsg, lastSynced }) {
   function fmtWhen(iso) {
     if (!iso) return "never";
@@ -2512,7 +2535,9 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
     }
     if (syncMsg.rateLimited) {
       // Free-tier quota / rate limit: make it unmissable — results are partial.
-      text = "⚠ MarketCheck rate limit / free-tier quota reached — results are incomplete. Wait a bit and sync again. (" + detail + ")";
+      // Append when the limit clears if MarketCheck told us.
+      var reset = rateLimitResetNote(syncMsg.rateLimitInfo);
+      text = "⚠ MarketCheck rate limit / free-tier quota reached — results are incomplete." + (reset || " Wait a bit and sync again.") + " (" + detail + ")";
       color = "#c44";
     }
   } else {
