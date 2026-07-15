@@ -1088,7 +1088,7 @@ export default function App() {
     <div style={S.app}>
       <header style={S.header}>
         <div style={S.hRow}>
-          <h1 style={S.title}>Car Search Tracker</h1>
+          <h1 style={S.title}>Car Shopper</h1>
           <span style={S.badge}>{saving ? "Saving..." : "Saved ✓"}</span>
         </div>
         <p style={S.sub}>{getSettings(data).tagline}</p>

@@ -104,7 +104,7 @@ function SignIn() {
   return (
     <div style={S.center}>
       <div style={S.card}>
-        <h1 style={S.title}>Car Search Tracker</h1>
+        <h1 style={S.title}>Car Shopper</h1>
         <p style={S.sub}>Sign in to load your synced data.</p>
         {status === "sent" ? (
           <p style={S.sent}>
