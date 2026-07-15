@@ -8,12 +8,15 @@
 // queue on next open. No AI scoring here — that stays a client-initiated
 // action against the user's own key/quota.
 //
+// Scheduled sync is OFF BY DEFAULT: the endpoint does nothing (a clean no-op)
+// unless CRON_SECRET (≥16 chars) is configured — so the daily Vercel cron can't
+// burn MarketCheck quota until you deliberately opt in by setting the key.
+//
 // Auth: Vercel invokes the path with `Authorization: Bearer $CRON_SECRET` when
 // the CRON_SECRET env var is set. Requests without the exact secret are
-// rejected, and the endpoint is inert until the secret (≥16 chars) is
-// configured. Writes are compare-and-swap on app_state.rev — if the user is
+// rejected. Writes are compare-and-swap on app_state.rev — if the user is
 // actively using the app when the cron fires, the cron loses and leaves their
-// state alone (their own sync-on-open covers them).
+// state alone.
 
 import { safeEqual, DEFAULT_ALLOW } from "./_auth.js";
 import { adminClient } from "./_supabaseAdmin.js";
@@ -26,8 +29,10 @@ export default async function handler(req, res) {
   const secret = process.env.CRON_SECRET || "";
   const header = req.headers.authorization || "";
   const token = header.indexOf("Bearer ") === 0 ? header.slice(7).trim() : "";
+  // Disabled by default: no CRON_SECRET → scheduled sync is off. Return a clean
+  // no-op (not an error) so the daily cron invocation is harmless until enabled.
   if (secret.length < 16) {
-    res.status(500).json({ error: "CRON_SECRET is not configured on the server (>= 16 chars)" });
+    res.status(200).json({ ok: true, disabled: true, message: "Scheduled sync is disabled — set CRON_SECRET (>= 16 chars) to enable." });
     return;
   }
   if (!safeEqual(token, secret)) {
