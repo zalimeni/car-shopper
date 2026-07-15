@@ -29,6 +29,7 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
   const seen = {}; // vin -> listing, keeping the lowest price across hubs
   const errors = [];
   let mock = false;
+  let rateLimited = false;
   for (let i = 0; i < hubList.length; i++) {
     const hub = hubList[i];
     try {
@@ -41,12 +42,16 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
       });
       (r.errors || []).forEach(function (m) { errors.push(m); });
       if (r.mock) mock = true;
+      if (r.rateLimited) rateLimited = true;
     } catch (e) {
       errors.push((hub.n || hub.z || "location") + ": " + (e && e.message ? e.message : "sync failed"));
+      if (e && e.rateLimited) rateLimited = true;
     }
     report({ done: i + 1, total: hubList.length, listings: Object.values(seen) });
+    // Quota hit: further locations will fail too, so stop rather than burn more.
+    if (rateLimited) break;
   }
-  return { listings: Object.values(seen), errors: errors, mock: mock };
+  return { listings: Object.values(seen), errors: errors, mock: mock, rateLimited: rateLimited };
 }
 
 // One /api/marketcheck request for the given hubs (usually a single hub).
@@ -69,15 +74,20 @@ async function fetchChunk(profiles, hubs, opts, filters) {
     }),
   });
   if (!res.ok) {
-    let msg = "Sync failed (HTTP " + res.status + ")";
+    const limited = res.status === 429 || res.status === 503 || res.status === 402;
+    let msg = limited
+      ? "MarketCheck rate limit / free-tier quota reached (HTTP " + res.status + ") — wait a bit and sync again."
+      : "Sync failed (HTTP " + res.status + ")";
     try {
       const j = await res.json();
-      if (j && j.error) msg = j.error;
+      if (j && j.error && !limited) msg = j.error;
     } catch (e) { /* keep default */ }
-    throw new Error(msg);
+    const err = new Error(msg);
+    if (limited) err.rateLimited = true;
+    throw err;
   }
   const json = await res.json();
-  return { listings: json.listings || [], errors: json.errors || [], mock: !!json.mock };
+  return { listings: json.listings || [], errors: json.errors || [], mock: !!json.mock, rateLimited: !!json.rateLimited };
 }
 
 // Debug helper: POST /api/marketcheck?raw=1 and return the raw MarketCheck
