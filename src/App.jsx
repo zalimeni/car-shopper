@@ -6,7 +6,6 @@ import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBas
 import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
 import { listSnapshots, restoreSnapshot } from "./snapshots";
 
-var AUTO_SYNC_HOURS = 12; // sync-on-open debounce
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
 
 var STORAGE_KEY = "car-search-data";
@@ -728,7 +727,8 @@ export default function App() {
 
   // Pull dealer inventory via the proxy and reconcile. New VINs flow into the
   // candidate queue (same review path as Import); known VINs get price/last-seen
-  // updates written to the blob. opts.auto = background sync-on-open (quiet on error).
+  // updates written to the blob. Manual only (↻ Sync) — no sync-on-load, to
+  // spare MarketCheck's free-tier quota. (opts.auto is retained but unused.)
   var doSync = useCallback(async function (opts) {
     if (!data || syncing) return;
     var auto = opts && opts.auto;
@@ -798,7 +798,7 @@ export default function App() {
       // Report the count actually added to the queue (reconcile's newCount also
       // counts skipped VINs, which we hide), and note how many matched skips.
       var skippedSeen = decorated.filter(function (c) { return c.vin && skippedVins[c.vin]; }).length;
-      setSyncMsg({ ok: true, summary: Object.assign({}, rec.summary, { newCount: added.length }), skippedSeen: skippedSeen, errors: res.errors, mock: res.mock });
+      setSyncMsg({ ok: true, summary: Object.assign({}, rec.summary, { newCount: added.length }), skippedSeen: skippedSeen, errors: res.errors, mock: res.mock, rateLimited: res.rateLimited });
       setSyncing(false);
       // Auto-score only NEW candidates (never skipped, never already-queued, not
       // already scored, and passing their profile's trim filter — no point
@@ -837,16 +837,8 @@ export default function App() {
     setSyncing(false);
   }, [data, syncing, save, autoScore, keyLoaded, keyStatus, scoreBusy, scoreItems, candidates]);
 
-  // Sync-on-open: once per load, if it's been a while since the last sync. Wait
-  // for the key-status fetch to resolve first, so auto-score after this sync
-  // sees the real key state (else a valid key is misreported as missing).
-  var didAutoSync = useRef(false);
-  useEffect(function () {
-    if (loading || !data || !keyLoaded || didAutoSync.current) return;
-    didAutoSync.current = true;
-    var last = data.lastSynced ? new Date(data.lastSynced).getTime() : 0;
-    if (Date.now() - last > AUTO_SYNC_HOURS * 3600 * 1000) doSync({ auto: true });
-  }, [loading, data, keyLoaded, doSync]);
+  // (Sync-on-open removed: syncing on every page load burned MarketCheck free-
+  // tier quota. Sync is now manual only — the ↻ Sync button.)
 
   // Debug helper: run window.__rawSync() in the browser console (while signed
   // in) to see the raw MarketCheck response + how it normalizes — for
@@ -2517,6 +2509,11 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
     if (syncMsg.errors && syncMsg.errors.length) {
       text += " · " + syncMsg.errors.length + " query error(s): " + String(syncMsg.errors[0]).slice(0, 240);
       color = "#d4a017";
+    }
+    if (syncMsg.rateLimited) {
+      // Free-tier quota / rate limit: make it unmissable — results are partial.
+      text = "⚠ MarketCheck rate limit / free-tier quota reached — results are incomplete. Wait a bit and sync again. (" + detail + ")";
+      color = "#c44";
     }
   } else {
     text = "Last synced: " + fmtWhen(lastSynced);

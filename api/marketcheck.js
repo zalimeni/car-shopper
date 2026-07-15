@@ -161,7 +161,7 @@ export default async function handler(req, res) {
   }
 
   const r = await searchListings(apiKey, profiles, hubs, { dealerType: dealerType });
-  res.status(200).json({ listings: r.listings, errors: r.errors });
+  res.status(200).json({ listings: r.listings, errors: r.errors, rateLimited: !!r.rateLimited });
 }
 
 // Core active-inventory search for a set of profiles × hubs — shared by the
@@ -178,6 +178,7 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
   // backstop for a single dense hub (nationwide radius × many profiles/pages).
   const deadline = Date.now() + (Number(opts.budgetMs) || Number(process.env.MARKETCHECK_BUDGET_MS) || 50000);
   let timeUp = false;
+  let rateLimited = false; // set on a 429/503/402 so the caller can warn clearly
 
   let first = true;
   for (const pr of profiles) {
@@ -202,10 +203,18 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
             const url = buildUrl(apiKey, pr, hub, start, carType, dealerType);
             const r = await fetchWithRetry(url, { headers: { Accept: "application/json" } });
             if (!r.ok) {
-              // Auto-debug: 4xx bodies name the offending param. Echo it (+ the
-              // sent query, key redacted) so the error itself is actionable.
               let body = "";
               try { body = (await r.text()).slice(0, 300); } catch (e) { /* ignore */ }
+              // Rate limit / quota exhausted (free tier): retrying now won't help,
+              // so flag it clearly and stop the whole run rather than hammering.
+              if (r.status === 429 || r.status === 503 || r.status === 402) {
+                rateLimited = true;
+                timeUp = true;
+                errors.push("MarketCheck rate limit / free-tier quota reached (HTTP " + r.status + ") — results are incomplete; wait a bit and sync again." + (body ? " [" + body.slice(0, 120) + "]" : ""));
+                break;
+              }
+              // Auto-debug: 4xx bodies name the offending param. Echo it (+ the
+              // sent query, key redacted) so the error itself is actionable.
               const sent = url.split("?")[1] ? url.split("?")[1].replace(/api_key=[^&]*&?/, "") : "";
               errors.push(label + ": MarketCheck HTTP " + r.status + (body ? " — " + body : "") + (r.status >= 400 && r.status < 500 ? " [sent: " + sent + "]" : ""));
               break; // stop paging this profile×hub on error
@@ -233,7 +242,7 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
     }
   }
 
-  return { listings: Object.values(seen), errors: errors };
+  return { listings: Object.values(seen), errors: errors, rateLimited: rateLimited };
 }
 
 // ── MarketCheck query construction ──
