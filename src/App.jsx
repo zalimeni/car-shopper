@@ -794,7 +794,11 @@ export default function App() {
       var prevPrice = {};
       base.listings.forEach(function (l) { if (l.id) prevPrice[l.id] = l.price; });
       var changed = rec.listings.filter(function (l) { return l.id && prevPrice[l.id] != null && l.price !== prevPrice[l.id]; });
-      await save(Object.assign({}, base, { listings: rec.listings, lastSynced: new Date().toISOString() }));
+      // Don't advance lastSynced on an incomplete (rate-limited) run — keep it
+      // pointing at the last GOOD sync. Still persist the partial listing updates.
+      var syncPatch = { listings: rec.listings };
+      if (!res.rateLimited) syncPatch.lastSynced = new Date().toISOString();
+      await save(Object.assign({}, base, syncPatch));
       // Report the count actually added to the queue (reconcile's newCount also
       // counts skipped VINs, which we hide), and note how many matched skips.
       var skippedSeen = decorated.filter(function (c) { return c.vin && skippedVins[c.vin]; }).length;
@@ -2489,7 +2493,12 @@ function rateLimitResetNote(info) {
     return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   }
   function dur(secs) {
-    if (secs >= 3600) return Math.round(secs / 3600) + "h";
+    if (secs >= 3600) {
+      var totalH = Math.round(secs / 3600);
+      var d = Math.floor(totalH / 24), h = totalH % 24;
+      if (d >= 1) return h ? d + "d " + h + "h" : d + "d";
+      return totalH + "h";
+    }
     if (secs >= 60) return Math.round(secs / 60) + "m";
     return Math.max(1, Math.round(secs)) + "s";
   }

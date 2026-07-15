@@ -104,8 +104,10 @@ export default async function handler(req, res) {
       const nextData = Object.assign({}, state, {
         listings: rec.listings,
         pendingCandidates: newPending,
-        lastSynced: new Date().toISOString(), // sync-on-open debounce respects this
       });
+      // Don't advance lastSynced on an incomplete (rate-limited) run — leave it
+      // at the last good sync so the "Last synced" display isn't misleading.
+      if (!r.rateLimited) nextData.lastSynced = new Date().toISOString();
 
       // Compare-and-swap; on mismatch the user's device wrote mid-run — leave
       // their state alone rather than retrying against a moving target.
