@@ -802,7 +802,12 @@ export default function App() {
       // Report the count actually added to the queue (reconcile's newCount also
       // counts skipped VINs, which we hide), and note how many matched skips.
       var skippedSeen = decorated.filter(function (c) { return c.vin && skippedVins[c.vin]; }).length;
-      setSyncMsg({ ok: true, summary: Object.assign({}, rec.summary, { newCount: added.length }), skippedSeen: skippedSeen, errors: res.errors, mock: res.mock, rateLimited: res.rateLimited, rateLimitInfo: res.rateLimitInfo, quota: res.quota });
+      // "not seen" means "in the watchlist but absent from results" — which only
+      // holds if the search actually finished. On a rate-limited (incomplete)
+      // run those listings were just never checked, so don't report them as gone.
+      var summaryOut = Object.assign({}, rec.summary, { newCount: added.length });
+      if (res.rateLimited) summaryOut.notSeen = 0;
+      setSyncMsg({ ok: true, summary: summaryOut, skippedSeen: skippedSeen, errors: res.errors, mock: res.mock, rateLimited: res.rateLimited, rateLimitInfo: res.rateLimitInfo, quota: res.quota });
       setSyncing(false);
       // Auto-score only NEW candidates (never skipped, never already-queued, not
       // already scored, and passing their profile's trim filter — no point
@@ -2561,7 +2566,8 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
       // Free-tier quota / rate limit: make it unmissable — results are partial.
       // Append when the limit clears if MarketCheck told us.
       var reset = rateLimitResetNote(syncMsg.rateLimitInfo);
-      text = "⚠ MarketCheck rate limit / free-tier quota reached — results are incomplete." + (reset || " Wait a bit and sync again.") + " (" + detail + ")";
+      // Only append partial progress if any actually came back before the limit.
+      text = "⚠ MarketCheck rate limit / free-tier quota reached — results are incomplete." + (reset || " Wait a bit and sync again.") + (parts.length ? " (" + detail + ")" : "");
       color = "#c44";
     } else {
       // Not yet limited, but warn if we're getting close to the monthly cap.
