@@ -5,6 +5,7 @@ import { fetchListings, fetchRawSample, reconcile } from "./sync";
 import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBaseline, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
 import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
 import { listSnapshots, restoreSnapshot } from "./snapshots";
+import { buildPriceHistoryCsv } from "./priceExport";
 
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
 
@@ -455,6 +456,16 @@ function tabFromHash() {
   } catch (e) { return null; }
 }
 
+// Trigger a client-side file download of text content.
+function downloadText(filename, text, mime) {
+  var blob = new Blob([text], { type: (mime || "text/plain") + ";charset=utf-8" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+}
+
 export default function App() {
   var [data, setData] = useState(null);
   var [loading, setLoading] = useState(true);
@@ -503,6 +514,7 @@ export default function App() {
   }, []);
 
   var [exportJson, setExportJson] = useState("");
+  var [exportMsg, setExportMsg] = useState("");
   // Backups panel (footer): automatic server-side snapshots of the whole blob.
   var [snapsOpen, setSnapsOpen] = useState(false);
   var [snaps, setSnaps] = useState(null); // null = loading
@@ -1152,6 +1164,13 @@ export default function App() {
               setTab("Results");
             }
           }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>Export Listings</button>
+          <button onClick={function () {
+            if (!data) return;
+            var r = buildPriceHistoryCsv(data, candidates);
+            if (!r.points) { setExportMsg("No priced listings to export yet."); return; }
+            downloadText("car-shopper-prices-" + today() + ".csv", r.csv, "text/csv");
+            setExportMsg("Exported " + r.points + " price point" + (r.points === 1 ? "" : "s") + " across " + r.listings + " listing" + (r.listings === 1 ? "" : "s") + " (all statuses incl. rejected).");
+          }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })} title="Download a CSV of every price observation across all listings (watch, rejected, sold, skipped) — for pricing analysis / feeding to Claude">Export prices (CSV)</button>
           <button onClick={openSnaps} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>{snapsOpen ? "Close backups" : "Backups"}</button>
           <button onClick={function () { runRawDebug(); }} disabled={rawBusy} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" }, rawBusy ? { opacity: 0.6 } : {})}>{rawBusy ? "Running…" : "Debug raw"}</button>
           <button onClick={function () { save(Object.assign({}, data, { onboarded: false })); }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>Setup wizard</button>
@@ -1161,6 +1180,12 @@ export default function App() {
           {confirmReset && <button onClick={function () { setConfirmReset(false); }} style={S.resetBtn}>Cancel</button>}
           <button onClick={function () { signOut(); }} style={S.resetBtn}>Sign out</button>
         </div>
+        {exportMsg && (
+          <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, fontSize: 12, color: "#8ab4f8", textAlign: "left" }}>
+            <span>{exportMsg}</span>
+            <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { setExportMsg(""); }}>Dismiss</button>
+          </div>
+        )}
         {exportJson && (
           <div style={{ marginTop: 8, padding: 10, background: "#161820", borderRadius: 6, border: "1px solid #1e2028", textAlign: "left", maxHeight: 150, overflowY: "auto" }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
@@ -2126,6 +2151,7 @@ function HelpTab() {
         <h3 style={S.cardH}>Setup, backup &amp; reset</h3>
         <p style={li}><span style={b}>Setup wizard</span> (footer) re-runs the guided setup (budget, locations, profiles, rules) without wiping data. Budget, search locations, and tagline also live in the <span style={b}>Settings</span> card on the Profiles tab.</p>
         <p style={li}><span style={b}>Export Listings</span> (footer) dumps your listings as JSON to copy and back up. <span style={b}>Import</span> (Results) accepts the same shape.</p>
+        <p style={li}><span style={b}>Export prices (CSV)</span> (footer) downloads every recorded price observation across <span style={b}>all</span> listings — watchlist, rejected, sold, skipped, and candidates — one row per price/date, with year/trim/mileage/dealer-type/CPO/status. Built for offline pricing analysis (e.g. uploading to Claude to reason about model/trim/mileage pricing, including private listings you're evaluating elsewhere).</p>
         <p style={li}><span style={b}>Backups</span> (footer) lists automatic server-side snapshots of your whole app state (up to 30, at most one per hour of activity) — restore any of them in two taps; the pre-restore state is snapshotted too, so a restore is undoable.</p>
         <p style={li}>Your data syncs to your account, so signing in elsewhere loads the same watchlist. <span style={b}>Reset All Data</span> (footer) wipes everything and restarts the wizard.</p>
       </div>
