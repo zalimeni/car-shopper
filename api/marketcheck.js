@@ -77,11 +77,20 @@ export default async function handler(req, res) {
     return;
   }
 
-  const apiKey = process.env.MARKETCHECK_API_KEY;
-  if (!apiKey) {
-    res.status(500).json({ error: "MARKETCHECK_API_KEY is not configured on the server" });
+  // Ordered list of keys to try: the caller's own MarketCheck keys first (in
+  // priority order), then the shared server key as a final fallback. Search
+  // falls through to the next key when one hits its quota/rate limit.
+  const envKey = process.env.MARKETCHECK_API_KEY;
+  const userKeys = Array.isArray(body.marketcheckKeys)
+    ? body.marketcheckKeys.map(function (k) { return String(k || "").trim(); }).filter(Boolean)
+    : [];
+  const keys = userKeys.slice();
+  if (envKey && keys.indexOf(envKey) === -1) keys.push(envKey);
+  if (!keys.length) {
+    res.status(500).json({ error: "No MarketCheck API key — add one in Settings, or set MARKETCHECK_API_KEY on the server" });
     return;
   }
+  const apiKey = keys[0];
 
   // Debug: run one real query (first profile × first hub) and return the raw
   // MarketCheck response alongside how normalize() maps it — for confirming the
@@ -160,8 +169,8 @@ export default async function handler(req, res) {
     return;
   }
 
-  const r = await searchListings(apiKey, profiles, hubs, { dealerType: dealerType });
-  res.status(200).json({ listings: r.listings, errors: r.errors, rateLimited: !!r.rateLimited, rateLimitInfo: r.rateLimitInfo || null, quota: r.quota || null });
+  const r = await searchListings(apiKey, profiles, hubs, { dealerType: dealerType, keys: keys });
+  res.status(200).json({ listings: r.listings, errors: r.errors, rateLimited: !!r.rateLimited, rateLimitInfo: r.rateLimitInfo || null, quota: r.quota || null, keysUsed: r.keysUsed });
 }
 
 // Core active-inventory search for a set of profiles × hubs — shared by the
@@ -170,6 +179,10 @@ export default async function handler(req, res) {
 export async function searchListings(apiKey, profiles, hubs, opts) {
   opts = opts || {};
   const dealerType = opts.dealerType || null;
+  // Ordered keys to try; on a quota/rate-limit hit we fall through to the next.
+  const keys = (Array.isArray(opts.keys) && opts.keys.length) ? opts.keys : [apiKey];
+  let keyIdx = 0;
+  let keysUsed = 1; // how many keys we ended up drawing on (for reporting)
   const seen = {}; // vin -> normalized listing (dedup across hubs, keep lowest price)
   const errors = [];
 
@@ -192,8 +205,10 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
         if (timeUp) break;
         const label = (pr.name || pr.id || "?") + " @ " + (hub.n || hub.z || "?") + " [" + carType + "]";
         // Page through results (bounded by MAX_ROWS) so a dense query doesn't
-        // truncate at 50 and drop still-active listings.
-        for (let start = 0; start < MAX_ROWS; start += ROWS) {
+        // truncate at 50 and drop still-active listings. `while` (not `for`) so a
+        // quota hit can retry the SAME page with the next key.
+        let start = 0;
+        while (start < MAX_ROWS) {
           if (Date.now() > deadline) {
             errors.push("Stopped early to avoid a timeout — some results may be missing. Use fewer locations, a smaller radius, or narrower filters.");
             timeUp = true;
@@ -203,14 +218,21 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
           first = false;
           let numFound = null;
           try {
-            const url = buildUrl(apiKey, pr, hub, start, carType, dealerType);
+            const url = buildUrl(keys[keyIdx], pr, hub, start, carType, dealerType);
             const r = await fetchWithRetry(url, { headers: { Accept: "application/json" } });
             if (!r.ok) {
               let body = "";
               try { body = (await r.text()).slice(0, 300); } catch (e) { /* ignore */ }
-              // Rate limit / quota exhausted (free tier): retrying now won't help,
-              // so flag it clearly and stop the whole run rather than hammering.
+              // Rate limit / quota exhausted. Fall over to the next key if we have
+              // one and retry this same page; only give up once all keys are spent.
               if (r.status === 429 || r.status === 503 || r.status === 402) {
+                if (keyIdx + 1 < keys.length) {
+                  const spent = keyIdx + 1; // 1-based index of the key that just hit its quota
+                  keyIdx++;
+                  keysUsed = Math.max(keysUsed, keyIdx + 1);
+                  errors.push(label + ": key #" + spent + " hit its quota (HTTP " + r.status + ") — falling back to key #" + (keyIdx + 1) + ".");
+                  continue; // retry same page with the next key (no start advance)
+                }
                 rateLimited = true;
                 timeUp = true;
                 // Surface MarketCheck's documented reset/remaining headers so the
@@ -223,7 +245,7 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
                   rateRemaining: num(r.headers.get("ratelimit-remaining")),
                   quotaRemaining: num(r.headers.get("quota-remaining")),
                 };
-                errors.push("MarketCheck rate limit / free-tier quota reached (HTTP " + r.status + ") — results are incomplete; wait a bit and sync again." + (body ? " [" + body.slice(0, 120) + "]" : ""));
+                errors.push("MarketCheck rate limit / free-tier quota reached (HTTP " + r.status + ") on all " + keys.length + " key" + (keys.length === 1 ? "" : "s") + " — results are incomplete; wait a bit and sync again." + (body ? " [" + body.slice(0, 120) + "]" : ""));
                 break;
               }
               // Auto-debug: 4xx bodies name the offending param. Echo it (+ the
@@ -251,6 +273,7 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
             }
             // Last page: fewer than a full page back, or we've covered num_found.
             if (rows.length < ROWS || (numFound != null && start + ROWS >= numFound)) break;
+            start += ROWS; // advance to the next page
           } catch (e) {
             errors.push(label + ": " + (e && e.message ? e.message : "fetch failed"));
             break;
@@ -260,7 +283,7 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
     }
   }
 
-  return { listings: Object.values(seen), errors: errors, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota };
+  return { listings: Object.values(seen), errors: errors, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota, keysUsed: keysUsed };
 }
 
 // ── MarketCheck query construction ──
