@@ -227,10 +227,10 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
               // one and retry this same page; only give up once all keys are spent.
               if (r.status === 429 || r.status === 503 || r.status === 402) {
                 if (keyIdx + 1 < keys.length) {
-                  const spent = keyIdx + 1; // 1-based index of the key that just hit its quota
+                  const spent = keyIdx + 1; // 1-based index of the key that reached its limit
                   keyIdx++;
                   keysUsed = Math.max(keysUsed, keyIdx + 1);
-                  errors.push(label + ": key #" + spent + " hit its quota (HTTP " + r.status + ") — falling back to key #" + (keyIdx + 1) + ".");
+                  errors.push(label + ": key #" + spent + " reached its request limit; continuing on key #" + (keyIdx + 1) + ".");
                   continue; // retry same page with the next key (no start advance)
                 }
                 rateLimited = true;
