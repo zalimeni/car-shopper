@@ -1925,8 +1925,8 @@ function scoreHue(v) { return v >= 7 ? "#2d8659" : v >= 5 ? "#d4a017" : "#c44"; 
 
 // Is a list price fair? Checks a VIN-or-description against comparable cars in
 // your own tracked/rejected data (free, offline). Live MarketCheck comps and an
-// AI verdict layer on later.
-function PriceCheckTab({ data, candidates }) {
+// AI verdict layer on later. Exported for render tests.
+export function PriceCheckTab({ data, candidates }) {
   var toneColor = { good: "#2d8659", ok: "#d4a017", high: "#c44" };
   var [q, setQ] = useState({ vin: "", year: "", make: "", model: "", trim: "", mileage: "", askingPrice: "" });
   var [result, setResult] = useState(null);
