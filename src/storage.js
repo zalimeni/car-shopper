@@ -15,6 +15,7 @@
 // localStorage-only version is migrated up to Supabase, then cleared.
 
 import { supabase } from "./supabaseClient";
+import { diag } from "./loadDiag";
 
 const TABLE = "app_state";
 const LEGACY_KEY = "car-search-data";
@@ -40,14 +41,18 @@ function missingRevColumn(error) {
 const storage = {
   async get(key) {
     try {
+      diag("storage:getSession-for-userid");
       const userId = await currentUserId();
+      diag("storage:userid=" + (userId ? "ok" : "none"));
       if (!userId) return null;
 
+      diag("storage:select-app_state-start");
       let { data, error } = await supabase
         .from(TABLE)
         .select("data,rev")
         .eq("user_id", userId)
         .maybeSingle();
+      diag("storage:select-done" + (error ? " ERR:" + (error.code || error.message) : ""));
       if (error && missingRevColumn(error)) {
         ({ data, error } = await supabase.from(TABLE).select("data").eq("user_id", userId).maybeSingle());
       }

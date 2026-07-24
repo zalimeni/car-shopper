@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
+import { diag, LoadStamp } from "./loadDiag";
 
 // Gates the app behind Supabase email magic-link auth. Renders a sign-in
 // screen until there's a session, then renders children. Signing in with the
@@ -16,14 +17,17 @@ export default function AuthGate({ children }) {
     //    getSession() promise stalls — e.g. the auth client wedges while
     //    exchanging the URL session right after a magic-link redirect), or
     //  - a timeout backstop, so the app can never sit on "Loading…" forever.
+    diag("auth:effect-start");
     let settled = false;
-    const finish = (s) => {
+    const finish = (s, via) => {
+      diag("auth:settle via " + via + " (" + (s ? "session" : "no-session") + ")");
       setSession(s);
       if (!settled) { settled = true; setLoading(false); }
     };
-    supabase.auth.getSession().then(({ data }) => finish(data.session)).catch(() => finish(null));
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => finish(s));
-    const timer = setTimeout(() => { if (!settled) { settled = true; setLoading(false); } }, 8000);
+    diag("auth:getSession-call");
+    supabase.auth.getSession().then(({ data }) => finish(data.session, "getSession")).catch((e) => { diag("auth:getSession-error " + (e && e.message)); finish(null, "getSession-error"); });
+    const { data: sub } = supabase.auth.onAuthStateChange((event, s) => finish(s, "event:" + event));
+    const timer = setTimeout(() => { if (!settled) { diag("auth:BACKSTOP-8s-fired (getSession never settled)"); settled = true; setLoading(false); } }, 8000);
     return () => { clearTimeout(timer); sub.subscription.unsubscribe(); };
   }, []);
 
@@ -44,6 +48,7 @@ export default function AuthGate({ children }) {
     // "Checking access…" indefinitely.
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), 12000);
+    diag("auth:checking-access-start");
     (async () => {
       try {
         // Use the token already in state — re-calling getSession() here can
@@ -51,6 +56,7 @@ export default function AuthGate({ children }) {
         const token = session && session.access_token ? session.access_token : "";
         const res = await fetch("/api/me", { headers: { Authorization: "Bearer " + token }, signal: ac.signal });
         if (cancelled) return;
+        diag("auth:me-status " + res.status);
         if (res.status === 403) { setAuthorized(false); return; }
         if (res.ok) {
           const j = await res.json().catch(() => null);
@@ -67,9 +73,9 @@ export default function AuthGate({ children }) {
     return () => { cancelled = true; clearTimeout(timer); ac.abort(); };
   }, [userId]);
 
-  if (loading) return <div style={S.center}>Loading…</div>;
+  if (loading) return <div style={S.center}><div>Loading…<LoadStamp /></div></div>;
   if (!session) return <SignIn />;
-  if (authorized === null) return <div style={S.center}>Checking access…</div>;
+  if (authorized === null) return <div style={S.center}><div>Checking access…<LoadStamp /></div></div>;
   if (authorized === false) return <NotAuthorized email={session.user && session.user.email} />;
   return children;
 }

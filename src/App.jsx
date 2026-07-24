@@ -7,6 +7,7 @@ import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
 import { listSnapshots, restoreSnapshot } from "./snapshots";
 import { buildPriceHistoryCsv } from "./priceExport";
 import { localPriceCheck } from "./priceCheck";
+import { diag, LoadStamp } from "./loadDiag";
 
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
 
@@ -577,12 +578,14 @@ export default function App() {
     init.current = true;
     (async function () {
       try {
+        diag("app:init-start (read app_state)");
         // Guard against a stalled read (e.g. the auth client wedged right after a
         // magic-link redirect) so the app can never hang forever on "Loading…".
         var r = await Promise.race([
           storage.get(STORAGE_KEY),
           new Promise(function (_, rej) { setTimeout(function () { rej(new Error("load timed out")); }, 15000); }),
         ]);
+        diag("app:read-done (" + (r && r.value ? "has-data" : "empty/new") + ")");
         var d, writeBack = false;
         if (r && r.value && r.value !== "undefined") {
           revRef.current = r.rev == null ? 0 : r.rev;
@@ -616,10 +619,12 @@ export default function App() {
         }
         // Render immediately — NEVER block the UI on the write-back. A slow/hung
         // network write used to leave the app stuck on "Loading…".
+        diag("app:render (onboarded=" + d.onboarded + ")");
         setData(d);
         setLoading(false);
         if (writeBack) persist(d).catch(function (e) { console.error("Init persist:", e); });
       } catch (e) {
+        diag("app:init-error " + (e && e.message));
         console.error("Init:", e);
         // Read failed/timed out — surface a recoverable error rather than
         // hanging, and don't fall back to blank data (a later save could then
@@ -1106,10 +1111,11 @@ export default function App() {
   if (loadError) return (
     <div style={Object.assign({}, S.loading, { display: "flex", flexDirection: "column", alignItems: "center", gap: 12 })}>
       <div>Couldn't load your data (the connection may have stalled).</div>
+      <LoadStamp />
       <button style={Object.assign({}, S.priBtn, { padding: "8px 16px" })} onClick={function () { window.location.reload(); }}>Reload</button>
     </div>
   );
-  if (loading) return (<div style={S.loading}>Loading...</div>);
+  if (loading) return (<div style={S.loading}>Loading...<LoadStamp /></div>);
   if (!data) return (<div style={S.loading}>Error loading data</div>);
   if (!data.onboarded) return (<Wizard data={data} onComplete={function (nd) { save(nd); }} />);
 
