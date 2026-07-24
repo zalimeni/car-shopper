@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { supabase } from "./supabaseClient";
+import { supabase, storedSession } from "./supabaseClient";
 
 // Gates the app behind Supabase email magic-link auth. Renders a sign-in
 // screen until there's a session, then renders children. Signing in with the
@@ -10,14 +10,26 @@ export default function AuthGate({ children }) {
   const [authorized, setAuthorized] = useState(null); // null = checking | true | false
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setLoading(false);
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
+    // Resolve the initial auth state from whichever of these fires first:
+    //  - getSession() (local read), or
+    //  - onAuthStateChange's INITIAL_SESSION event (fires even when the
+    //    getSession() promise stalls — e.g. the auth client wedges while
+    //    exchanging the URL session right after a magic-link redirect), or
+    //  - a timeout backstop, so the app can never sit on "Loading…" forever.
+    let settled = false;
+    const finish = (s) => {
       setSession(s);
-    });
-    return () => sub.subscription.unsubscribe();
+      if (!settled) { settled = true; setLoading(false); }
+    };
+    // Immediate path: render with the session already in localStorage rather
+    // than blocking on supabase-js's init, which can hang retrying a failing
+    // token refresh. onAuthStateChange still updates the session afterward.
+    const stored = storedSession();
+    if (stored) finish(stored);
+    supabase.auth.getSession().then(({ data }) => finish(data.session)).catch(() => finish(null));
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => finish(s));
+    const timer = setTimeout(() => { if (!settled) { settled = true; setLoading(false); } }, 8000);
+    return () => { clearTimeout(timer); sub.subscription.unsubscribe(); };
   }, []);
 
   // Ask the server whether this account is on the allowlist (env OR DB). This is
@@ -33,11 +45,16 @@ export default function AuthGate({ children }) {
   useEffect(() => {
     if (!userId) { setAuthorized(null); return; }
     let cancelled = false;
+    // Fail open if the check stalls, so a hung request can't wedge the app on
+    // "Checking access…" indefinitely.
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 12000);
     (async () => {
       try {
-        const { data: s } = await supabase.auth.getSession();
-        const token = s && s.session ? s.session.access_token : "";
-        const res = await fetch("/api/me", { headers: { Authorization: "Bearer " + token } });
+        // Use the token already in state — re-calling getSession() here can
+        // stall for the same reason and wedge the app on "Checking access…".
+        const token = session && session.access_token ? session.access_token : "";
+        const res = await fetch("/api/me", { headers: { Authorization: "Bearer " + token }, signal: ac.signal });
         if (cancelled) return;
         if (res.status === 403) { setAuthorized(false); return; }
         if (res.ok) {
@@ -47,10 +64,12 @@ export default function AuthGate({ children }) {
         }
         setAuthorized(true); // 401/other -> fail open
       } catch (e) {
-        if (!cancelled) setAuthorized(true); // network / local dev -> fail open
+        if (!cancelled) setAuthorized(true); // network / timeout / local dev -> fail open
+      } finally {
+        clearTimeout(timer);
       }
     })();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; clearTimeout(timer); ac.abort(); };
   }, [userId]);
 
   if (loading) return <div style={S.center}>Loading…</div>;
