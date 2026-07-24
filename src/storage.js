@@ -20,8 +20,12 @@ const TABLE = "app_state";
 const LEGACY_KEY = "car-search-data";
 
 async function currentUserId() {
-  const { data } = await supabase.auth.getUser();
-  return data && data.user ? data.user.id : null;
+  // getSession() reads the local session (no network) — getUser() hits the auth
+  // server and can stall right after a magic-link redirect while the client is
+  // still exchanging the URL session, hanging the initial load. RLS enforces
+  // access regardless, so the local session id is all we need here.
+  const { data } = await supabase.auth.getSession();
+  return data && data.session && data.session.user ? data.session.user.id : null;
 }
 
 // True when the error is "the rev column doesn't exist yet" — the brief window

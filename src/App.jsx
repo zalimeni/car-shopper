@@ -470,6 +470,7 @@ function downloadText(filename, text, mime) {
 export default function App() {
   var [data, setData] = useState(null);
   var [loading, setLoading] = useState(true);
+  var [loadError, setLoadError] = useState(false); // init read failed/timed out — recoverable via reload
   var [tab, setTab] = useState(function () { var h = tabFromHash(); return (h && h.tab) || ssGet("cs-tab", "Dashboard"); });
   var [saving, setSaving] = useState(false);
   var [edListing, setEdListing] = useState(null);
@@ -576,16 +577,22 @@ export default function App() {
     init.current = true;
     (async function () {
       try {
-        var r = await storage.get(STORAGE_KEY);
+        // Guard against a stalled read (e.g. the auth client wedged right after a
+        // magic-link redirect) so the app can never hang forever on "Loading…".
+        var r = await Promise.race([
+          storage.get(STORAGE_KEY),
+          new Promise(function (_, rej) { setTimeout(function () { rej(new Error("load timed out")); }, 15000); }),
+        ]);
+        var d, writeBack = false;
         if (r && r.value && r.value !== "undefined") {
           revRef.current = r.rev == null ? 0 : r.rev;
-          var d = migrate(JSON.parse(r.value));
+          var prevVersion = JSON.parse(r.value).version;
+          d = migrate(JSON.parse(r.value));
           d.listings = recalcAll(d.listings || [], d.criteria || DEFAULT_CRITERIA);
           // The scheduled background sync (api/cron-sync.js) parks new finds in
           // pendingCandidates — drain them into this device's review queue.
           var pend = Array.isArray(d.pendingCandidates) ? d.pendingCandidates : [];
-          var hadPending = pend.length > 0;
-          if (hadPending) {
+          if (pend.length > 0) {
             var skv = {};
             (d.skipped || []).forEach(function (s) { if (s.vin) skv[s.vin] = true; });
             // `candidates` here is the mount-time (session-restored) queue —
@@ -599,24 +606,27 @@ export default function App() {
               setSyncMsg({ ok: true, text: "Background sync found " + add.length + " new candidate" + (add.length > 1 ? "s" : "") + " — review below." });
             }
             d = Object.assign({}, d, { pendingCandidates: undefined });
+            writeBack = true;
           }
-          setData(d);
-          // Write back when migration changed the shape or we drained the queue.
-          if (hadPending || d.version !== JSON.parse(r.value).version) {
-            await persist(d);
-          }
+          if (d.version !== prevVersion) writeBack = true; // migration changed the shape
         } else {
-          var d2 = freshData(false); // brand-new user: defaults + wizard (onboarded:false)
-          revRef.current = 0; // no row yet — first persist inserts at rev 1
-          setData(d2);
-          await persist(d2);
+          d = freshData(false); // brand-new user: defaults + wizard (onboarded:false)
+          revRef.current = 0;   // no row yet — first persist inserts at rev 1
+          writeBack = true;
         }
+        // Render immediately — NEVER block the UI on the write-back. A slow/hung
+        // network write used to leave the app stuck on "Loading…".
+        setData(d);
+        setLoading(false);
+        if (writeBack) persist(d).catch(function (e) { console.error("Init persist:", e); });
       } catch (e) {
         console.error("Init:", e);
-        // DO NOT overwrite storage on error - just use defaults in memory
-        setData(freshData(false));
+        // Read failed/timed out — surface a recoverable error rather than
+        // hanging, and don't fall back to blank data (a later save could then
+        // overwrite the real, unread row).
+        setLoadError(true);
+        setLoading(false);
       }
-      setLoading(false);
     })();
   }, []);
 
@@ -1093,6 +1103,12 @@ export default function App() {
     setConfirmReset(false);
   }, [save, confirmReset]);
 
+  if (loadError) return (
+    <div style={Object.assign({}, S.loading, { display: "flex", flexDirection: "column", alignItems: "center", gap: 12 })}>
+      <div>Couldn't load your data (the connection may have stalled).</div>
+      <button style={Object.assign({}, S.priBtn, { padding: "8px 16px" })} onClick={function () { window.location.reload(); }}>Reload</button>
+    </div>
+  );
   if (loading) return (<div style={S.loading}>Loading...</div>);
   if (!data) return (<div style={S.loading}>Error loading data</div>);
   if (!data.onboarded) return (<Wizard data={data} onComplete={function (nd) { save(nd); }} />);
