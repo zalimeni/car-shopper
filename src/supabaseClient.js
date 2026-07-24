@@ -11,4 +11,16 @@ const SUPABASE_KEY =
   import.meta.env.VITE_SUPABASE_ANON_KEY ||
   "sb_publishable_TlJnt8hWo6eeQ1yJV9r0KQ_IbZwbfDk";
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+// flowType "implicit": magic-link tokens arrive in the URL hash, so sign-in
+// works even when the link is opened in a fresh context (private/incognito tab,
+// or a different browser than where it was requested). The default PKCE flow
+// needs a code verifier stashed in the requesting tab's storage — absent in a
+// fresh tab — which left the auth client wedged and the app hung on load.
+export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: {
+    flowType: "implicit",
+    detectSessionInUrl: true,
+    persistSession: true,
+    autoRefreshToken: true,
+  },
+});

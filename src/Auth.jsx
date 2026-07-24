@@ -10,14 +10,21 @@ export default function AuthGate({ children }) {
   const [authorized, setAuthorized] = useState(null); // null = checking | true | false
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setLoading(false);
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
+    // Resolve the initial auth state from whichever of these fires first:
+    //  - getSession() (local read), or
+    //  - onAuthStateChange's INITIAL_SESSION event (fires even when the
+    //    getSession() promise stalls — e.g. the auth client wedges while
+    //    exchanging the URL session right after a magic-link redirect), or
+    //  - a timeout backstop, so the app can never sit on "Loading…" forever.
+    let settled = false;
+    const finish = (s) => {
       setSession(s);
-    });
-    return () => sub.subscription.unsubscribe();
+      if (!settled) { settled = true; setLoading(false); }
+    };
+    supabase.auth.getSession().then(({ data }) => finish(data.session)).catch(() => finish(null));
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => finish(s));
+    const timer = setTimeout(() => { if (!settled) { settled = true; setLoading(false); } }, 8000);
+    return () => { clearTimeout(timer); sub.subscription.unsubscribe(); };
   }, []);
 
   // Ask the server whether this account is on the allowlist (env OR DB). This is
@@ -39,8 +46,9 @@ export default function AuthGate({ children }) {
     const timer = setTimeout(() => ac.abort(), 12000);
     (async () => {
       try {
-        const { data: s } = await supabase.auth.getSession();
-        const token = s && s.session ? s.session.access_token : "";
+        // Use the token already in state — re-calling getSession() here can
+        // stall for the same reason and wedge the app on "Checking access…".
+        const token = session && session.access_token ? session.access_token : "";
         const res = await fetch("/api/me", { headers: { Authorization: "Bearer " + token }, signal: ac.signal });
         if (cancelled) return;
         if (res.status === 403) { setAuthorized(false); return; }
