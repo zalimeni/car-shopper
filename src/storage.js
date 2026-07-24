@@ -14,14 +14,19 @@
 // On first read for a user, any data left in localStorage from the old
 // localStorage-only version is migrated up to Supabase, then cleared.
 
-import { supabase } from "./supabaseClient";
+import { supabase, storedSession } from "./supabaseClient";
 
 const TABLE = "app_state";
 const LEGACY_KEY = "car-search-data";
 
 async function currentUserId() {
-  const { data } = await supabase.auth.getUser();
-  return data && data.user ? data.user.id : null;
+  // Prefer the session read straight from localStorage — supabase-js's
+  // getSession() awaits its init, which can hang retrying a failing token
+  // refresh. RLS enforces access regardless, so the local session id suffices.
+  const stored = storedSession();
+  if (stored && stored.user) return stored.user.id;
+  const { data } = await supabase.auth.getSession();
+  return data && data.session && data.session.user ? data.session.user.id : null;
 }
 
 // True when the error is "the rev column doesn't exist yet" — the brief window
