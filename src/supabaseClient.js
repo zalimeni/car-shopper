@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, processLock } from "@supabase/supabase-js";
 
 // The Supabase URL and publishable ("anon") key are safe to expose in the
 // browser — data access is protected by Row Level Security, not by hiding
@@ -22,5 +22,12 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
     detectSessionInUrl: true,
     persistSession: true,
     autoRefreshToken: true,
+    // Use the in-memory lock instead of the default Web Locks (navigator.locks)
+    // lock. The default can DEADLOCK across tabs — a lock held by another
+    // (possibly backgrounded/dead) tab makes getSession()/getUser() hang
+    // forever, which stuck an already-authenticated tab on "Loading…" on
+    // reload. processLock serializes auth calls within this tab without the
+    // cross-tab lock that wedges.
+    lock: processLock,
   },
 });
