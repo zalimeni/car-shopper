@@ -11,7 +11,8 @@ const mkSupabase = (getSessionImpl) => ({
   },
 });
 let supabaseMock;
-vi.mock("/home/user/car-shopper/src/supabaseClient", () => ({ get supabase() { return supabaseMock; } }));
+let storedMock = null;
+vi.mock("/home/user/car-shopper/src/supabaseClient", () => ({ get supabase() { return supabaseMock; }, storedSession: () => storedMock }));
 global.fetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ authorized: true }) }));
 
 const AuthGate = (await import("/home/user/car-shopper/src/Auth.jsx")).default;

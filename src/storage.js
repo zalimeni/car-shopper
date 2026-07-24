@@ -14,17 +14,18 @@
 // On first read for a user, any data left in localStorage from the old
 // localStorage-only version is migrated up to Supabase, then cleared.
 
-import { supabase } from "./supabaseClient";
+import { supabase, storedSession } from "./supabaseClient";
 import { diag } from "./loadDiag";
 
 const TABLE = "app_state";
 const LEGACY_KEY = "car-search-data";
 
 async function currentUserId() {
-  // getSession() reads the local session (no network) — getUser() hits the auth
-  // server and can stall right after a magic-link redirect while the client is
-  // still exchanging the URL session, hanging the initial load. RLS enforces
-  // access regardless, so the local session id is all we need here.
+  // Prefer the session read straight from localStorage — supabase-js's
+  // getSession() awaits its init, which can hang retrying a failing token
+  // refresh. RLS enforces access regardless, so the local session id suffices.
+  const stored = storedSession();
+  if (stored && stored.user) return stored.user.id;
   const { data } = await supabase.auth.getSession();
   return data && data.session && data.session.user ? data.session.user.id : null;
 }
