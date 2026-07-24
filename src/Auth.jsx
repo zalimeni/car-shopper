@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { supabase, storedSession } from "./supabaseClient";
+import { supabase } from "./supabaseClient";
 
 // Gates the app behind Supabase email magic-link auth. Renders a sign-in
 // screen until there's a session, then renders children. Signing in with the
@@ -21,11 +21,6 @@ export default function AuthGate({ children }) {
       setSession(s);
       if (!settled) { settled = true; setLoading(false); }
     };
-    // Immediate path: render with the session already in localStorage rather
-    // than blocking on supabase-js's init, which can hang retrying a failing
-    // token refresh. onAuthStateChange still updates the session afterward.
-    const stored = storedSession();
-    if (stored) finish(stored);
     supabase.auth.getSession().then(({ data }) => finish(data.session)).catch(() => finish(null));
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => finish(s));
     const timer = setTimeout(() => { if (!settled) { settled = true; setLoading(false); } }, 8000);
