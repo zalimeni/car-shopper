@@ -6,6 +6,7 @@ import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBas
 import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
 import { listSnapshots, restoreSnapshot } from "./snapshots";
 import { buildPriceHistoryCsv } from "./priceExport";
+import { localPriceCheck } from "./priceCheck";
 
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
 
@@ -431,7 +432,7 @@ function freshData(blank) {
 }
 
 // ── Tabs ──
-var TABS = ["Dashboard", "Profiles", "Criteria", "Results", "Compare", "Help"];
+var TABS = ["Dashboard", "Profiles", "Criteria", "Results", "Compare", "Price", "Help"];
 
 // Session-scoped persistence for volatile UI state, so a mobile reload / tab
 // discard on app-switch doesn't wipe in-progress results (candidates, raw
@@ -1153,6 +1154,7 @@ export default function App() {
         )}
         {tab === "Help" && <HelpTab />}
         {tab === "Compare" && <CompareTab data={data} />}
+        {tab === "Price" && <PriceCheckTab data={data} candidates={candidates} />}
         {tab === "Admin" && isAdmin && <AdminTab />}
       </main>
       <footer style={S.footer}>
@@ -1921,6 +1923,133 @@ function AdminTab() {
 // ── Compare ──
 function scoreHue(v) { return v >= 7 ? "#2d8659" : v >= 5 ? "#d4a017" : "#c44"; }
 
+// Is a list price fair? Checks a VIN-or-description against comparable cars in
+// your own tracked/rejected data (free, offline). Live MarketCheck comps and an
+// AI verdict layer on later.
+function PriceCheckTab({ data, candidates }) {
+  var toneColor = { good: "#2d8659", ok: "#d4a017", high: "#c44" };
+  var [q, setQ] = useState({ vin: "", year: "", make: "", model: "", trim: "", mileage: "", askingPrice: "" });
+  var [result, setResult] = useState(null);
+  function set2(obj) { setQ(function (prev) { return Object.assign({}, prev, obj); }); }
+  function set(k, v) { set2({ [k]: v }); }
+
+  function prefillProfile(id) {
+    var p = (data.profiles || []).find(function (x) { return x.id === id; });
+    if (!p || !p.params) return;
+    set2({ make: p.params.make || "", model: p.params.model || "", year: String(p.params.years || "").split(/[,–-]/)[0].trim() });
+  }
+  function prefillVin() {
+    var v = (q.vin || "").trim().toUpperCase();
+    if (!v) return;
+    var all = (data.listings || []).concat(candidates || [], data.skipped || []);
+    var m = all.find(function (l) { return (l.vin || "").trim().toUpperCase() === v; });
+    if (!m) { setResult({ error: "No tracked listing has that VIN — fill the fields below by hand." }); return; }
+    var parts = String(m.vehicle || "").split(" ");
+    set2({ year: m.year || "", make: parts[0] || "", model: parts.slice(1).join(" "), trim: m.trim || "", mileage: m.mileage || "", askingPrice: m.price || q.askingPrice });
+    setResult(null);
+  }
+  function run() {
+    var digits = function (s) { return parseInt(String(s).replace(/[^0-9]/g, ""), 10) || 0; };
+    var query = { vin: q.vin, year: parseInt(q.year, 10) || 0, make: q.make.trim(), model: q.model.trim(), trim: q.trim.trim(), mileage: digits(q.mileage), askingPrice: digits(q.askingPrice) };
+    if (!query.make && !query.model) { setResult({ error: "Enter at least a make and model (or prefill from a profile / VIN)." }); return; }
+    setResult(Object.assign({ query: query }, localPriceCheck(data, candidates, query)));
+  }
+
+  var fld = { display: "flex", flexDirection: "column", gap: 3 };
+  var money = function (n) { return "$" + Number(n || 0).toLocaleString(); };
+
+  return (
+    <div>
+      <div style={S.secH}><h2 style={S.secT}>Price check</h2></div>
+      <div style={S.card}>
+        <p style={S.help}>Is an asking price fair? Enter a VIN or a description and it's judged against comparable cars in <span style={{ color: "#c8c8d0" }}>your own tracked + rejected data</span> — free and offline. (Live market comps and an AI verdict are coming next; live checks need your MarketCheck quota, currently exhausted.)</p>
+
+        {(data.profiles || []).length > 0 && (
+          <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11, color: "#6b6b76" }}>Prefill from profile:</span>
+            {(data.profiles || []).map(function (p) {
+              return (<button key={p.id} style={Object.assign({}, S.smBtn, { color: "#8ab4f8" })} onClick={function () { prefillProfile(p.id); }}>{p.name}</button>);
+            })}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div style={Object.assign({}, fld, { flex: "1 1 240px" })}>
+            <label style={S.lbl}>VIN (optional — prefills from a tracked listing)</label>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input style={Object.assign({}, S.inp, { flex: 1 })} value={q.vin} onChange={function (e) { set("vin", e.target.value); }} placeholder="1HG…" />
+              <button style={S.secBtn} onClick={prefillVin}>Prefill</button>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 6 }}>
+          <div style={fld}><label style={S.lbl}>Year</label><input style={S.inp} value={q.year} onChange={function (e) { set("year", e.target.value); }} placeholder="2021" /></div>
+          <div style={fld}><label style={S.lbl}>Make</label><input style={S.inp} value={q.make} onChange={function (e) { set("make", e.target.value); }} placeholder="Toyota" /></div>
+          <div style={fld}><label style={S.lbl}>Model</label><input style={S.inp} value={q.model} onChange={function (e) { set("model", e.target.value); }} placeholder="RAV4" /></div>
+          <div style={fld}><label style={S.lbl}>Trim</label><input style={S.inp} value={q.trim} onChange={function (e) { set("trim", e.target.value); }} placeholder="XLE" /></div>
+          <div style={fld}><label style={S.lbl}>Mileage</label><input style={S.inp} value={q.mileage} onChange={function (e) { set("mileage", e.target.value); }} placeholder="42000" /></div>
+          <div style={fld}><label style={S.lbl}>Asking price</label><input style={S.inp} value={q.askingPrice} onChange={function (e) { set("askingPrice", e.target.value); }} placeholder="27000" /></div>
+        </div>
+        <button style={Object.assign({}, S.priBtn, { marginTop: 10 })} onClick={run}>Check price</button>
+      </div>
+
+      {result && result.error && (
+        <div style={S.card}><p style={{ fontSize: 13, color: "#d4a017", margin: 0 }}>{result.error}</p></div>
+      )}
+
+      {result && !result.error && (
+        <div style={S.card}>
+          {!result.stats ? (
+            <p style={{ fontSize: 13, color: "#c8c8d0", margin: 0 }}>
+              No comparable listings in your data yet for <strong>{[result.query.year, result.query.make, result.query.model].filter(Boolean).join(" ")}</strong>. Track/sync this model to build local comps — or use the live market check once your MarketCheck quota resets.
+            </p>
+          ) : (
+            <div>
+              {result.verdict && (
+                <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+                  <span style={{ fontSize: 16, fontWeight: 700, color: toneColor[result.verdict.tone] }}>{result.verdict.verdict}</span>
+                  <span style={{ fontSize: 13, color: "#c8c8d0" }}>
+                    {money(result.query.askingPrice)} asking · {result.verdict.vsMedian >= 0 ? "+" : "−"}{money(Math.abs(result.verdict.vsMedian))} vs median
+                    {result.verdict.rank != null ? " · ~" + Math.round(result.verdict.rank * 100) + "th percentile" : ""}
+                  </span>
+                </div>
+              )}
+              <div style={{ fontSize: 13, color: "#c8c8d0", marginBottom: 6 }}>
+                <strong>{result.count}</strong> local comp{result.count === 1 ? "" : "s"} · median <strong>{money(result.stats.median)}</strong> · typical {money(result.stats.p25)}–{money(result.stats.p75)} · full range {money(result.stats.min)}–{money(result.stats.max)}
+              </div>
+              <div style={{ fontSize: 11, color: "#6b6b76", marginBottom: 10 }}>
+                Matched on: {result.filtersUsed.join(", ")}{result.mileageRange ? " · comp mileage " + result.mileageRange.min.toLocaleString() + "–" + result.mileageRange.max.toLocaleString() + " mi" : ""}. From your tracked, rejected, sold, skipped &amp; candidate listings.
+              </div>
+              {result.count < 3 && <div style={{ fontSize: 12, color: "#d4a017", marginBottom: 8 }}>⚠ Only {result.count} comp{result.count === 1 ? "" : "s"} — treat this as a rough read; more data means a better verdict.</div>}
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%" }}>
+                  <thead><tr>{["Year", "Trim", "Mileage", "Price", "Status", "Dealer", "When"].map(function (h) { return (<th key={h} style={{ textAlign: "left", padding: "4px 8px", color: "#6b6b76", fontWeight: 500, borderBottom: "1px solid #2a2d38", whiteSpace: "nowrap" }}>{h}</th>); })}</tr></thead>
+                  <tbody>
+                    {result.comps.map(function (c, i) {
+                      return (
+                        <tr key={i}>
+                          <td style={S.pcCell}>{c.year || "—"}</td>
+                          <td style={S.pcCell}>{c.trim || "—"}</td>
+                          <td style={S.pcCell}>{c.mileage != null ? c.mileage.toLocaleString() : "—"}</td>
+                          <td style={Object.assign({}, S.pcCell, { fontWeight: 600, color: "#f0f0f3" })}>{money(c.price)}</td>
+                          <td style={S.pcCell}>{c.status}{c.cpo ? " ✓CPO" : ""}</td>
+                          <td style={S.pcCell}>{c.dealerType || "—"}{c.state ? " · " + c.state : ""}</td>
+                          <td style={S.pcCell}>{c.date || "—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CompareTab({ data }) {
   var profs = data.profiles || [];
   var [sel, setSel] = useState(function () { return profs.map(function (p) { return p.id; }); });
@@ -2110,6 +2239,7 @@ function HelpTab() {
         <p style={li}><span style={b}>Criteria</span> — the weighted factors (price, mileage, condition, etc.) behind each listing's composite score. Editing weights re-scores everything automatically.</p>
         <p style={li}><span style={b}>Results</span> — sync, review candidates, and manage your watchlist. This is where you'll spend most of your time.</p>
         <p style={li}><span style={b}>Compare</span> — side-by-side table of watchlist listings for the profiles you pick, across primary specs and each scoring criterion plus the total; best value per row is highlighted.</p>
+        <p style={li}><span style={b}>Price</span> — is an asking price fair? Enter a VIN or a description (year/make/model/trim/mileage) and it's judged against comparable cars in your own tracked, rejected, sold, skipped &amp; candidate data — free and offline, no MarketCheck calls. Great for sanity-checking a private listing you found elsewhere.</p>
       </div>
 
       <div style={S.card}>
@@ -3040,6 +3170,7 @@ var S = {
   staleT: { fontSize: 13, color: "#e8c96a", marginBottom: 10, lineHeight: 1.5 },
   staleB: { fontSize: 10, color: "#e8c96a", background: "#2a2210", padding: "2px 6px", borderRadius: 3, marginLeft: 6 },
   cpoB: { fontSize: 10, fontWeight: 700, letterSpacing: "0.03em", color: "#0f1114", background: "#3fae74", padding: "1px 6px", borderRadius: 4, marginLeft: 6, verticalAlign: "middle", whiteSpace: "nowrap" },
+  pcCell: { padding: "4px 8px", borderBottom: "1px solid #1e2028", color: "#c8c8d0", whiteSpace: "nowrap" },
   card: { background: "#161820", borderRadius: 10, padding: 16, marginBottom: 12, border: "1px solid #1e2028" },
   cardH: { fontSize: 14, fontWeight: 600, color: "#c8c8d0", margin: "0 0 10px" },
   secH: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
