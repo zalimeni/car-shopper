@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
-import { supabase, storedSession } from "./supabaseClient";
-import { diag, LoadStamp } from "./loadDiag";
+import { supabase } from "./supabaseClient";
 
 // Gates the app behind Supabase email magic-link auth. Renders a sign-in
 // screen until there's a session, then renders children. Signing in with the
@@ -11,29 +10,14 @@ export default function AuthGate({ children }) {
   const [authorized, setAuthorized] = useState(null); // null = checking | true | false
 
   useEffect(() => {
-    // Resolve the initial auth state from whichever of these fires first:
-    //  - getSession() (local read), or
-    //  - onAuthStateChange's INITIAL_SESSION event (fires even when the
-    //    getSession() promise stalls — e.g. the auth client wedges while
-    //    exchanging the URL session right after a magic-link redirect), or
-    //  - a timeout backstop, so the app can never sit on "Loading…" forever.
-    diag("auth:effect-start");
-    let settled = false;
-    const finish = (s, via) => {
-      diag("auth:settle via " + via + " (" + (s ? "session" : "no-session") + ")");
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setLoading(false);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s);
-      if (!settled) { settled = true; setLoading(false); }
-    };
-    // Immediate path: render with the session already in localStorage rather
-    // than blocking on supabase-js's init, which can hang retrying a failing
-    // token refresh. onAuthStateChange still updates the session afterward.
-    const stored = storedSession();
-    if (stored) { diag("auth:stored-session-hit"); finish(stored, "stored"); }
-    diag("auth:getSession-call");
-    supabase.auth.getSession().then(({ data }) => finish(data.session, "getSession")).catch((e) => { diag("auth:getSession-error " + (e && e.message)); finish(null, "getSession-error"); });
-    const { data: sub } = supabase.auth.onAuthStateChange((event, s) => finish(s, "event:" + event));
-    const timer = setTimeout(() => { if (!settled) { diag("auth:BACKSTOP-8s-fired (getSession never settled)"); settled = true; setLoading(false); } }, 8000);
-    return () => { clearTimeout(timer); sub.subscription.unsubscribe(); };
+    });
+    return () => sub.subscription.unsubscribe();
   }, []);
 
   // Ask the server whether this account is on the allowlist (env OR DB). This is
@@ -49,19 +33,12 @@ export default function AuthGate({ children }) {
   useEffect(() => {
     if (!userId) { setAuthorized(null); return; }
     let cancelled = false;
-    // Fail open if the check stalls, so a hung request can't wedge the app on
-    // "Checking access…" indefinitely.
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), 12000);
-    diag("auth:checking-access-start");
     (async () => {
       try {
-        // Use the token already in state — re-calling getSession() here can
-        // stall for the same reason and wedge the app on "Checking access…".
-        const token = session && session.access_token ? session.access_token : "";
-        const res = await fetch("/api/me", { headers: { Authorization: "Bearer " + token }, signal: ac.signal });
+        const { data: s } = await supabase.auth.getSession();
+        const token = s && s.session ? s.session.access_token : "";
+        const res = await fetch("/api/me", { headers: { Authorization: "Bearer " + token } });
         if (cancelled) return;
-        diag("auth:me-status " + res.status);
         if (res.status === 403) { setAuthorized(false); return; }
         if (res.ok) {
           const j = await res.json().catch(() => null);
@@ -70,17 +47,15 @@ export default function AuthGate({ children }) {
         }
         setAuthorized(true); // 401/other -> fail open
       } catch (e) {
-        if (!cancelled) setAuthorized(true); // network / timeout / local dev -> fail open
-      } finally {
-        clearTimeout(timer);
+        if (!cancelled) setAuthorized(true); // network / local dev -> fail open
       }
     })();
-    return () => { cancelled = true; clearTimeout(timer); ac.abort(); };
+    return () => { cancelled = true; };
   }, [userId]);
 
-  if (loading) return <div style={S.center}><div>Loading…<LoadStamp /></div></div>;
+  if (loading) return <div style={S.center}>Loading…</div>;
   if (!session) return <SignIn />;
-  if (authorized === null) return <div style={S.center}><div>Checking access…<LoadStamp /></div></div>;
+  if (authorized === null) return <div style={S.center}>Checking access…</div>;
   if (authorized === false) return <NotAuthorized email={session.user && session.user.email} />;
   return children;
 }

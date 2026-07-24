@@ -5,9 +5,6 @@ import { fetchListings, fetchRawSample, reconcile } from "./sync";
 import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBaseline, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
 import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
 import { listSnapshots, restoreSnapshot } from "./snapshots";
-import { buildPriceHistoryCsv } from "./priceExport";
-import { localPriceCheck } from "./priceCheck";
-import { diag, LoadStamp } from "./loadDiag";
 
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
 
@@ -433,7 +430,7 @@ function freshData(blank) {
 }
 
 // ── Tabs ──
-var TABS = ["Dashboard", "Profiles", "Criteria", "Results", "Compare", "Price", "Help"];
+var TABS = ["Dashboard", "Profiles", "Criteria", "Results", "Compare", "Help"];
 
 // Session-scoped persistence for volatile UI state, so a mobile reload / tab
 // discard on app-switch doesn't wipe in-progress results (candidates, raw
@@ -458,20 +455,9 @@ function tabFromHash() {
   } catch (e) { return null; }
 }
 
-// Trigger a client-side file download of text content.
-function downloadText(filename, text, mime) {
-  var blob = new Blob([text], { type: (mime || "text/plain") + ";charset=utf-8" });
-  var url = URL.createObjectURL(blob);
-  var a = document.createElement("a");
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
-}
-
 export default function App() {
   var [data, setData] = useState(null);
   var [loading, setLoading] = useState(true);
-  var [loadError, setLoadError] = useState(false); // init read failed/timed out — recoverable via reload
   var [tab, setTab] = useState(function () { var h = tabFromHash(); return (h && h.tab) || ssGet("cs-tab", "Dashboard"); });
   var [saving, setSaving] = useState(false);
   var [edListing, setEdListing] = useState(null);
@@ -517,7 +503,6 @@ export default function App() {
   }, []);
 
   var [exportJson, setExportJson] = useState("");
-  var [exportMsg, setExportMsg] = useState("");
   // Backups panel (footer): automatic server-side snapshots of the whole blob.
   var [snapsOpen, setSnapsOpen] = useState(false);
   var [snaps, setSnaps] = useState(null); // null = loading
@@ -578,24 +563,16 @@ export default function App() {
     init.current = true;
     (async function () {
       try {
-        diag("app:init-start (read app_state)");
-        // Guard against a stalled read (e.g. the auth client wedged right after a
-        // magic-link redirect) so the app can never hang forever on "Loading…".
-        var r = await Promise.race([
-          storage.get(STORAGE_KEY),
-          new Promise(function (_, rej) { setTimeout(function () { rej(new Error("load timed out")); }, 15000); }),
-        ]);
-        diag("app:read-done (" + (r && r.value ? "has-data" : "empty/new") + ")");
-        var d, writeBack = false;
+        var r = await storage.get(STORAGE_KEY);
         if (r && r.value && r.value !== "undefined") {
           revRef.current = r.rev == null ? 0 : r.rev;
-          var prevVersion = JSON.parse(r.value).version;
-          d = migrate(JSON.parse(r.value));
+          var d = migrate(JSON.parse(r.value));
           d.listings = recalcAll(d.listings || [], d.criteria || DEFAULT_CRITERIA);
           // The scheduled background sync (api/cron-sync.js) parks new finds in
           // pendingCandidates — drain them into this device's review queue.
           var pend = Array.isArray(d.pendingCandidates) ? d.pendingCandidates : [];
-          if (pend.length > 0) {
+          var hadPending = pend.length > 0;
+          if (hadPending) {
             var skv = {};
             (d.skipped || []).forEach(function (s) { if (s.vin) skv[s.vin] = true; });
             // `candidates` here is the mount-time (session-restored) queue —
@@ -609,29 +586,24 @@ export default function App() {
               setSyncMsg({ ok: true, text: "Background sync found " + add.length + " new candidate" + (add.length > 1 ? "s" : "") + " — review below." });
             }
             d = Object.assign({}, d, { pendingCandidates: undefined });
-            writeBack = true;
           }
-          if (d.version !== prevVersion) writeBack = true; // migration changed the shape
+          setData(d);
+          // Write back when migration changed the shape or we drained the queue.
+          if (hadPending || d.version !== JSON.parse(r.value).version) {
+            await persist(d);
+          }
         } else {
-          d = freshData(false); // brand-new user: defaults + wizard (onboarded:false)
-          revRef.current = 0;   // no row yet — first persist inserts at rev 1
-          writeBack = true;
+          var d2 = freshData(false); // brand-new user: defaults + wizard (onboarded:false)
+          revRef.current = 0; // no row yet — first persist inserts at rev 1
+          setData(d2);
+          await persist(d2);
         }
-        // Render immediately — NEVER block the UI on the write-back. A slow/hung
-        // network write used to leave the app stuck on "Loading…".
-        diag("app:render (onboarded=" + d.onboarded + ")");
-        setData(d);
-        setLoading(false);
-        if (writeBack) persist(d).catch(function (e) { console.error("Init persist:", e); });
       } catch (e) {
-        diag("app:init-error " + (e && e.message));
         console.error("Init:", e);
-        // Read failed/timed out — surface a recoverable error rather than
-        // hanging, and don't fall back to blank data (a later save could then
-        // overwrite the real, unread row).
-        setLoadError(true);
-        setLoading(false);
+        // DO NOT overwrite storage on error - just use defaults in memory
+        setData(freshData(false));
       }
+      setLoading(false);
     })();
   }, []);
 
@@ -1108,14 +1080,7 @@ export default function App() {
     setConfirmReset(false);
   }, [save, confirmReset]);
 
-  if (loadError) return (
-    <div style={Object.assign({}, S.loading, { display: "flex", flexDirection: "column", alignItems: "center", gap: 12 })}>
-      <div>Couldn't load your data (the connection may have stalled).</div>
-      <LoadStamp />
-      <button style={Object.assign({}, S.priBtn, { padding: "8px 16px" })} onClick={function () { window.location.reload(); }}>Reload</button>
-    </div>
-  );
-  if (loading) return (<div style={S.loading}>Loading...<LoadStamp /></div>);
+  if (loading) return (<div style={S.loading}>Loading...</div>);
   if (!data) return (<div style={S.loading}>Error loading data</div>);
   if (!data.onboarded) return (<Wizard data={data} onComplete={function (nd) { save(nd); }} />);
 
@@ -1176,7 +1141,6 @@ export default function App() {
         )}
         {tab === "Help" && <HelpTab />}
         {tab === "Compare" && <CompareTab data={data} />}
-        {tab === "Price" && <PriceCheckTab data={data} candidates={candidates} />}
         {tab === "Admin" && isAdmin && <AdminTab />}
       </main>
       <footer style={S.footer}>
@@ -1188,13 +1152,6 @@ export default function App() {
               setTab("Results");
             }
           }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>Export Listings</button>
-          <button onClick={function () {
-            if (!data) return;
-            var r = buildPriceHistoryCsv(data, candidates);
-            if (!r.points) { setExportMsg("No priced listings to export yet."); return; }
-            downloadText("car-shopper-prices-" + today() + ".csv", r.csv, "text/csv");
-            setExportMsg("Exported " + r.points + " price point" + (r.points === 1 ? "" : "s") + " across " + r.listings + " listing" + (r.listings === 1 ? "" : "s") + " (all statuses incl. rejected).");
-          }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })} title="Download a CSV of every price observation across all listings (watch, rejected, sold, skipped) — for pricing analysis / feeding to Claude">Export prices (CSV)</button>
           <button onClick={openSnaps} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>{snapsOpen ? "Close backups" : "Backups"}</button>
           <button onClick={function () { runRawDebug(); }} disabled={rawBusy} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" }, rawBusy ? { opacity: 0.6 } : {})}>{rawBusy ? "Running…" : "Debug raw"}</button>
           <button onClick={function () { save(Object.assign({}, data, { onboarded: false })); }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>Setup wizard</button>
@@ -1204,12 +1161,6 @@ export default function App() {
           {confirmReset && <button onClick={function () { setConfirmReset(false); }} style={S.resetBtn}>Cancel</button>}
           <button onClick={function () { signOut(); }} style={S.resetBtn}>Sign out</button>
         </div>
-        {exportMsg && (
-          <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, fontSize: 12, color: "#8ab4f8", textAlign: "left" }}>
-            <span>{exportMsg}</span>
-            <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { setExportMsg(""); }}>Dismiss</button>
-          </div>
-        )}
         {exportJson && (
           <div style={{ marginTop: 8, padding: 10, background: "#161820", borderRadius: 6, border: "1px solid #1e2028", textAlign: "left", maxHeight: 150, overflowY: "auto" }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
@@ -1945,133 +1896,6 @@ function AdminTab() {
 // ── Compare ──
 function scoreHue(v) { return v >= 7 ? "#2d8659" : v >= 5 ? "#d4a017" : "#c44"; }
 
-// Is a list price fair? Checks a VIN-or-description against comparable cars in
-// your own tracked/rejected data (free, offline). Live MarketCheck comps and an
-// AI verdict layer on later. Exported for render tests.
-export function PriceCheckTab({ data, candidates }) {
-  var toneColor = { good: "#2d8659", ok: "#d4a017", high: "#c44" };
-  var [q, setQ] = useState({ vin: "", year: "", make: "", model: "", trim: "", mileage: "", askingPrice: "" });
-  var [result, setResult] = useState(null);
-  function set2(obj) { setQ(function (prev) { return Object.assign({}, prev, obj); }); }
-  function set(k, v) { set2({ [k]: v }); }
-
-  function prefillProfile(id) {
-    var p = (data.profiles || []).find(function (x) { return x.id === id; });
-    if (!p || !p.params) return;
-    set2({ make: p.params.make || "", model: p.params.model || "", year: String(p.params.years || "").split(/[,–-]/)[0].trim() });
-  }
-  function prefillVin() {
-    var v = (q.vin || "").trim().toUpperCase();
-    if (!v) return;
-    var all = (data.listings || []).concat(candidates || [], data.skipped || []);
-    var m = all.find(function (l) { return (l.vin || "").trim().toUpperCase() === v; });
-    if (!m) { setResult({ error: "No tracked listing has that VIN — fill the fields below by hand." }); return; }
-    var parts = String(m.vehicle || "").split(" ");
-    set2({ year: m.year || "", make: parts[0] || "", model: parts.slice(1).join(" "), trim: m.trim || "", mileage: m.mileage || "", askingPrice: m.price || q.askingPrice });
-    setResult(null);
-  }
-  function run() {
-    var digits = function (s) { return parseInt(String(s).replace(/[^0-9]/g, ""), 10) || 0; };
-    var query = { vin: q.vin, year: parseInt(q.year, 10) || 0, make: q.make.trim(), model: q.model.trim(), trim: q.trim.trim(), mileage: digits(q.mileage), askingPrice: digits(q.askingPrice) };
-    if (!query.make && !query.model) { setResult({ error: "Enter at least a make and model (or prefill from a profile / VIN)." }); return; }
-    setResult(Object.assign({ query: query }, localPriceCheck(data, candidates, query)));
-  }
-
-  var fld = { display: "flex", flexDirection: "column", gap: 3 };
-  var money = function (n) { return "$" + Number(n || 0).toLocaleString(); };
-
-  return (
-    <div>
-      <div style={S.secH}><h2 style={S.secT}>Price check</h2></div>
-      <div style={S.card}>
-        <p style={S.help}>Is an asking price fair? Enter a VIN or a description and it's judged against comparable cars in <span style={{ color: "#c8c8d0" }}>your own tracked + rejected data</span> — free and offline. (Live market comps and an AI verdict are coming next; live checks need your MarketCheck quota, currently exhausted.)</p>
-
-        {(data.profiles || []).length > 0 && (
-          <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 11, color: "#6b6b76" }}>Prefill from profile:</span>
-            {(data.profiles || []).map(function (p) {
-              return (<button key={p.id} style={Object.assign({}, S.smBtn, { color: "#8ab4f8" })} onClick={function () { prefillProfile(p.id); }}>{p.name}</button>);
-            })}
-          </div>
-        )}
-
-        <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
-          <div style={Object.assign({}, fld, { flex: "1 1 240px" })}>
-            <label style={S.lbl}>VIN (optional — prefills from a tracked listing)</label>
-            <div style={{ display: "flex", gap: 6 }}>
-              <input style={Object.assign({}, S.inp, { flex: 1 })} value={q.vin} onChange={function (e) { set("vin", e.target.value); }} placeholder="1HG…" />
-              <button style={S.secBtn} onClick={prefillVin}>Prefill</button>
-            </div>
-          </div>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 6 }}>
-          <div style={fld}><label style={S.lbl}>Year</label><input style={S.inp} value={q.year} onChange={function (e) { set("year", e.target.value); }} placeholder="2021" /></div>
-          <div style={fld}><label style={S.lbl}>Make</label><input style={S.inp} value={q.make} onChange={function (e) { set("make", e.target.value); }} placeholder="Toyota" /></div>
-          <div style={fld}><label style={S.lbl}>Model</label><input style={S.inp} value={q.model} onChange={function (e) { set("model", e.target.value); }} placeholder="RAV4" /></div>
-          <div style={fld}><label style={S.lbl}>Trim</label><input style={S.inp} value={q.trim} onChange={function (e) { set("trim", e.target.value); }} placeholder="XLE" /></div>
-          <div style={fld}><label style={S.lbl}>Mileage</label><input style={S.inp} value={q.mileage} onChange={function (e) { set("mileage", e.target.value); }} placeholder="42000" /></div>
-          <div style={fld}><label style={S.lbl}>Asking price</label><input style={S.inp} value={q.askingPrice} onChange={function (e) { set("askingPrice", e.target.value); }} placeholder="27000" /></div>
-        </div>
-        <button style={Object.assign({}, S.priBtn, { marginTop: 10 })} onClick={run}>Check price</button>
-      </div>
-
-      {result && result.error && (
-        <div style={S.card}><p style={{ fontSize: 13, color: "#d4a017", margin: 0 }}>{result.error}</p></div>
-      )}
-
-      {result && !result.error && (
-        <div style={S.card}>
-          {!result.stats ? (
-            <p style={{ fontSize: 13, color: "#c8c8d0", margin: 0 }}>
-              No comparable listings in your data yet for <strong>{[result.query.year, result.query.make, result.query.model].filter(Boolean).join(" ")}</strong>. Track/sync this model to build local comps — or use the live market check once your MarketCheck quota resets.
-            </p>
-          ) : (
-            <div>
-              {result.verdict && (
-                <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
-                  <span style={{ fontSize: 16, fontWeight: 700, color: toneColor[result.verdict.tone] }}>{result.verdict.verdict}</span>
-                  <span style={{ fontSize: 13, color: "#c8c8d0" }}>
-                    {money(result.query.askingPrice)} asking · {result.verdict.vsMedian >= 0 ? "+" : "−"}{money(Math.abs(result.verdict.vsMedian))} vs median
-                    {result.verdict.rank != null ? " · ~" + Math.round(result.verdict.rank * 100) + "th percentile" : ""}
-                  </span>
-                </div>
-              )}
-              <div style={{ fontSize: 13, color: "#c8c8d0", marginBottom: 6 }}>
-                <strong>{result.count}</strong> local comp{result.count === 1 ? "" : "s"} · median <strong>{money(result.stats.median)}</strong> · typical {money(result.stats.p25)}–{money(result.stats.p75)} · full range {money(result.stats.min)}–{money(result.stats.max)}
-              </div>
-              <div style={{ fontSize: 11, color: "#6b6b76", marginBottom: 10 }}>
-                Matched on: {result.filtersUsed.join(", ")}{result.mileageRange ? " · comp mileage " + result.mileageRange.min.toLocaleString() + "–" + result.mileageRange.max.toLocaleString() + " mi" : ""}. From your tracked, rejected, sold, skipped &amp; candidate listings.
-              </div>
-              {result.count < 3 && <div style={{ fontSize: 12, color: "#d4a017", marginBottom: 8 }}>⚠ Only {result.count} comp{result.count === 1 ? "" : "s"} — treat this as a rough read; more data means a better verdict.</div>}
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%" }}>
-                  <thead><tr>{["Year", "Trim", "Mileage", "Price", "Status", "Dealer", "When"].map(function (h) { return (<th key={h} style={{ textAlign: "left", padding: "4px 8px", color: "#6b6b76", fontWeight: 500, borderBottom: "1px solid #2a2d38", whiteSpace: "nowrap" }}>{h}</th>); })}</tr></thead>
-                  <tbody>
-                    {result.comps.map(function (c, i) {
-                      return (
-                        <tr key={i}>
-                          <td style={S.pcCell}>{c.year || "—"}</td>
-                          <td style={S.pcCell}>{c.trim || "—"}</td>
-                          <td style={S.pcCell}>{c.mileage != null ? c.mileage.toLocaleString() : "—"}</td>
-                          <td style={Object.assign({}, S.pcCell, { fontWeight: 600, color: "#f0f0f3" })}>{money(c.price)}</td>
-                          <td style={S.pcCell}>{c.status}{c.cpo ? " ✓CPO" : ""}</td>
-                          <td style={S.pcCell}>{c.dealerType || "—"}{c.state ? " · " + c.state : ""}</td>
-                          <td style={S.pcCell}>{c.date || "—"}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function CompareTab({ data }) {
   var profs = data.profiles || [];
   var [sel, setSel] = useState(function () { return profs.map(function (p) { return p.id; }); });
@@ -2261,7 +2085,6 @@ function HelpTab() {
         <p style={li}><span style={b}>Criteria</span> — the weighted factors (price, mileage, condition, etc.) behind each listing's composite score. Editing weights re-scores everything automatically.</p>
         <p style={li}><span style={b}>Results</span> — sync, review candidates, and manage your watchlist. This is where you'll spend most of your time.</p>
         <p style={li}><span style={b}>Compare</span> — side-by-side table of watchlist listings for the profiles you pick, across primary specs and each scoring criterion plus the total; best value per row is highlighted.</p>
-        <p style={li}><span style={b}>Price</span> — is an asking price fair? Enter a VIN or a description (year/make/model/trim/mileage) and it's judged against comparable cars in your own tracked, rejected, sold, skipped &amp; candidate data — free and offline, no MarketCheck calls. Great for sanity-checking a private listing you found elsewhere.</p>
       </div>
 
       <div style={S.card}>
@@ -2303,7 +2126,6 @@ function HelpTab() {
         <h3 style={S.cardH}>Setup, backup &amp; reset</h3>
         <p style={li}><span style={b}>Setup wizard</span> (footer) re-runs the guided setup (budget, locations, profiles, rules) without wiping data. Budget, search locations, and tagline also live in the <span style={b}>Settings</span> card on the Profiles tab.</p>
         <p style={li}><span style={b}>Export Listings</span> (footer) dumps your listings as JSON to copy and back up. <span style={b}>Import</span> (Results) accepts the same shape.</p>
-        <p style={li}><span style={b}>Export prices (CSV)</span> (footer) downloads every recorded price observation across <span style={b}>all</span> listings — watchlist, rejected, sold, skipped, and candidates — one row per price/date, with year/trim/mileage/dealer-type/CPO/status. Built for offline pricing analysis (e.g. uploading to Claude to reason about model/trim/mileage pricing, including private listings you're evaluating elsewhere).</p>
         <p style={li}><span style={b}>Backups</span> (footer) lists automatic server-side snapshots of your whole app state (up to 30, at most one per hour of activity) — restore any of them in two taps; the pre-restore state is snapshotted too, so a restore is undoable.</p>
         <p style={li}>Your data syncs to your account, so signing in elsewhere loads the same watchlist. <span style={b}>Reset All Data</span> (footer) wipes everything and restarts the wizard.</p>
       </div>
@@ -3192,7 +3014,6 @@ var S = {
   staleT: { fontSize: 13, color: "#e8c96a", marginBottom: 10, lineHeight: 1.5 },
   staleB: { fontSize: 10, color: "#e8c96a", background: "#2a2210", padding: "2px 6px", borderRadius: 3, marginLeft: 6 },
   cpoB: { fontSize: 10, fontWeight: 700, letterSpacing: "0.03em", color: "#0f1114", background: "#3fae74", padding: "1px 6px", borderRadius: 4, marginLeft: 6, verticalAlign: "middle", whiteSpace: "nowrap" },
-  pcCell: { padding: "4px 8px", borderBottom: "1px solid #1e2028", color: "#c8c8d0", whiteSpace: "nowrap" },
   card: { background: "#161820", borderRadius: 10, padding: 16, marginBottom: 12, border: "1px solid #1e2028" },
   cardH: { fontSize: 14, fontWeight: 600, color: "#c8c8d0", margin: "0 0 10px" },
   secH: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
