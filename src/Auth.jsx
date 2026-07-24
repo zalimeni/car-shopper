@@ -33,11 +33,15 @@ export default function AuthGate({ children }) {
   useEffect(() => {
     if (!userId) { setAuthorized(null); return; }
     let cancelled = false;
+    // Fail open if the check stalls, so a hung request can't wedge the app on
+    // "Checking access…" indefinitely.
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 12000);
     (async () => {
       try {
         const { data: s } = await supabase.auth.getSession();
         const token = s && s.session ? s.session.access_token : "";
-        const res = await fetch("/api/me", { headers: { Authorization: "Bearer " + token } });
+        const res = await fetch("/api/me", { headers: { Authorization: "Bearer " + token }, signal: ac.signal });
         if (cancelled) return;
         if (res.status === 403) { setAuthorized(false); return; }
         if (res.ok) {
@@ -47,10 +51,12 @@ export default function AuthGate({ children }) {
         }
         setAuthorized(true); // 401/other -> fail open
       } catch (e) {
-        if (!cancelled) setAuthorized(true); // network / local dev -> fail open
+        if (!cancelled) setAuthorized(true); // network / timeout / local dev -> fail open
+      } finally {
+        clearTimeout(timer);
       }
     })();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; clearTimeout(timer); ac.abort(); };
   }, [userId]);
 
   if (loading) return <div style={S.center}>Loading…</div>;
