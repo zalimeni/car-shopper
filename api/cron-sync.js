@@ -1,4 +1,7 @@
-// Scheduled background sync (Vercel Cron — see "crons" in vercel.json).
+// Daily maintenance cron (Vercel Cron — see "crons" in vercel.json).
+//
+// Always: pings Supabase (keepalive) so a free-tier project doesn't auto-pause.
+// Optionally (when CRON_SECRET is set): runs the scheduled background sync.
 //
 // Runs the same search + reconcile pipeline as the in-app sync, server-side,
 // for the accounts in CRON_SYNC_EMAILS (default: the owner). Price changes and
@@ -19,13 +22,22 @@
 // state alone.
 
 import { safeEqual, DEFAULT_ALLOW } from "./_auth.js";
-import { adminClient } from "./_supabaseAdmin.js";
+import { adminClient, anonClient } from "./_supabaseAdmin.js";
 import { searchListings } from "./marketcheck.js";
 import { reconcile } from "../src/reconcile.js";
 
 const PENDING_MAX = 100; // cap parked candidates so the blob stays bounded
 
 export default async function handler(req, res) {
+  // Keepalive: touch the database on every daily cron run so a free-tier
+  // Supabase project doesn't auto-pause after ~7 days of inactivity (a paused
+  // project's host stops resolving, which breaks sign-in). Runs regardless of
+  // whether scheduled sync is enabled; best-effort, never fails the request.
+  try {
+    const ka = adminClient() || anonClient();
+    if (ka) await ka.from("app_state").select("user_id", { head: true, count: "exact" });
+  } catch (e) { /* keepalive is best-effort */ }
+
   const secret = process.env.CRON_SECRET || "";
   const header = req.headers.authorization || "";
   const token = header.indexOf("Bearer ") === 0 ? header.slice(7).trim() : "";
