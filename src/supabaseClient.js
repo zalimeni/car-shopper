@@ -1,4 +1,25 @@
 import { createClient, processLock } from "@supabase/supabase-js";
+import { diag } from "./loadDiag";
+
+// Wrap fetch so no Supabase request (auth token refresh, DB read) can hang
+// forever — the auth client wedges on getSession() when its init-time network
+// call never returns. Times out at 12s and logs each request, which also
+// reveals (via the load stages) exactly which request stalls.
+function csFetch(input, init) {
+  const url = typeof input === "string" ? input : (input && input.url) || "";
+  const tag = url.replace(/^https?:\/\/[^/]+/, "").replace(/[?].*$/, "").slice(0, 48) || "req";
+  diag("net:START " + tag);
+  const ac = new AbortController();
+  const to = setTimeout(function () { diag("net:TIMEOUT " + tag); ac.abort(); }, 12000);
+  if (init && init.signal) {
+    if (init.signal.aborted) ac.abort();
+    else init.signal.addEventListener("abort", function () { ac.abort(); });
+  }
+  return fetch(input, Object.assign({}, init, { signal: ac.signal }))
+    .then(function (r) { diag("net:DONE " + r.status + " " + tag); return r; })
+    .catch(function (e) { diag("net:ERR " + tag + " " + (e && e.name)); throw e; })
+    .finally(function () { clearTimeout(to); });
+}
 
 // The Supabase URL and publishable ("anon") key are safe to expose in the
 // browser — data access is protected by Row Level Security, not by hiding
@@ -30,4 +51,5 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
     // cross-tab lock that wedges.
     lock: processLock,
   },
+  global: { fetch: csFetch },
 });
