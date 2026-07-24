@@ -14,20 +14,14 @@
 // On first read for a user, any data left in localStorage from the old
 // localStorage-only version is migrated up to Supabase, then cleared.
 
-import { supabase, storedSession } from "./supabaseClient";
-import { diag } from "./loadDiag";
+import { supabase } from "./supabaseClient";
 
 const TABLE = "app_state";
 const LEGACY_KEY = "car-search-data";
 
 async function currentUserId() {
-  // Prefer the session read straight from localStorage — supabase-js's
-  // getSession() awaits its init, which can hang retrying a failing token
-  // refresh. RLS enforces access regardless, so the local session id suffices.
-  const stored = storedSession();
-  if (stored && stored.user) return stored.user.id;
-  const { data } = await supabase.auth.getSession();
-  return data && data.session && data.session.user ? data.session.user.id : null;
+  const { data } = await supabase.auth.getUser();
+  return data && data.user ? data.user.id : null;
 }
 
 // True when the error is "the rev column doesn't exist yet" — the brief window
@@ -42,18 +36,14 @@ function missingRevColumn(error) {
 const storage = {
   async get(key) {
     try {
-      diag("storage:getSession-for-userid");
       const userId = await currentUserId();
-      diag("storage:userid=" + (userId ? "ok" : "none"));
       if (!userId) return null;
 
-      diag("storage:select-app_state-start");
       let { data, error } = await supabase
         .from(TABLE)
         .select("data,rev")
         .eq("user_id", userId)
         .maybeSingle();
-      diag("storage:select-done" + (error ? " ERR:" + (error.code || error.message) : ""));
       if (error && missingRevColumn(error)) {
         ({ data, error } = await supabase.from(TABLE).select("data").eq("user_id", userId).maybeSingle());
       }
