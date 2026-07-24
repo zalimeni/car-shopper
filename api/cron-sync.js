@@ -92,11 +92,16 @@ export default async function handler(req, res) {
       const budgetMs = deadline - Date.now() - 2000;
       if (budgetMs < 5000) { out.skipped = "out of time this run"; continue; }
       const dealerType = state.settings && state.settings.franchiseOnly ? "franchise" : null;
+      // The user's own MarketCheck keys first (quota fallback), then the shared key.
+      const userKeys = ((state.settings && state.settings.marketcheckKeys) || [])
+        .map(function (k) { return (k && k.key ? k.key : k) || ""; }).map(function (k) { return String(k).trim(); }).filter(Boolean);
+      const keys = userKeys.slice();
+      if (apiKey && keys.indexOf(apiKey) === -1) keys.push(apiKey);
       const r = await searchListings(
-        apiKey,
+        keys[0] || apiKey,
         profiles.map(function (p) { return { id: p.id, name: p.name, params: p.params }; }),
         hubs,
-        { dealerType: dealerType, budgetMs: budgetMs }
+        { dealerType: dealerType, budgetMs: budgetMs, keys: keys }
       );
 
       const rec = reconcile(state.listings || [], r.listings, todayStr);

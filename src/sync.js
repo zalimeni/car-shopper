@@ -74,6 +74,7 @@ async function fetchChunk(profiles, hubs, opts, filters) {
       }),
       hubs: hubs || [],
       franchiseOnly: !!(filters && filters.franchiseOnly),
+      marketcheckKeys: (filters && Array.isArray(filters.marketcheckKeys)) ? filters.marketcheckKeys : [],
     }),
   });
   if (!res.ok) {

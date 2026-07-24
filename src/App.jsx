@@ -79,8 +79,13 @@ var DEFAULT_SETTINGS = {
   tagline: "2-car · Boston + Durham · ≤$40K",
   hubs: HUBS,
   franchiseOnly: false, // when true, sync targets franchise dealers only (excludes independent)
+  marketcheckKeys: [], // per-user MarketCheck API keys, tried in order with quota fallback: [{ key, label }]
 };
 function getSettings(data) { return Object.assign({}, DEFAULT_SETTINGS, (data && data.settings) || {}); }
+// Ordered list of the user's MarketCheck key strings (empty -> server uses its shared key).
+function mcKeys(data) {
+  return (getSettings(data).marketcheckKeys || []).map(function (k) { return (k && k.key ? k.key : k) || ""; }).filter(Boolean);
+}
 
 // ── Utility ──
 // Pre-tax budget left after buying a car at pre-tax price p.
@@ -789,7 +794,7 @@ export default function App() {
           return prev.concat(dec.filter(function (c) { return !c.vin || !seen[c.vin]; }));
         });
       }
-      var res = await fetchListings(active, getSettings(data).hubs, opts, { franchiseOnly: !!getSettings(data).franchiseOnly }, onSyncProgress);
+      var res = await fetchListings(active, getSettings(data).hubs, opts, { franchiseOnly: !!getSettings(data).franchiseOnly, marketcheckKeys: mcKeys(data) }, onSyncProgress);
       // Reconcile + save against the LATEST state, not the `data` snapshot from
       // when the sync started — the fetches take a while and the UI stays live,
       // so approvals/edits/scores landed mid-sync must survive the final save.
@@ -1364,6 +1369,17 @@ function SettingsCard({ data, save }) {
   var [tagline, setTagline] = useState(s.tagline || "");
   var [franchiseOnly, setFranchiseOnly] = useState(!!s.franchiseOnly);
   var [hubs, setHubs] = useState((s.hubs || []).map(function (h) { return { n: h.n || "", z: h.z || "", lat: h.lat, lon: h.lon }; }));
+  var [mck, setMck] = useState((s.marketcheckKeys || []).map(function (k) { return { key: (k && k.key ? k.key : k) || "", label: (k && k.label) || "" }; }));
+
+  function setMckField(i, field, val) { setMck(function (prev) { return prev.map(function (k, j) { return j === i ? Object.assign({}, k, { [field]: val }) : k; }); }); }
+  function addMck() { setMck(function (prev) { return prev.concat([{ key: "", label: "" }]); }); }
+  function delMck(i) { setMck(function (prev) { return prev.filter(function (_, j) { return j !== i; }); }); }
+  function moveMck(i, dir) {
+    setMck(function (prev) {
+      var j = i + dir; if (j < 0 || j >= prev.length) return prev;
+      var copy = prev.slice(); var t = copy[i]; copy[i] = copy[j]; copy[j] = t; return copy;
+    });
+  }
 
   function setHub(i, key, val) {
     setHubs(function (prev) {
@@ -1380,7 +1396,9 @@ function SettingsCard({ data, save }) {
   function saveAll() {
     var cleanHubs = hubs.filter(function (h) { return (h.z || "").trim() || (h.n || "").trim(); })
       .map(function (h) { var o = { n: (h.n || "").trim(), z: (h.z || "").trim() }; if (h.lat != null) o.lat = h.lat; if (h.lon != null) o.lon = h.lon; return o; });
-    save(Object.assign({}, data, { settings: Object.assign({}, s, { budget: parseInt(budget) || 0, tagline: tagline.trim(), franchiseOnly: franchiseOnly, hubs: cleanHubs }) }));
+    var cleanMck = mck.filter(function (k) { return (k.key || "").trim(); })
+      .map(function (k) { return { key: (k.key || "").trim(), label: (k.label || "").trim() }; });
+    save(Object.assign({}, data, { settings: Object.assign({}, s, { budget: parseInt(budget) || 0, tagline: tagline.trim(), franchiseOnly: franchiseOnly, hubs: cleanHubs, marketcheckKeys: cleanMck }) }));
     setOpen(false);
   }
 
@@ -1391,7 +1409,7 @@ function SettingsCard({ data, save }) {
         <button style={S.secBtn} onClick={function () { setOpen(!open); }}>{open ? "Close" : "Edit"}</button>
       </div>
       {!open ? (
-        <p style={S.help}>Budget ${Number(s.budget || 0).toLocaleString()} · {(s.hubs || []).length} search location{(s.hubs || []).length === 1 ? "" : "s"} ({(s.hubs || []).map(function (h) { return h.n || h.z; }).join(", ") || "none"}){s.franchiseOnly ? " · franchise dealers only" : ""}</p>
+        <p style={S.help}>Budget ${Number(s.budget || 0).toLocaleString()} · {(s.hubs || []).length} search location{(s.hubs || []).length === 1 ? "" : "s"} ({(s.hubs || []).map(function (h) { return h.n || h.z; }).join(", ") || "none"}){s.franchiseOnly ? " · franchise dealers only" : ""}{(s.marketcheckKeys || []).length ? " · " + s.marketcheckKeys.length + " MarketCheck key" + (s.marketcheckKeys.length === 1 ? "" : "s") : ""}</p>
       ) : (
         <div>
           <div style={S.grid2}>
@@ -1415,7 +1433,24 @@ function SettingsCard({ data, save }) {
             <input type="checkbox" checked={franchiseOnly} onChange={function (e) { setFranchiseOnly(e.target.checked); }} />
             Franchise dealers only <span style={{ color: "#6b6b76" }}>— excludes independent dealers from sync results</span>
           </label>
-          <p style={S.help}>Budget powers the "budget left" math; locations are where dealer inventory is searched (~100 mi radius each). Franchise-only applies to future syncs; listings already saved from independent dealers stay until you remove them.</p>
+          <div style={{ marginTop: 14 }}>
+            <label style={S.lbl}>MarketCheck API keys (tried top-to-bottom; falls over to the next when one hits its quota)</label>
+            {mck.map(function (k, i) {
+              return (
+                <div key={i} style={{ display: "flex", gap: 6, marginTop: 6, alignItems: "center" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 1, color: "#6b6b76", fontSize: 10 }}>
+                    <button style={Object.assign({}, S.smBtn, { padding: "0 5px", opacity: i === 0 ? 0.3 : 1 })} disabled={i === 0} onClick={function () { moveMck(i, -1); }}>▲</button>
+                    <button style={Object.assign({}, S.smBtn, { padding: "0 5px", opacity: i === mck.length - 1 ? 0.3 : 1 })} disabled={i === mck.length - 1} onClick={function () { moveMck(i, 1); }}>▼</button>
+                  </div>
+                  <input style={Object.assign({}, S.inp, { width: 110 })} value={k.label} placeholder="label (optional)" onChange={function (e) { setMckField(i, "label", e.target.value); }} />
+                  <input style={Object.assign({}, S.inp, { flex: 1, fontFamily: "monospace" })} type="password" autoComplete="off" value={k.key} placeholder="MarketCheck API key" onChange={function (e) { setMckField(i, "key", e.target.value); }} />
+                  <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { delMck(i); }}>×</button>
+                </div>
+              );
+            })}
+            <button style={Object.assign({}, S.smBtn, { marginTop: 6 })} onClick={addMck}>+ Add MarketCheck key</button>
+          </div>
+          <p style={S.help}>Budget powers the "budget left" math; locations are where dealer inventory is searched (~100 mi radius each). Franchise-only applies to future syncs; listings already saved from independent dealers stay until you remove them. Your MarketCheck keys are stored in your synced settings and used server-side per sync — add several so a fallback kicks in when the first hits its monthly quota. Leave empty to use the app's shared key.</p>
           <button style={Object.assign({}, S.priBtn, { marginTop: 6 })} onClick={saveAll}>Save settings</button>
         </div>
       )}
