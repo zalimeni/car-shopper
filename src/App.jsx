@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import storage from "./storage";
 import { signOut } from "./Auth";
 import { fetchListings, fetchRawSample, reconcile } from "./sync";
-import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBaseline, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
+import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBaseline, generatePriceAssessment, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
 import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
 import { listSnapshots, restoreSnapshot } from "./snapshots";
 import { buildPriceHistoryCsv } from "./priceExport";
@@ -1170,7 +1170,7 @@ export default function App() {
         )}
         {tab === "Help" && <HelpTab />}
         {tab === "Compare" && <CompareTab data={data} />}
-        {tab === "Price" && <PriceCheckTab data={data} candidates={candidates} />}
+        {tab === "Price" && <PriceCheckTab data={data} candidates={candidates} keyStatus={keyStatus} />}
         {tab === "Admin" && isAdmin && <AdminTab />}
       </main>
       <footer style={S.footer}>
@@ -1942,12 +1942,23 @@ function scoreHue(v) { return v >= 7 ? "#2d8659" : v >= 5 ? "#d4a017" : "#c44"; 
 // Is a list price fair? Checks a VIN-or-description against comparable cars in
 // your own tracked/rejected data (free, offline). Live MarketCheck comps and an
 // AI verdict layer on later. Exported for render tests.
-export function PriceCheckTab({ data, candidates }) {
+export function PriceCheckTab({ data, candidates, keyStatus }) {
   var toneColor = { good: "#2d8659", ok: "#d4a017", high: "#c44" };
   var [q, setQ] = useState({ vin: "", year: "", make: "", model: "", trim: "", mileage: "", askingPrice: "" });
   var [result, setResult] = useState(null);
+  var [ai, setAi] = useState(null); // { busy } | { text } | { error }
   function set2(obj) { setQ(function (prev) { return Object.assign({}, prev, obj); }); }
   function set(k, v) { set2({ [k]: v }); }
+
+  function askAi() {
+    if (!result || result.error) return;
+    setAi({ busy: true });
+    generatePriceAssessment(result.query, result.comps, result.stats).then(function (text) {
+      setAi({ text: text });
+    }).catch(function (e) {
+      setAi({ error: e.code === "no_key" ? "Add your Anthropic key in the ✨ AI panel (Results tab) first." : (e.message || "AI assessment failed") });
+    });
+  }
 
   function prefillProfile(id) {
     var p = (data.profiles || []).find(function (x) { return x.id === id; });
@@ -1968,6 +1979,7 @@ export function PriceCheckTab({ data, candidates }) {
     var digits = function (s) { return parseInt(String(s).replace(/[^0-9]/g, ""), 10) || 0; };
     var query = { vin: q.vin, year: parseInt(q.year, 10) || 0, make: q.make.trim(), model: q.model.trim(), trim: q.trim.trim(), mileage: digits(q.mileage), askingPrice: digits(q.askingPrice) };
     if (!query.make && !query.model) { setResult({ error: "Enter at least a make and model (or prefill from a profile / VIN)." }); return; }
+    setAi(null);
     setResult(Object.assign({ query: query }, localPriceCheck(data, candidates, query)));
   }
 
@@ -1978,7 +1990,7 @@ export function PriceCheckTab({ data, candidates }) {
     <div>
       <div style={S.secH}><h2 style={S.secT}>Price check</h2></div>
       <div style={S.card}>
-        <p style={S.help}>Is an asking price fair? Enter a VIN or a description and it's judged against comparable cars in <span style={{ color: "#c8c8d0" }}>your own tracked + rejected data</span> — free and offline. (Live market comps and an AI verdict are coming next; live checks need your MarketCheck quota, currently exhausted.)</p>
+        <p style={S.help}>Is an asking price fair? Enter a VIN or a description and it's judged against comparable cars in <span style={{ color: "#c8c8d0" }}>your own tracked + rejected data</span> — free and offline. With an Anthropic key set, you can also <span style={{ color: "#c8c8d0" }}>Ask AI for a verdict</span> on the price. (Live market comps are still to come.)</p>
 
         {(data.profiles || []).length > 0 && (
           <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
@@ -2060,6 +2072,24 @@ export function PriceCheckTab({ data, candidates }) {
               </div>
             </div>
           )}
+          <div style={{ marginTop: 12, borderTop: "1px solid #1e2028", paddingTop: 10 }}>
+            {!keyStatus || !keyStatus.valid ? (
+              <p style={{ fontSize: 12, color: "#6b6b76", margin: 0 }}>Add your Anthropic key in the ✨ AI panel (Results tab) to get an AI verdict on this price.</p>
+            ) : (
+              <div>
+                <button style={Object.assign({}, S.secBtn, { color: "#b89edd" }, ai && ai.busy ? { opacity: 0.6 } : {})} disabled={ai && ai.busy} onClick={askAi}>
+                  {ai && ai.busy ? "Thinking…" : (ai && ai.text ? "✨ Re-ask AI" : "✨ Ask AI for a verdict")}
+                </button>
+                {ai && ai.error && <div style={{ fontSize: 12, color: "#c44", marginTop: 8 }}>{ai.error}</div>}
+                {ai && ai.text && (
+                  <div style={{ marginTop: 10, fontSize: 13, color: "#e4e4e7", lineHeight: 1.6, background: "#12261c", border: "1px solid #1f4230", borderRadius: 8, padding: 12 }}>
+                    <div style={{ fontSize: 11, color: "#3fae74", fontWeight: 600, marginBottom: 4 }}>✨ AI assessment</div>
+                    {ai.text}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
