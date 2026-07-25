@@ -437,7 +437,7 @@ function freshData(blank) {
 }
 
 // ── Tabs ──
-var TABS = ["Dashboard", "Profiles", "Criteria", "Results", "Compare", "Price", "Help"];
+var TABS = ["Dashboard", "Profiles", "Criteria", "Results", "Compare", "Price", "Settings", "Help"];
 
 // Session-scoped persistence for volatile UI state, so a mobile reload / tab
 // discard on app-switch doesn't wipe in-progress results (candidates, raw
@@ -698,10 +698,10 @@ export default function App() {
   function scoreErr(e) {
     if (e && e.code === "no_key") {
       setKeyStatus(function (s) { return Object.assign({}, s, { configured: false, valid: false }); });
-      setScoreMsg({ ok: false, text: "Add your Anthropic API key below to enable AI scoring." });
+      setScoreMsg({ ok: false, text: "Add your Anthropic API key in Settings to enable AI scoring." });
     } else if (e && (e.code === "key_rejected" || e.code === "key_unreadable")) {
       setKeyStatus(function (s) { return Object.assign({}, s, { valid: false }); });
-      setScoreMsg({ ok: false, text: (e.message || "Your Anthropic key was rejected") + " — re-enter it below." });
+      setScoreMsg({ ok: false, text: (e.message || "Your Anthropic key was rejected") + " — re-enter it in Settings." });
     } else {
       setScoreMsg({ ok: false, text: (e && e.message) || "Scoring failed" });
     }
@@ -864,7 +864,7 @@ export default function App() {
       } else if (autoScore && keyLoaded && !keyStatus.valid) {
         // Only report a missing/invalid key once the status fetch has resolved —
         // before that keyStatus.valid is just its default false (not a verdict).
-        setScoreMsg({ ok: false, text: "Auto-score is on but no valid Anthropic key — add one in the AI panel." });
+        setScoreMsg({ ok: false, text: "Auto-score is on but no valid Anthropic key — add one in Settings." });
       }
       return;
     } catch (e) {
@@ -1151,6 +1151,13 @@ export default function App() {
         </div>
       )}
 
+      {mcKeys(data).length === 0 && tab !== "Settings" && (
+        <div style={S.conflictBar}>
+          <span style={{ flex: 1 }}>No MarketCheck API key set — syncs fall back to the app's shared key and may hit its monthly quota. Add your own for reliable results.</span>
+          <button style={S.smBtn} onClick={function () { setTab("Settings"); }}>Open Settings</button>
+        </div>
+      )}
+
       <main>
         {tab === "Dashboard" && (
           <DashView data={data} watch={watch} rej={rej} sold={sold}
@@ -1169,13 +1176,14 @@ export default function App() {
             filterProf={filterProf} setFilterProf={setFilterProf}
             doSync={doSync} syncing={syncing} syncMsg={syncMsg} lastSynced={data.lastSynced}
             unseenCount={data.listings.filter(isUnseenOld).length} archiveUnseen={archiveUnseen}
-            keyStatus={keyStatus} setKeyStatus={setKeyStatus} autoScore={autoScore} setAutoScore={setAutoScore}
+            keyStatus={keyStatus} autoScore={autoScore} setAutoScore={setAutoScore}
             scoreBusy={scoreBusy} scoreMsg={scoreMsg} scoreItems={scoreItems} scoringActive={scoringActive}
-            scoreModel={scoreModel} setScoreModel={setScoreModel} />
+            scoreModel={scoreModel} setScoreModel={setScoreModel} goSettings={function () { setTab("Settings"); }} />
         )}
         {tab === "Help" && <HelpTab />}
         {tab === "Compare" && <CompareTab data={data} />}
-        {tab === "Price" && <PriceCheckTab data={data} candidates={candidates} keyStatus={keyStatus} />}
+        {tab === "Price" && <PriceCheckTab data={data} candidates={candidates} keyStatus={keyStatus} goSettings={function () { setTab("Settings"); }} />}
+        {tab === "Settings" && <SettingsTab data={data} save={save} keyStatus={keyStatus} setKeyStatus={setKeyStatus} />}
         {tab === "Admin" && isAdmin && <AdminTab />}
       </main>
       <footer style={S.footer}>
@@ -1458,6 +1466,63 @@ function SettingsCard({ data, save }) {
   );
 }
 
+// ── Settings tab: user-level config (was at the top of Profiles) ──
+function SettingsTab({ data, save, keyStatus, setKeyStatus }) {
+  return (
+    <div>
+      <SettingsCard data={data} save={save} />
+      <KeyCard keyStatus={keyStatus} setKeyStatus={setKeyStatus} />
+    </div>
+  );
+}
+
+// Anthropic API key management. Lives in Settings (single home for keys); the
+// Results AI panel shows status and links here. Powers AI scoring, price
+// baselines, and the Price Check verdict — all under the user's own key/quota.
+function KeyCard({ keyStatus, setKeyStatus }) {
+  var [keyInput, setKeyInput] = useState("");
+  var [busy, setBusy] = useState(false);
+  var [err, setErr] = useState("");
+  var configured = keyStatus.configured;
+  var valid = keyStatus.valid;
+
+  async function doSave() {
+    if (!keyInput.trim()) return;
+    setBusy(true); setErr("");
+    try { var s = await saveKey(keyInput.trim()); setKeyStatus(s); setKeyInput(""); }
+    catch (e) { setErr(e.message || "Couldn't save key"); }
+    setBusy(false);
+  }
+  async function doRemove() {
+    setBusy(true); setErr("");
+    try { var s = await removeKey(); setKeyStatus(s); }
+    catch (e) { setErr(e.message || "Couldn't remove key"); }
+    setBusy(false);
+  }
+
+  var statusText = !configured ? "No Anthropic key set"
+    : (valid ? "Key ••••" + (keyStatus.last4 || "") + " active"
+             : "Key ••••" + (keyStatus.last4 || "") + " rejected — re-enter");
+  var statusColor = !configured ? "#888" : (valid ? "#2d8659" : "#c44");
+
+  return (
+    <div style={S.card}>
+      <div style={S.secH}>
+        <h3 style={S.cardH}>✨ AI key (Anthropic)</h3>
+        <span style={{ fontSize: 11, color: statusColor }}>{statusText}</span>
+      </div>
+      <p style={S.help}>Powers AI scoring, price baselines, and the Price Check verdict. Your key is validated, then stored encrypted server-side and used only to run against your own account/quota. It's never displayed again. Create one at console.anthropic.com.</p>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <input style={Object.assign({}, S.inp, { flex: 1, minWidth: 180, fontFamily: "monospace" })} type="password" autoComplete="off"
+          placeholder="sk-ant-..." value={keyInput} onChange={function (e) { setKeyInput(e.target.value); }} />
+        <button style={Object.assign({}, S.priBtn, { padding: "7px 14px", fontSize: 13 }, busy ? { opacity: 0.6 } : {})} disabled={busy || !keyInput.trim()} onClick={doSave}>{busy ? "Validating…" : "Save"}</button>
+        {configured && <button style={S.secBtn} disabled={busy} onClick={doRemove}>Remove</button>}
+      </div>
+      {err && <div style={{ fontSize: 12, color: "#c44", marginTop: 6 }}>{err}</div>}
+    </div>
+  );
+}
+
 // ── Profiles + Global Reqs ──
 function ProfilesTab({ data, save, keyOk, scoreModel }) {
   var [ed, setEd] = useState(null);
@@ -1520,7 +1585,6 @@ function ProfilesTab({ data, save, keyOk, scoreModel }) {
 
   return (
     <div>
-      <SettingsCard data={data} save={save} />
       <div style={S.card}>
         <div style={S.secH}><h3 style={S.cardH}>Global Requirements</h3><button style={S.secBtn} onClick={function () { setShowAddReq(!showAddReq); }}>+ Add</button></div>
         <p style={S.help}>Apply to ALL profiles — fed to AI scoring (not the search query). Toggle off for soft preferences.</p>
@@ -1891,7 +1955,7 @@ function Wizard({ data, onComplete }) {
                 • Locations: <span style={b}>{hubs.filter(function (h) { return h.z || h.n; }).map(function (h) { return h.n || h.z; }).join(", ") || "none"}</span><br />
                 • Profiles: <span style={b}>{keepProfiles ? starterProfiles.length + " starter" : "starting blank"}</span><br />
                 • Active rules: <span style={b}>{reqs.filter(function (r) { return r.active; }).length}</span></p>
-              <p style={lbl}>To enable AI scoring, add your Anthropic API key on the Results tab afterward.</p>
+              <p style={lbl}>To enable AI scoring, add your Anthropic API key in Settings afterward.</p>
             </div>
           )}
           <div style={{ display: "flex", gap: 8, marginTop: 14, justifyContent: "space-between" }}>
@@ -1977,7 +2041,7 @@ function scoreHue(v) { return v >= 7 ? "#2d8659" : v >= 5 ? "#d4a017" : "#c44"; 
 // Is a list price fair? Checks a VIN-or-description against comparable cars in
 // your own tracked/rejected data (free, offline). Live MarketCheck comps and an
 // AI verdict layer on later. Exported for render tests.
-export function PriceCheckTab({ data, candidates, keyStatus }) {
+export function PriceCheckTab({ data, candidates, keyStatus, goSettings }) {
   var toneColor = { good: "#2d8659", ok: "#d4a017", high: "#c44" };
   var [q, setQ] = useState({ vin: "", year: "", make: "", model: "", trim: "", mileage: "", askingPrice: "" });
   var [result, setResult] = useState(null);
@@ -1991,7 +2055,7 @@ export function PriceCheckTab({ data, candidates, keyStatus }) {
     generatePriceAssessment(result.query, result.comps, result.stats).then(function (text) {
       setAi({ text: text });
     }).catch(function (e) {
-      setAi({ error: e.code === "no_key" ? "Add your Anthropic key in the ✨ AI panel (Results tab) first." : (e.message || "AI assessment failed") });
+      setAi({ error: e.code === "no_key" ? "Add your Anthropic key in Settings first." : (e.message || "AI assessment failed") });
     });
   }
 
@@ -2109,7 +2173,7 @@ export function PriceCheckTab({ data, candidates, keyStatus }) {
           )}
           <div style={{ marginTop: 12, borderTop: "1px solid #1e2028", paddingTop: 10 }}>
             {!keyStatus || !keyStatus.valid ? (
-              <p style={{ fontSize: 12, color: "#6b6b76", margin: 0 }}>Add your Anthropic key in the ✨ AI panel (Results tab) to get an AI verdict on this price.</p>
+              <p style={{ fontSize: 12, color: "#6b6b76", margin: 0 }}>Add your Anthropic key in {goSettings ? (<button style={S.linkBtn} onClick={goSettings}>Settings</button>) : "Settings"} to get an AI verdict on this price.</p>
             ) : (
               <div>
                 <button style={Object.assign({}, S.secBtn, { color: "#b89edd" }, ai && ai.busy ? { opacity: 0.6 } : {})} disabled={ai && ai.busy} onClick={askAi}>
@@ -2339,7 +2403,7 @@ function HelpTab() {
 
       <div style={S.card}>
         <h3 style={S.cardH}>AI scoring (optional)</h3>
-        <p style={li}>Add your <span style={b}>Anthropic API key</span> in the ✨ AI scoring panel (Results tab) to have each listing scored 1–10 per criterion with a short rationale and an overall summary.</p>
+        <p style={li}>Add your <span style={b}>Anthropic API key</span> in the <span style={b}>Settings</span> tab to have each listing scored 1–10 per criterion with a short rationale and an overall summary.</p>
         <p style={li}><span style={b}>Model</span> — pick Sonnet 5 (default, balanced), Opus 4.8 (most nuanced), or Haiku 4.5 (fastest/cheapest). <span style={b}>Auto-score on sync</span> scores only unscored candidates and listings whose price materially changed (never untouched or skipped ones), and is <span style={b}>skipped when there are more than 20 to score</span> — use Score all / per-card then, to avoid burning credits.</p>
         <p style={li}>Score (or Re-score) any single card with its ✨ button, or use <span style={b}>Score all</span> on the candidate queue. After you edit criteria, per-criterion guidance, or the scoring prompt, cards scored under the old settings show <span style={b}>⟳ Re-score (changed)</span>; <span style={b}>✨ Re-score filtered</span> (in the filter bar) re-applies to every candidate + watchlist listing matching the current filters at once.</p>
         <p style={note}>Scoring runs in batches and fills in results as each batch finishes, so partial progress is kept. If a large run is interrupted (e.g. the tab is backgrounded), the finished ones stay scored and the rest are picked up on the next sync/score. The key is validated, stored encrypted server-side, and never shown again — it's only used to score your own listings under your own account. Note: the API is pay-as-you-go and needs credits in the Anthropic Console; a Claude Pro/Max subscription does not include API access.</p>
@@ -2377,7 +2441,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   skipped, restoreSkipped, watchSkipped, purgeSkipped,
   importText, setImportText, doImport, importResult, setImportResult,
   filterProf, setFilterProf, doSync, syncing, syncMsg, lastSynced, unseenCount, archiveUnseen,
-  keyStatus, setKeyStatus, autoScore, setAutoScore, scoreBusy, scoreMsg, scoreItems, scoringActive, scoreModel, setScoreModel }) {
+  keyStatus, autoScore, setAutoScore, scoreBusy, scoreMsg, scoreItems, scoringActive, scoreModel, setScoreModel, goSettings }) {
   var [showAdd, setShowAdd] = useState(false);
   var [showImport, setShowImport] = useState(false);
   var [filterRole, setFilterRole] = useState("all");
@@ -2504,8 +2568,8 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
         </div>
       )}
 
-      <AiPanel keyStatus={keyStatus} setKeyStatus={setKeyStatus} autoScore={autoScore} setAutoScore={setAutoScore}
-        scoreBusy={scoreBusy} scoreMsg={scoreMsg} scoreModel={scoreModel} setScoreModel={setScoreModel} />
+      <AiPanel keyStatus={keyStatus} autoScore={autoScore} setAutoScore={setAutoScore}
+        scoreBusy={scoreBusy} scoreMsg={scoreMsg} scoreModel={scoreModel} setScoreModel={setScoreModel} goSettings={goSettings} />
 
       {/* Filter & Sort bar */}
       {totalAll > 0 && (
@@ -2818,31 +2882,13 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
 }
 
 // AI scoring controls: key status + management, auto-score toggle, live status.
-function AiPanel({ keyStatus, setKeyStatus, autoScore, setAutoScore, scoreBusy, scoreMsg, scoreModel, setScoreModel }) {
-  var [open, setOpen] = useState(false);
-  var [keyInput, setKeyInput] = useState("");
-  var [busy, setBusy] = useState(false);
-  var [err, setErr] = useState("");
+function AiPanel({ keyStatus, autoScore, setAutoScore, scoreBusy, scoreMsg, scoreModel, setScoreModel, goSettings }) {
   var configured = keyStatus.configured;
   var valid = keyStatus.valid;
 
-  async function doSave() {
-    if (!keyInput.trim()) return;
-    setBusy(true); setErr("");
-    try { var s = await saveKey(keyInput.trim()); setKeyStatus(s); setKeyInput(""); setOpen(false); }
-    catch (e) { setErr(e.message || "Couldn't save key"); }
-    setBusy(false);
-  }
-  async function doRemove() {
-    setBusy(true); setErr("");
-    try { var s = await removeKey(); setKeyStatus(s); }
-    catch (e) { setErr(e.message || "Couldn't remove key"); }
-    setBusy(false);
-  }
-
   var statusText = !configured ? "No Anthropic key set"
     : (valid ? "Key ••••" + (keyStatus.last4 || "") + " active"
-             : "Key ••••" + (keyStatus.last4 || "") + " rejected — re-enter");
+             : "Key ••••" + (keyStatus.last4 || "") + " rejected — re-enter in Settings");
   var statusColor = !configured ? "#888" : (valid ? "#2d8659" : "#c44");
 
   return (
@@ -2861,24 +2907,12 @@ function AiPanel({ keyStatus, setKeyStatus, autoScore, setAutoScore, scoreBusy, 
             <input type="checkbox" checked={autoScore} disabled={!valid} onChange={function (e) { setAutoScore(e.target.checked); }} />
             Auto-score on sync
           </label>
-          <button style={S.smBtn} onClick={function () { setOpen(!open); setErr(""); }}>{open ? "Close" : (configured ? "Manage key" : "Add key")}</button>
+          <button style={S.smBtn} onClick={goSettings}>{configured ? "Manage key in Settings" : "Add key in Settings"}</button>
         </div>
       </div>
       {scoreMsg && (
         <div style={{ fontSize: 12, marginTop: 6, color: scoreMsg.ok ? "#2d8659" : scoreMsg.busy ? "#6b9edd" : "#c44" }}>
           {scoreBusy ? "⏳ " : (scoreMsg.ok ? "✓ " : "")}{scoreMsg.text}
-        </div>
-      )}
-      {open && (
-        <div style={{ marginTop: 10, borderTop: "1px solid #1e2028", paddingTop: 10 }}>
-          <p style={S.help}>Your Anthropic API key is validated, then stored encrypted server-side and used only to score your own listings under your own account/quota. It's never displayed again. Create one at console.anthropic.com.</p>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <input style={Object.assign({}, S.inp, { flex: 1, minWidth: 180 })} type="password" autoComplete="off"
-              placeholder="sk-ant-..." value={keyInput} onChange={function (e) { setKeyInput(e.target.value); }} />
-            <button style={Object.assign({}, S.priBtn, { padding: "7px 14px", fontSize: 13 }, busy ? { opacity: 0.6 } : {})} disabled={busy || !keyInput.trim()} onClick={doSave}>{busy ? "Validating…" : "Save"}</button>
-            {configured && <button style={S.secBtn} disabled={busy} onClick={doRemove}>Remove</button>}
-          </div>
-          {err && <div style={{ fontSize: 12, color: "#c44", marginTop: 6 }}>{err}</div>}
         </div>
       )}
     </div>
@@ -3253,6 +3287,7 @@ var S = {
   cpoB: { fontSize: 10, fontWeight: 700, letterSpacing: "0.03em", color: "#0f1114", background: "#3fae74", padding: "1px 6px", borderRadius: 4, marginLeft: 6, verticalAlign: "middle", whiteSpace: "nowrap" },
   pcCell: { padding: "4px 8px", borderBottom: "1px solid #1e2028", color: "#c8c8d0", whiteSpace: "nowrap" },
   card: { background: "#161820", borderRadius: 10, padding: 16, marginBottom: 12, border: "1px solid #1e2028" },
+  linkBtn: { background: "none", border: "none", padding: 0, color: "#8ab4f8", cursor: "pointer", font: "inherit", textDecoration: "underline" },
   cardH: { fontSize: 14, fontWeight: 600, color: "#c8c8d0", margin: "0 0 10px" },
   secH: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
   secT: { fontSize: 16, fontWeight: 600, color: "#e4e4e7", margin: 0 },
