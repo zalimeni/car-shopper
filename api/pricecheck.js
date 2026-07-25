@@ -19,7 +19,9 @@ const SYSTEM =
   "You are a sharp, concise used-car pricing analyst helping a private buyer decide whether an asking price is fair. " +
   "Answer in 2–4 sentences, direct and practical, no preamble. Lead with a clear verdict (e.g. fair / a bit high / great deal). " +
   "Ground it in the comparable listings and stats provided — cite rough numbers. If the comp sample is thin or the mileages/trims " +
-  "differ a lot, say so and hedge accordingly. Remember these are asking prices, not sale prices.";
+  "differ a lot, say so and hedge accordingly. A confidence signal (from comp count and price spread) is provided — weight your " +
+  "certainty to match it: be decisive on high confidence, and on low confidence explicitly flag that this is a rough read. " +
+  "Remember these are asking prices, not sale prices.";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") { res.status(405).json({ error: "Use POST" }); return; }
@@ -46,7 +48,7 @@ export default async function handler(req, res) {
       max_tokens: 1024,
       thinking: { type: "disabled" },
       system: SYSTEM,
-      messages: [{ role: "user", content: buildPrompt(q, Array.isArray(body.comps) ? body.comps : [], body.stats || null) }],
+      messages: [{ role: "user", content: buildPrompt(q, Array.isArray(body.comps) ? body.comps : [], body.stats || null, body.confidence || null) }],
     }).finalMessage();
     if (resp.stop_reason === "refusal") { res.status(502).json({ error: "The model declined this request" }); return; }
     const text = (resp.content || []).filter(function (b) { return b.type === "text"; }).map(function (b) { return b.text; }).join("").trim();
@@ -64,7 +66,16 @@ export default async function handler(req, res) {
 
 function money(n) { return "$" + Number(n || 0).toLocaleString(); }
 
-function buildPrompt(q, comps, stats) {
+function confidenceLine(conf, comps) {
+  if (!conf || !conf.level || conf.level === "none") return "";
+  const live = (comps || []).filter(function (c) { return c && c.live; }).length;
+  const spread = conf.relIqr != null ? ", price spread ±" + Math.round(conf.relIqr * 100) + "% around the median" : "";
+  const mix = live ? " (" + live + " from a live-market search, the rest your own tracked data)" : "";
+  return "CONFIDENCE: " + conf.level.toUpperCase() + " — based on " + (conf.n || 0) + " comp"
+    + ((conf.n || 0) === 1 ? "" : "s") + mix + spread + ".";
+}
+
+function buildPrompt(q, comps, stats, conf) {
   const lines = [];
   lines.push("VEHICLE BEING PRICED:");
   lines.push(
@@ -72,22 +83,24 @@ function buildPrompt(q, comps, stats) {
     + (q.mileage ? " · " + Number(q.mileage).toLocaleString() + " mi" : "")
     + (q.askingPrice ? " · asking " + money(q.askingPrice) : " · (no asking price given)")
   );
+  const confLine = confidenceLine(conf, comps);
+  if (confLine) { lines.push(""); lines.push(confLine); }
   if (stats && stats.n) {
     lines.push("");
-    lines.push("LOCAL COMP STATS (" + stats.n + " comparable listing" + (stats.n === 1 ? "" : "s") + "): "
+    lines.push("COMP STATS (" + stats.n + " comparable listing" + (stats.n === 1 ? "" : "s") + "): "
       + "median " + money(stats.median) + ", typical " + money(stats.p25) + "–" + money(stats.p75)
       + ", full range " + money(stats.min) + "–" + money(stats.max) + ".");
   }
   if (comps && comps.length) {
     lines.push("");
-    lines.push("COMPARABLE LISTINGS (year · trim · mileage · price · status):");
+    lines.push("COMPARABLE LISTINGS (year · trim · mileage · price · source):");
     comps.slice(0, 12).forEach(function (c) {
       lines.push("- " + [
         c.year || "?",
         c.trim || "?",
         (c.mileage != null ? Number(c.mileage).toLocaleString() + " mi" : "? mi"),
         money(c.price),
-        c.status || "",
+        c.live ? "live market" : (c.status || "your data"),
       ].join(" · ") + (c.cpo ? " (CPO)" : ""));
     });
   } else {

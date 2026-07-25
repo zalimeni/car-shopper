@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { priceStats, assess, repPrice, localPriceCheck } from "../src/priceCheck.js";
+import { priceStats, assess, repPrice, localPriceCheck, compConfidence } from "../src/priceCheck.js";
 
 describe("priceStats", () => {
   it("computes n/min/median/percentiles/max", () => {
@@ -82,5 +82,48 @@ describe("localPriceCheck", () => {
     expect(r.count).toBe(0);
     expect(r.stats).toBeNull();
     expect(r.verdict).toBeNull();
+  });
+
+  it("folds live comps into the pool and tags them", () => {
+    const extra = [
+      { vin: "L1", year: 2021, vehicle: "Toyota RAV4", trim: "XLE", mileage: 38000, price: 26500 },
+      { vin: "L2", year: 2020, vehicle: "Toyota RAV4", trim: "LE", mileage: 50000, price: 23500 },
+    ];
+    const base = localPriceCheck(data, [], { make: "Toyota", model: "RAV4", year: 2021 });
+    const r = localPriceCheck(data, [], { make: "Toyota", model: "RAV4", year: 2021 }, { extra });
+    expect(r.count).toBe(base.count + 2);
+    expect(r.liveCount).toBe(2);
+    expect(r.comps.filter((c) => c.live).length).toBe(2);
+  });
+
+  it("dedups a live comp whose VIN is already tracked locally", () => {
+    const extra = [
+      { vin: "A", year: 2021, vehicle: "Toyota RAV4", trim: "XLE", mileage: 40000, price: 99999 }, // same VIN as tracked A
+      { vin: "L9", year: 2021, vehicle: "Toyota RAV4", trim: "XLE", mileage: 39000, price: 26000 },
+    ];
+    const r = localPriceCheck(data, [], { make: "Toyota", model: "RAV4", year: 2021 }, { extra });
+    // A stays counted once (as local), only L9 is added live.
+    expect(r.liveCount).toBe(1);
+    expect(r.comps.filter((c) => c.vin === "A" && c.live).length).toBe(0);
+  });
+});
+
+describe("compConfidence", () => {
+  const tight = { median: 24000, p25: 23000, p75: 25000 }; // relIqr ~0.083
+  const wide = { median: 24000, p25: 18000, p75: 30000 };  // relIqr 0.5
+  it("is high on a large, tight sample", () => {
+    expect(compConfidence(tight, 12).level).toBe("high");
+  });
+  it("is medium on a moderate sample", () => {
+    expect(compConfidence(tight, 6).level).toBe("medium");
+  });
+  it("is low on a thin sample regardless of spread", () => {
+    expect(compConfidence(tight, 3).level).toBe("low");
+  });
+  it("is low when prices are widely dispersed even with many comps", () => {
+    expect(compConfidence(wide, 20).level).toBe("low");
+  });
+  it("reports none when there are no comps", () => {
+    expect(compConfidence(null, 0).level).toBe("none");
   });
 });

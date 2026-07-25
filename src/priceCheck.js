@@ -75,8 +75,22 @@ export function assess(asking, stats, prices) {
   };
 }
 
+// Confidence in a comp-based read: a function of sample size and price spread
+// (relative inter-quartile range). Thin or widely-dispersed comps -> low.
+export function compConfidence(stats, n) {
+  if (!stats || !n) return { level: "none", n: n || 0, relIqr: null };
+  var relIqr = stats.median ? (stats.p75 - stats.p25) / stats.median : 1;
+  var level;
+  if (n >= 10 && relIqr <= 0.20) level = "high";
+  else if (n >= 5 && relIqr <= 0.35) level = "medium";
+  else level = "low";
+  return { level: level, n: n, relIqr: Math.round(relIqr * 100) / 100 };
+}
+
 // query: { vin?, year?, make?, model?, trim?, mileage?, askingPrice? }
-// Returns { stats, verdict, comps, count, filtersUsed, mileageRange }.
+// opts.extra: additional listings (e.g. live MarketCheck results) merged into
+// the comp pool and deduped by VIN against your own observed data.
+// Returns { stats, verdict, comps, count, liveCount, confidence, filtersUsed, mileageRange }.
 export function localPriceCheck(data, candidates, query, opts) {
   opts = opts || {};
   query = query || {};
@@ -86,6 +100,20 @@ export function localPriceCheck(data, candidates, query, opts) {
   var subjectVin = (query.vin || "").trim().toUpperCase();
 
   var observed = collectObserved(data || {}, candidates || []).map(function (o) { return o.l; });
+
+  // Merge in live-market listings, skipping any VIN we already track locally
+  // (so a car in both pools is counted once, as your own).
+  var extra = Array.isArray(opts.extra) ? opts.extra : [];
+  if (extra.length) {
+    var haveVin = {};
+    observed.forEach(function (l) { if (l.vin) haveVin[String(l.vin).toUpperCase()] = true; });
+    extra.forEach(function (l) {
+      var v = String(l.vin || "").toUpperCase();
+      if (v && haveVin[v]) return;
+      if (v) haveVin[v] = true; // also dedup within the live batch
+      observed.push(Object.assign({}, l, { _live: true }));
+    });
+  }
 
   var base = observed.filter(function (l) {
     if (subjectVin && (l.vin || "").trim().toUpperCase() === subjectVin) return false; // exclude the car itself
@@ -128,11 +156,18 @@ export function localPriceCheck(data, candidates, query, opts) {
   }).slice(0, 8).map(function (l) {
     return {
       vin: l.vin || "", year: l.year, trim: l.trim || "", mileage: l.mileage,
-      price: repPrice(l), status: l.status || "", dealerType: l.dealerType || "",
+      price: repPrice(l), status: l._live ? "market" : (l.status || ""), dealerType: l.dealerType || "",
       cpo: !!(l.cpo === true || l.dealerType === "CPO"), state: l.state || "",
-      date: l.lastSeen || l.addedDate || "",
+      date: l._live ? "" : (l.lastSeen || l.addedDate || ""),
+      live: !!l._live,
     };
   });
 
-  return { stats: stats, verdict: verdict, comps: display, count: comps.length, filtersUsed: filtersUsed, mileageRange: mileageRange };
+  var liveCount = comps.filter(function (l) { return l._live; }).length;
+
+  return {
+    stats: stats, verdict: verdict, comps: display, count: comps.length,
+    liveCount: liveCount, confidence: compConfidence(stats, comps.length),
+    filtersUsed: filtersUsed, mileageRange: mileageRange,
+  };
 }

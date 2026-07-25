@@ -94,6 +94,39 @@ async function fetchChunk(profiles, hubs, opts, filters) {
   return { listings: json.listings || [], errors: json.errors || [], mock: !!json.mock, rateLimited: !!json.rateLimited, rateLimitInfo: json.rateLimitInfo || null, quota: json.quota || null };
 }
 
+// Live-market comp broadening for the Price Check tool: fire a one-off
+// MarketCheck search for a specific vehicle and return normalized listings to
+// fold into the local comp pool. Separate from fetchListings (which reconciles
+// against tracked inventory) — this is a read-only, on-demand widen.
+export async function fetchPriceComps(query, hubs, marketcheckKeys) {
+  const { data: sess } = await supabase.auth.getSession();
+  const token = sess && sess.session ? sess.session.access_token : "";
+  const res = await fetch("/api/pricecomps", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: token ? "Bearer " + token : "",
+    },
+    body: JSON.stringify({
+      query: query || {},
+      hubs: Array.isArray(hubs) ? hubs : [],
+      marketcheckKeys: Array.isArray(marketcheckKeys) ? marketcheckKeys : [],
+    }),
+  });
+  const j = await res.json().catch(function () { return {}; });
+  if (!res.ok) {
+    const limited = res.status === 429 || res.status === 503 || res.status === 402;
+    let msg = limited
+      ? "MarketCheck rate limit / quota reached — try again after it resets."
+      : (j && j.message) || (j && j.error) || ("Live market check failed (HTTP " + res.status + ")");
+    const err = new Error(msg);
+    if (limited) err.rateLimited = true;
+    if (j && j.error) err.code = j.error;
+    throw err;
+  }
+  return { listings: j.listings || [], errors: j.errors || [], rateLimited: !!j.rateLimited, rateLimitInfo: j.rateLimitInfo || null, quota: j.quota || null };
+}
+
 // Debug helper: POST /api/marketcheck?raw=1 and return the raw MarketCheck
 // response + normalized sample. Wired to window.__rawSync for console use.
 export async function fetchRawSample(profiles, hubs) {
