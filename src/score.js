@@ -27,10 +27,10 @@ async function authHeaders() {
 }
 
 // AI fair-price verdict for the Price Check tool, grounded in the observed comps.
-export async function generatePriceAssessment(query, comps, stats) {
+export async function generatePriceAssessment(query, comps, stats, confidence) {
   const res = await fetch("/api/pricecheck", {
     method: "POST", headers: await authHeaders(),
-    body: JSON.stringify({ query: query, comps: comps || [], stats: stats || null }),
+    body: JSON.stringify({ query: query, comps: comps || [], stats: stats || null, confidence: confidence || null }),
   });
   const j = await res.json().catch(function () { return {}; });
   if (res.status === 401 || (j && (j.error === "key_rejected" || j.error === "no_key" || j.error === "key_unreadable"))) {

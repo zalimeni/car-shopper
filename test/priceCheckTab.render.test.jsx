@@ -8,7 +8,7 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 vi.mock("../src/supabaseClient", () => ({ supabase: { auth: { getSession: async () => ({ data: {} }) } } }));
 vi.mock("../src/storage", () => ({ default: { get: async () => null, set: async () => {} } }));
 vi.mock("../src/Auth", () => ({ signOut: () => {} }));
-vi.mock("../src/sync", () => ({ fetchListings: async () => ({}), fetchRawSample: async () => ({}), reconcile: () => ({}) }));
+vi.mock("../src/sync", () => ({ fetchListings: async () => ({}), fetchPriceComps: async () => ({ listings: [] }), fetchRawSample: async () => ({}), reconcile: () => ({}) }));
 vi.mock("../src/score", () => ({ getKeyStatus: async () => ({}), saveKey: async () => ({}), removeKey: async () => ({}), scoreSet: async () => [], getScorePrompt: async () => ({}), generateBaseline: async () => ({}), SCORE_MODEL_OPTIONS: [], DEFAULT_SCORE_MODEL: "x" }));
 vi.mock("../src/admin", () => ({ getMe: async () => ({}), listAllowed: async () => [], addAllowed: async () => {}, removeAllowed: async () => {} }));
 vi.mock("../src/snapshots", () => ({ listSnapshots: async () => [], restoreSnapshot: async () => {} }));
@@ -42,15 +42,15 @@ describe("PriceCheckTab renders + runs without crashing", () => {
     fireEvent.change(inputs[6], { target: { value: "27000" } });
     fireEvent.click(screen.getByText("Check price"));
     // A verdict + comp table should appear.
-    expect(container.textContent).toMatch(/local comp/);
+    expect(container.textContent).toMatch(/\d+ comps?/);
     expect(container.textContent).toMatch(/median/);
     cleanup();
   });
   it("prefill-from-profile then check works", () => {
-    render(<PriceCheckTab data={data} candidates={[]} />);
+    const { container } = render(<PriceCheckTab data={data} candidates={[]} />);
     fireEvent.click(screen.getByText("RAV4")); // profile prefill chip
     fireEvent.click(screen.getByText("Check price"));
-    expect(screen.getByText(/local comp/)).toBeTruthy();
+    expect(container.textContent).toMatch(/\d+ comps?/);
     cleanup();
   });
 });

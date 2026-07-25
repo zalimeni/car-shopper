@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import storage from "./storage";
 import { signOut } from "./Auth";
-import { fetchListings, fetchRawSample, reconcile } from "./sync";
+import { fetchListings, fetchPriceComps, fetchRawSample, reconcile } from "./sync";
 import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBaseline, generatePriceAssessment, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
 import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
 import { listSnapshots, restoreSnapshot } from "./snapshots";
@@ -2039,23 +2039,58 @@ function AdminTab() {
 function scoreHue(v) { return v >= 7 ? "#2d8659" : v >= 5 ? "#d4a017" : "#c44"; }
 
 // Is a list price fair? Checks a VIN-or-description against comparable cars in
-// your own tracked/rejected data (free, offline). Live MarketCheck comps and an
-// AI verdict layer on later. Exported for render tests.
+// your own tracked/rejected data (free, offline), with an optional live
+// MarketCheck search to widen thin comps and an optional AI verdict weighted to
+// a confidence signal. Exported for render tests.
+// Confidence pill for a price read — colour + label by level, comp count and
+// price spread in the tooltip. Driven by compConfidence() in priceCheck.js.
+function ConfidenceBadge({ c }) {
+  if (!c || !c.level || c.level === "none") return null;
+  var map = {
+    high: { label: "High confidence", bg: "#12261c", bd: "#1f4230", fg: "#3fae74" },
+    medium: { label: "Medium confidence", bg: "#2a2210", bd: "#3d3218", fg: "#e8c96a" },
+    low: { label: "Low confidence", bg: "#2a1414", bd: "#4a2020", fg: "#e07a7a" },
+  };
+  var m = map[c.level] || map.low;
+  var title = c.n + " comp" + (c.n === 1 ? "" : "s") + (c.relIqr != null ? " · price spread ±" + Math.round(c.relIqr * 100) + "% around the median" : "");
+  return (
+    <span title={title} style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.02em", color: m.fg, background: m.bg, border: "1px solid " + m.bd, borderRadius: 5, padding: "2px 8px", whiteSpace: "nowrap" }}>{m.label}</span>
+  );
+}
+
 export function PriceCheckTab({ data, candidates, keyStatus, goSettings }) {
   var toneColor = { good: "#2d8659", ok: "#d4a017", high: "#c44" };
   var [q, setQ] = useState({ vin: "", year: "", make: "", model: "", trim: "", mileage: "", askingPrice: "" });
   var [result, setResult] = useState(null);
   var [ai, setAi] = useState(null); // { busy } | { text } | { error }
+  var [live, setLive] = useState(null); // { busy } | { done, added, rateLimited, errors } | { error }
   function set2(obj) { setQ(function (prev) { return Object.assign({}, prev, obj); }); }
   function set(k, v) { set2({ [k]: v }); }
 
   function askAi() {
     if (!result || result.error) return;
     setAi({ busy: true });
-    generatePriceAssessment(result.query, result.comps, result.stats).then(function (text) {
+    generatePriceAssessment(result.query, result.comps, result.stats, result.confidence).then(function (text) {
       setAi({ text: text });
     }).catch(function (e) {
       setAi({ error: e.code === "no_key" ? "Add your Anthropic key in Settings first." : (e.message || "AI assessment failed") });
+    });
+  }
+
+  // Broaden the comp pool with a live MarketCheck search for this vehicle, then
+  // re-run the local engine over the combined pool. On-demand (spends quota).
+  function runLive() {
+    if (!result || result.error) return;
+    var hubs = getSettings(data).hubs || [];
+    if (!hubs.length) { setLive({ error: "Add a search location in Settings to check the live market." }); return; }
+    setLive({ busy: true });
+    fetchPriceComps(result.query, hubs, mcKeys(data)).then(function (r) {
+      var merged = localPriceCheck(data, candidates, result.query, { extra: r.listings });
+      setResult(Object.assign({ query: result.query }, merged));
+      setAi(null); // comps changed — any prior AI verdict is stale
+      setLive({ done: true, added: (r.listings || []).length, rateLimited: !!r.rateLimited, errors: r.errors || [] });
+    }).catch(function (e) {
+      setLive({ error: e.message || "Live market check failed" });
     });
   }
 
@@ -2078,7 +2113,7 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings }) {
     var digits = function (s) { return parseInt(String(s).replace(/[^0-9]/g, ""), 10) || 0; };
     var query = { vin: q.vin, year: parseInt(q.year, 10) || 0, make: q.make.trim(), model: q.model.trim(), trim: q.trim.trim(), mileage: digits(q.mileage), askingPrice: digits(q.askingPrice) };
     if (!query.make && !query.model) { setResult({ error: "Enter at least a make and model (or prefill from a profile / VIN)." }); return; }
-    setAi(null);
+    setAi(null); setLive(null);
     setResult(Object.assign({ query: query }, localPriceCheck(data, candidates, query)));
   }
 
@@ -2089,7 +2124,7 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings }) {
     <div>
       <div style={S.secH}><h2 style={S.secT}>Price check</h2></div>
       <div style={S.card}>
-        <p style={S.help}>Is an asking price fair? Enter a VIN or a description and it's judged against comparable cars in <span style={{ color: "#c8c8d0" }}>your own tracked + rejected data</span> — free and offline. With an Anthropic key set, you can also <span style={{ color: "#c8c8d0" }}>Ask AI for a verdict</span> on the price. (Live market comps are still to come.)</p>
+        <p style={S.help}>Is an asking price fair? Enter a VIN or a description and it's judged against comparable cars in <span style={{ color: "#c8c8d0" }}>your own tracked + rejected data</span> — free and offline. Thin on comps? <span style={{ color: "#c8c8d0" }}>Check the live market</span> to widen the pool with current MarketCheck listings. With an Anthropic key set, you can also <span style={{ color: "#c8c8d0" }}>Ask AI for a verdict</span>.</p>
 
         {(data.profiles || []).length > 0 && (
           <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
@@ -2129,7 +2164,7 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings }) {
         <div style={S.card}>
           {!result.stats ? (
             <p style={{ fontSize: 13, color: "#c8c8d0", margin: 0 }}>
-              No comparable listings in your data yet for <strong>{[result.query.year, result.query.make, result.query.model].filter(Boolean).join(" ")}</strong>. Track/sync this model to build local comps — or use the live market check once your MarketCheck quota resets.
+              No comparable listings in your data yet for <strong>{[result.query.year, result.query.make, result.query.model].filter(Boolean).join(" ")}</strong>. Track/sync this model to build local comps — or <strong style={{ color: "#8ab4f8" }}>Check the live market</strong> below to pull current listings now.
             </p>
           ) : (
             <div>
@@ -2142,13 +2177,15 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings }) {
                   </span>
                 </div>
               )}
-              <div style={{ fontSize: 13, color: "#c8c8d0", marginBottom: 6 }}>
-                <strong>{result.count}</strong> local comp{result.count === 1 ? "" : "s"} · median <strong>{money(result.stats.median)}</strong> · typical {money(result.stats.p25)}–{money(result.stats.p75)} · full range {money(result.stats.min)}–{money(result.stats.max)}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
+                <ConfidenceBadge c={result.confidence} />
+                <span style={{ fontSize: 13, color: "#c8c8d0" }}>
+                  <strong>{result.count}</strong> comp{result.count === 1 ? "" : "s"}{result.liveCount ? " (" + result.liveCount + " live)" : ""} · median <strong>{money(result.stats.median)}</strong> · typical {money(result.stats.p25)}–{money(result.stats.p75)} · full range {money(result.stats.min)}–{money(result.stats.max)}
+                </span>
               </div>
               <div style={{ fontSize: 11, color: "#6b6b76", marginBottom: 10 }}>
-                Matched on: {result.filtersUsed.join(", ")}{result.mileageRange ? " · comp mileage " + result.mileageRange.min.toLocaleString() + "–" + result.mileageRange.max.toLocaleString() + " mi" : ""}. From your tracked, rejected, sold, skipped &amp; candidate listings.
+                Matched on: {result.filtersUsed.join(", ")}{result.mileageRange ? " · comp mileage " + result.mileageRange.min.toLocaleString() + "–" + result.mileageRange.max.toLocaleString() + " mi" : ""}. From your tracked, rejected, sold, skipped &amp; candidate listings{result.liveCount ? " plus a live MarketCheck search" : ""}.
               </div>
-              {result.count < 3 && <div style={{ fontSize: 12, color: "#d4a017", marginBottom: 8 }}>⚠ Only {result.count} comp{result.count === 1 ? "" : "s"} — treat this as a rough read; more data means a better verdict.</div>}
               <div style={{ overflowX: "auto" }}>
                 <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%" }}>
                   <thead><tr>{["Year", "Trim", "Mileage", "Price", "Status", "Dealer", "When"].map(function (h) { return (<th key={h} style={{ textAlign: "left", padding: "4px 8px", color: "#6b6b76", fontWeight: 500, borderBottom: "1px solid #2a2d38", whiteSpace: "nowrap" }}>{h}</th>); })}</tr></thead>
@@ -2160,7 +2197,7 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings }) {
                           <td style={S.pcCell}>{c.trim || "—"}</td>
                           <td style={S.pcCell}>{c.mileage != null ? c.mileage.toLocaleString() : "—"}</td>
                           <td style={Object.assign({}, S.pcCell, { fontWeight: 600, color: "#f0f0f3" })}>{money(c.price)}</td>
-                          <td style={S.pcCell}>{c.status}{c.cpo ? " ✓CPO" : ""}</td>
+                          <td style={S.pcCell}>{c.live ? <span style={{ color: "#8ab4f8" }}>live market</span> : c.status}{c.cpo ? " ✓CPO" : ""}</td>
                           <td style={S.pcCell}>{c.dealerType || "—"}{c.state ? " · " + c.state : ""}</td>
                           <td style={S.pcCell}>{c.date || "—"}</td>
                         </tr>
@@ -2171,6 +2208,20 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings }) {
               </div>
             </div>
           )}
+          <div style={{ marginTop: 12, borderTop: "1px solid #1e2028", paddingTop: 10 }}>
+            <button style={Object.assign({}, S.secBtn, { color: "#8ab4f8" }, live && live.busy ? { opacity: 0.6 } : {})} disabled={live && live.busy} onClick={runLive}>
+              {live && live.busy ? "Searching the live market…" : (result.liveCount ? "🌐 Refresh live market comps" : "🌐 Check the live market")}
+            </button>
+            {live && live.error && <div style={{ fontSize: 12, color: "#c44", marginTop: 8 }}>{live.error}</div>}
+            {live && live.done && (
+              <div style={{ fontSize: 12, color: "#6b6b76", marginTop: 8 }}>
+                {live.added ? "Added " + live.added + " live listing" + (live.added === 1 ? "" : "s") + " to the comp pool." : "No extra live listings matched — the local read stands."}
+                {live.rateLimited ? " (MarketCheck quota hit mid-search — results may be partial.)" : ""}
+              </div>
+            )}
+            <div style={{ fontSize: 11, color: "#6b6b76", marginTop: 6 }}>Searches your Settings locations via MarketCheck (uses your quota) and folds current asking prices into the comps above.</div>
+          </div>
+
           <div style={{ marginTop: 12, borderTop: "1px solid #1e2028", paddingTop: 10 }}>
             {!keyStatus || !keyStatus.valid ? (
               <p style={{ fontSize: 12, color: "#6b6b76", margin: 0 }}>Add your Anthropic key in {goSettings ? (<button style={S.linkBtn} onClick={goSettings}>Settings</button>) : "Settings"} to get an AI verdict on this price.</p>
@@ -2384,7 +2435,7 @@ function HelpTab() {
         <p style={li}><span style={b}>Criteria</span> — the weighted factors (price, mileage, condition, etc.) behind each listing's composite score. Editing weights re-scores everything automatically.</p>
         <p style={li}><span style={b}>Results</span> — sync, review candidates, and manage your watchlist. This is where you'll spend most of your time.</p>
         <p style={li}><span style={b}>Compare</span> — side-by-side table of watchlist listings for the profiles you pick, across primary specs and each scoring criterion plus the total; best value per row is highlighted.</p>
-        <p style={li}><span style={b}>Price</span> — is an asking price fair? Enter a VIN or a description (year/make/model/trim/mileage) and it's judged against comparable cars in your own tracked, rejected, sold, skipped &amp; candidate data — free and offline, no MarketCheck calls. Great for sanity-checking a private listing you found elsewhere.</p>
+        <p style={li}><span style={b}>Price</span> — is an asking price fair? Enter a VIN or a description (year/make/model/trim/mileage) and it's judged against comparable cars in your own tracked, rejected, sold, skipped &amp; candidate data — free and offline. A confidence badge reflects how many comps backed the read and how tightly they cluster. Thin on local comps? <span style={b}>Check the live market</span> fires a one-off MarketCheck search for that vehicle (uses your quota) to widen the pool. With an Anthropic key you can also ask AI for a plain-English verdict, weighted to the confidence. Great for sanity-checking a private listing you found elsewhere.</p>
       </div>
 
       <div style={S.card}>
