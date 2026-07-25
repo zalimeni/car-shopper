@@ -10,7 +10,7 @@
     "test": "vitest run"
   },
   "engines": {
-    "node": "22.x"
+    "node": "24.x"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.2",
