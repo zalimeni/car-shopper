@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildScoreSchema, buildUserPrompt, coerceResult, resolveScoreModel, SCORE_MODELS, resolveBaselineBands, SCORE_SYSTEM } from "../api/_scoring.js";
+import { buildScoreSchema, buildUserPrompt, coerceResult, resolveScoreModel, SCORE_MODELS, resolveBaselineBands, SCORE_SYSTEM, homeBaseLabel } from "../api/_scoring.js";
 
 describe("resolveBaselineBands", () => {
   const baseline = {
@@ -132,6 +132,48 @@ describe("higher trims are upside, not a penalty", () => {
       profile: { name: "Outback", params: { make: "Subaru", trims: "Base, Premium", priceBaseline: baseline } },
     }));
     expect(withBase).not.toContain("no baseline tier matches");
+  });
+});
+
+// Multi-hub searches made every car look local: `dist` is the radius from
+// whichever travel hub found it, so a KY dealer 20 mi from a KY hub read as
+// "20 mi away" to a buyer living in Durham NC.
+describe("home base anchors the location criterion", () => {
+  const listing = { year: 2021, vehicle: "Toyota RAV4", price: 24000, location: "Louisville", state: "KY", distMi: 22 };
+  const crit = [{ id: "location", name: "Location & salt exposure", weight: 10 }];
+  const withHome = buildUserPrompt(listing, { criteria: crit, homeBase: { n: "Durham NC", z: "27701" } });
+
+  it("states the home base and makes it the only location anchor", () => {
+    expect(withHome).toContain("BUYER'S HOME BASE: Durham NC 27701");
+    expect(withHome).toContain("ONLY anchor");
+  });
+  it("warns that proximity to a travel hub is not proximity to home", () => {
+    expect(withHome).toContain("is NOT nearby");
+  });
+  it("labels the search-radius distance so it can't read as distance from home", () => {
+    expect(withHome).toContain("Distance from the search area it was found in (NOT from home): 22 mi");
+    expect(withHome).not.toContain("Distance from buyer's search location");
+  });
+  it("still surfaces the dealer's own city/state to reason from", () => {
+    expect(withHome).toContain("Dealer location: Louisville, KY");
+  });
+  it("says the home base is unknown rather than assuming local when unset", () => {
+    const noHome = buildUserPrompt(listing, { criteria: crit });
+    expect(noHome).toContain("BUYER'S HOME BASE: not set");
+    expect(noHome).toContain("home base is unknown");
+  });
+  it("scores location against home base, not the search area", () => {
+    expect(withHome).toContain("HOME BASE");
+    expect(withHome).toContain("NOT from whichever search area");
+  });
+});
+
+describe("homeBaseLabel", () => {
+  it("joins name and zip, and tolerates a bare string or nothing", () => {
+    expect(homeBaseLabel({ n: "Durham NC", z: "27701" })).toBe("Durham NC 27701");
+    expect(homeBaseLabel({ n: "Durham NC" })).toBe("Durham NC");
+    expect(homeBaseLabel("Durham NC")).toBe("Durham NC");
+    expect(homeBaseLabel(null)).toBe("");
   });
 });
 

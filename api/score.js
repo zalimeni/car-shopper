@@ -60,7 +60,7 @@ export default async function handler(req, res) {
   const schema = buildScoreSchema(criteria);
   const model = resolveScoreModel(body.model); // UI choice, allowlisted; falls back to default
   const system = (typeof body.system === "string" && body.system.trim()) ? body.system.trim() : SCORE_SYSTEM;
-  const ctx = { criteria: criteria, profile: body.profile, globalReqs: body.globalReqs };
+  const ctx = { criteria: criteria, profile: body.profile, globalReqs: body.globalReqs, homeBase: body.homeBase };
 
   let authFailed = false;
   const results = await Promise.all(listings.map(async function (listing, index) {

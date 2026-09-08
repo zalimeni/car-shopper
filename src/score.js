@@ -135,7 +135,7 @@ export async function scoreSet(items, ctx, opts) {
     try {
       const res = await fetch("/api/score", {
         method: "POST", headers: headers, signal: controller.signal,
-        body: JSON.stringify({ listings: chunk.items, criteria: ctx.criteria, profile: chunk.profile, globalReqs: ctx.globalReqs, model: ctx.model, system: ctx.system }),
+        body: JSON.stringify({ listings: chunk.items, criteria: ctx.criteria, profile: chunk.profile, globalReqs: ctx.globalReqs, model: ctx.model, system: ctx.system, homeBase: ctx.homeBase }),
       });
       const j = await res.json().catch(function () { return {}; });
       if (res.status === 401 || (j && (j.error === "key_rejected" || j.error === "no_key" || j.error === "key_unreadable"))) {
