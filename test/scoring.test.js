@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildScoreSchema, buildUserPrompt, coerceResult, resolveScoreModel, SCORE_MODELS, resolveBaselineBands } from "../api/_scoring.js";
+import { buildScoreSchema, buildUserPrompt, coerceResult, resolveScoreModel, SCORE_MODELS, resolveBaselineBands, SCORE_SYSTEM } from "../api/_scoring.js";
 
 describe("resolveBaselineBands", () => {
   const baseline = {
@@ -88,6 +88,58 @@ describe("buildUserPrompt", () => {
     const crit = [{ id: "price", name: "Price", weight: 25, guidance: "10 = below $20k for this year" }];
     const out = buildUserPrompt(listing, { criteria: crit });
     expect(out).toContain("10 = below $20k for this year");
+  });
+});
+
+// A trim ABOVE the buyer's preferred ones is upside, not a miss: it must not be
+// scored down as the "wrong trim", and at a comparable price it should win.
+describe("higher trims are upside, not a penalty", () => {
+  const listing = { year: 2021, vehicle: "Subaru Outback", trim: "Touring", price: 24000, mileage: 38000 };
+  const ctx = {
+    criteria: [{ id: "features", name: "Features", weight: 20 }, { id: "price", name: "Price", weight: 25 }],
+    profile: { name: "Outback", params: { make: "Subaru", model: "Outback", trims: "Base, Premium" } },
+  };
+  const p = buildUserPrompt(listing, ctx);
+
+  it("presents the preferred trims as a floor rather than a whitelist", () => {
+    expect(p).toContain("Preferred trims: Base, Premium");
+    expect(p).toContain("floor, not a whitelist");
+    expect(p).not.toContain("Acceptable trims");
+  });
+  it("omits the trim-handling note when the profile lists no trims", () => {
+    const out = buildUserPrompt(listing, { criteria: ctx.criteria, profile: { params: { make: "Subaru" } } });
+    expect(out).not.toContain("floor, not a whitelist");
+  });
+  it("no longer tells the model a richer trim is the wrong trim", () => {
+    expect(p).not.toContain("wrong trim");
+    expect(p).toContain("never a penalty");
+  });
+  it("anchors the price criterion on the listing's own trim", () => {
+    expect(p).toContain("THAT trim/mileage");
+  });
+  it("warns not to price a richer trim against a fallback band", () => {
+    const baseline = { refMileage: 40000, perThousandMi: 100, default: { good: 20000, fair: 22000, high: 24000 }, tiers: [] };
+    const withBase = buildUserPrompt(listing, Object.assign({}, ctx, {
+      profile: { name: "Outback", params: { make: "Subaru", trims: "Base, Premium", priceBaseline: baseline } },
+    }));
+    expect(withBase).toContain("no baseline tier matches this listing's trim");
+    expect(withBase).toContain("floor, not a ceiling");
+  });
+  it("keeps the plain anchor when a tier does match the trim", () => {
+    const baseline = { refMileage: 40000, perThousandMi: 100, default: { good: 20000, fair: 22000, high: 24000 },
+      tiers: [{ years: "2021", trim: "Touring", good: 25000, fair: 27000, high: 29000 }] };
+    const withBase = buildUserPrompt(listing, Object.assign({}, ctx, {
+      profile: { name: "Outback", params: { make: "Subaru", trims: "Base, Premium", priceBaseline: baseline } },
+    }));
+    expect(withBase).not.toContain("no baseline tier matches");
+  });
+});
+
+describe("SCORE_SYSTEM trim ladder", () => {
+  it("states the ladder rule and that equal-priced richer trims score higher", () => {
+    expect(SCORE_SYSTEM).toContain("preferred floor, not");
+    expect(SCORE_SYSTEM).toContain("should score higher");
+    expect(SCORE_SYSTEM).toContain("Only a trim BELOW");
   });
 });
 

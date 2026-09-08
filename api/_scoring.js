@@ -30,11 +30,11 @@ export function resolveScoreModel(requested) {
 // across runs. Keyed by the default criterion ids; criteria without an entry
 // (e.g. user-added) still get scored, just without extra guidance.
 export const CRITERION_GUIDANCE = {
-  price: "10 = well under the profile's price ceiling for the trim/mileage; 1 = at or over ceiling / overpriced for the market.",
+  price: "10 = well under the profile's price ceiling and under market for THAT trim/mileage; 1 = at or over ceiling / overpriced for the market. Judge against what the listing's own trim should cost — a higher trim at a lower-trim price is a bargain, not an overspend.",
   mileage: "10 = low miles for the model year (well under ~12k/yr); 1 = high miles for its age.",
   dealer: "10 = CPO or reputable franchise; 5 = independent; 1 = private/unknown or red flags.",
   condition: "10 = clean title, 1-owner, no accidents, well-maintained; 1 = branded title, accidents, or neglect.",
-  features: "10 = target trim with all must-have + several nice-to-have features; 1 = wrong trim / missing must-haves.",
+  features: "10 = target trim or richer with all must-have + several nice-to-have features (a trim above the buyer's preferred level is a bonus, never a penalty); 1 = a trim below their preferred level / missing must-haves.",
   color: "10 = preferred/neutral color; 1 = a color the buyer wants to avoid (see requirements).",
   location: "10 = local & low salt-belt exposure; 1 = far away and/or heavy road-salt region (rust risk).",
   deal: "10 = priced well below comparable listings (great deal); 1 = priced above market.",
@@ -84,7 +84,14 @@ export const SCORE_SYSTEM =
   "listing data, say so rather than inventing it, and score conservatively. " +
   "Do not penalize, flag, or comment on missing/unstated title or ownership " +
   "history — absence of a Carfax confirmation is not a negative. Only an " +
-  "explicitly reported branded/salvage/rebuilt title or accident is a concern.";
+  "explicitly reported branded/salvage/rebuilt title or accident is a concern. " +
+  "Trim levels form a ladder. The buyer's listed trims are a preferred floor, not " +
+  "an exclusive whitelist: a trim ABOVE them (more standard equipment — e.g. " +
+  "Limited or Touring above LE or Premium) fully satisfies the trim preference and " +
+  "must never be marked down as the \"wrong trim\". At a comparable price a richer " +
+  "trim is strictly better — more car for the money — so it should score higher, " +
+  "not lower. Only a trim BELOW the buyer's preferred level, or one they explicitly " +
+  "excluded, counts against a listing.";
 
 // Compact, deterministic listing serialization for the prompt — only fields that
 // are present. Includes Carfax / pricing extras when the listing carries them.
@@ -136,7 +143,10 @@ function profileFacts(p) {
   add("Looking for", [p.name, x.make, x.model].filter(Boolean).join(" "));
   add("Powertrain", x.powertrain);
   add("Acceptable years", x.years);
-  add("Acceptable trims", x.trims);
+  add("Preferred trims", x.trims);
+  // Spelled out because a bare trim list reads as a whitelist, and the model was
+  // marking richer trims down as "wrong trim" instead of treating them as upside.
+  if (x.trims) f.push("Trim handling: the preferred trims are a floor, not a whitelist — a higher/richer trim also qualifies and is a plus at a comparable price; only a trim below them counts against the listing.");
   add("Max price", x.maxPrice != null ? "$" + Number(x.maxPrice).toLocaleString() : null);
   add("Max mileage", x.maxMiles != null ? Number(x.maxMiles).toLocaleString() + " mi" : null);
   add("Must have", x.mustHave);
@@ -190,7 +200,7 @@ export function buildBaselineSchema() {
 }
 
 export const BASELINE_SYSTEM =
-  "You are a used-car pricing analyst. Given a buyer's target vehicle and a sample of real recent local dealer listings, produce asking-price baselines a shopper can score against. For each relevant model year and trim, give a good (great-deal), fair (typical market), and high (overpriced) asking price, all quoted at one sensible reference mileage, plus perThousandMi = how much the fair price drops per 1,000 miles above that reference. Group consecutive years that share the same generation/pricing into a range (e.g. \"2019-2020\"). Cover the buyer's years and trims of interest. Ground the numbers in the provided real listings where available; use general market knowledge to fill gaps. All prices in whole US dollars.";
+  "You are a used-car pricing analyst. Given a buyer's target vehicle and a sample of real recent local dealer listings, produce asking-price baselines a shopper can score against. For each relevant model year and trim, give a good (great-deal), fair (typical market), and high (overpriced) asking price, all quoted at one sensible reference mileage, plus perThousandMi = how much the fair price drops per 1,000 miles above that reference. Group consecutive years that share the same generation/pricing into a range (e.g. \"2019-2020\"). Cover the buyer's years and trims of interest, and also give tiers for trims ABOVE their preferred level that show up in this market — otherwise a richer trim gets priced against a lower trim's band and looks overpriced. Ground the numbers in the provided real listings where available; use general market knowledge to fill gaps. All prices in whole US dollars.";
 
 export function buildBaselinePrompt(profile, listings) {
   const p = (profile && profile.params) || {};
@@ -226,6 +236,10 @@ export function buildUserPrompt(listing, ctx) {
   const bands = baseline ? resolveBaselineBands(baseline, listing.year, listing.trim, listing.mileage) : null;
   const baselineSection = bands
     ? "PRICE BASELINE FOR THIS LISTING (" + (listing.year || "?") + " " + (listing.trim || "") + " @ " + (listing.mileage != null ? Number(listing.mileage).toLocaleString() + " mi" : "? mi") + "): good ≤ $" + bands.good.toLocaleString() + " · fair ≈ $" + bands.fair.toLocaleString() + " · high ≥ $" + bands.high.toLocaleString() + ". For the \"price\" criterion, anchor on these: 9-10 at/below good, ~5 near fair, 1-2 at/above high; interpolate between."
+      // Without a tier for this listing's own trim the numbers are a generic
+      // fallback — usually calibrated to a lower trim, which would otherwise
+      // score a richer trim as "overpriced" purely for being a richer trim.
+      + (bands.matchedTier ? "" : " NOTE: no baseline tier matches this listing's trim, so these are generic fallback numbers. If this trim sits above the buyer's preferred trims it should legitimately price above these bands — treat them as a floor, not a ceiling, and do not mark the listing down for clearing them on trim alone.")
     : "";
 
   return [
