@@ -1678,7 +1678,7 @@ function ProfEd({ profile, onSave, listings, keyOk, model }) {
     <div style={S.grid2}>
       <div style={S.field}><label style={S.lbl}>Name</label><input style={S.inp} value={name} onChange={function (e) { setName(e.target.value); }} /></div>
       <div style={S.field}><label style={S.lbl}>Category / role (optional)</label><input style={S.inp} value={role} onChange={function (e) { setRole(e.target.value); }} placeholder="e.g. SUV, Daily, Truck" /></div>
-      {[["make", "Make"], ["model", "Model"], ["powertrain", "Powertrain (Hybrid/PHEV/Electric)"], ["years", "Years"], ["trims", "Trims (scoring only)"]].map(function (pair) {
+      {[["make", "Make"], ["model", "Model"], ["powertrain", "Powertrain (Hybrid/PHEV/Electric)"], ["years", "Years"], ["trims", "Preferred trims (scoring only — higher trims count as a plus)"]].map(function (pair) {
         return (<div key={pair[0]} style={S.field}><label style={S.lbl}>{pair[1]}</label><input style={S.inp} value={p[pair[0]] || ""} onChange={function (e) { setP(Object.assign({}, p, { [pair[0]]: e.target.value })); }} /></div>);
       })}
       <div style={S.field}><label style={S.lbl}>Max Price</label><input style={S.inp} type="number" value={p.maxPrice} onChange={function (e) { setP(Object.assign({}, p, { maxPrice: parseInt(e.target.value) || 0 })); }} /></div>
