@@ -80,6 +80,10 @@ var DEFAULT_SETTINGS = {
   hubs: HUBS,
   franchiseOnly: false, // when true, sync targets franchise dealers only (excludes independent)
   marketcheckKeys: [], // per-user MarketCheck API keys, tried in order with quota fallback: [{ key, label }]
+  // Where the buyer actually lives — the anchor for the "location" score. The
+  // hubs above are only places they're willing to SEARCH, so without this a car
+  // 20 mi from a travel hub reads as "local" when it's a thousand miles away.
+  homeBase: null, // { n, z } — picked from hubs in Settings
 };
 function getSettings(data) { return Object.assign({}, DEFAULT_SETTINGS, (data && data.settings) || {}); }
 // Ordered list of the user's MarketCheck key strings (empty -> server uses its shared key).
@@ -170,6 +174,9 @@ function hashStr(s) {
 // stale once the user edits how scoring works.
 function scoreInputHash(data, profile) {
   var parts = [data.scoreModel || DEFAULT_SCORE_MODEL, data.scorePrompt || ""];
+  // Home base drives the "location" score, so moving it must mark scores stale.
+  var hb = (data.settings && data.settings.homeBase) || null;
+  parts.push("home|" + (hb ? (hb.n || "") + "|" + (hb.z || "") : ""));
   (data.criteria || []).forEach(function (c) {
     parts.push("crit|" + c.id + "|" + (c.name || "") + "|" + (c.weight || 0) + "|" + (c.guidance || ""));
   });
@@ -715,7 +722,7 @@ export default function App() {
     if (!all.length) return;
     var profileById = {};
     (data.profiles || []).forEach(function (p) { profileById[p.id] = p; });
-    var ctx = { criteria: data.criteria, globalReqs: data.globalReqs || [], profileById: profileById, model: data.scoreModel || DEFAULT_SCORE_MODEL, system: data.scorePrompt || "" };
+    var ctx = { criteria: data.criteria, globalReqs: data.globalReqs || [], profileById: profileById, model: data.scoreModel || DEFAULT_SCORE_MODEL, system: data.scorePrompt || "", homeBase: getSettings(data).homeBase || null };
     setScoreBusy(true);
     setScoringActive(all.map(function (x) { return x.id || x.vin || null; }).filter(Boolean));
     setScoreMsg({ busy: true, text: "Scoring " + all.length + " listing" + (all.length > 1 ? "s" : "") + "…" });
@@ -1378,6 +1385,7 @@ function SettingsCard({ data, save }) {
   var [franchiseOnly, setFranchiseOnly] = useState(!!s.franchiseOnly);
   var [hubs, setHubs] = useState((s.hubs || []).map(function (h) { return { n: h.n || "", z: h.z || "", lat: h.lat, lon: h.lon }; }));
   var [mck, setMck] = useState((s.marketcheckKeys || []).map(function (k) { return { key: (k && k.key ? k.key : k) || "", label: (k && k.label) || "" }; }));
+  var [homeZ, setHomeZ] = useState((s.homeBase && s.homeBase.z) || "");
 
   function setMckField(i, field, val) { setMck(function (prev) { return prev.map(function (k, j) { return j === i ? Object.assign({}, k, { [field]: val }) : k; }); }); }
   function addMck() { setMck(function (prev) { return prev.concat([{ key: "", label: "" }]); }); }
@@ -1406,7 +1414,10 @@ function SettingsCard({ data, save }) {
       .map(function (h) { var o = { n: (h.n || "").trim(), z: (h.z || "").trim() }; if (h.lat != null) o.lat = h.lat; if (h.lon != null) o.lon = h.lon; return o; });
     var cleanMck = mck.filter(function (k) { return (k.key || "").trim(); })
       .map(function (k) { return { key: (k.key || "").trim(), label: (k.label || "").trim() }; });
-    save(Object.assign({}, data, { settings: Object.assign({}, s, { budget: parseInt(budget) || 0, tagline: tagline.trim(), franchiseOnly: franchiseOnly, hubs: cleanHubs, marketcheckKeys: cleanMck }) }));
+    // Home base is stored as its own {n,z} (not a pointer into hubs) so renaming
+    // or removing a search location can't silently orphan it.
+    var hb = cleanHubs.find(function (h) { return h.z === homeZ; });
+    save(Object.assign({}, data, { settings: Object.assign({}, s, { budget: parseInt(budget) || 0, tagline: tagline.trim(), franchiseOnly: franchiseOnly, hubs: cleanHubs, marketcheckKeys: cleanMck, homeBase: hb ? { n: hb.n, z: hb.z } : null }) }));
     setOpen(false);
   }
 
@@ -1417,7 +1428,7 @@ function SettingsCard({ data, save }) {
         <button style={S.secBtn} onClick={function () { setOpen(!open); }}>{open ? "Close" : "Edit"}</button>
       </div>
       {!open ? (
-        <p style={S.help}>Budget ${Number(s.budget || 0).toLocaleString()} · {(s.hubs || []).length} search location{(s.hubs || []).length === 1 ? "" : "s"} ({(s.hubs || []).map(function (h) { return h.n || h.z; }).join(", ") || "none"}){s.franchiseOnly ? " · franchise dealers only" : ""}{(s.marketcheckKeys || []).length ? " · " + s.marketcheckKeys.length + " MarketCheck key" + (s.marketcheckKeys.length === 1 ? "" : "s") : ""}</p>
+        <p style={S.help}>Budget ${Number(s.budget || 0).toLocaleString()} · {(s.hubs || []).length} search location{(s.hubs || []).length === 1 ? "" : "s"} ({(s.hubs || []).map(function (h) { return h.n || h.z; }).join(", ") || "none"}){s.franchiseOnly ? " · franchise dealers only" : ""}{(s.marketcheckKeys || []).length ? " · " + s.marketcheckKeys.length + " MarketCheck key" + (s.marketcheckKeys.length === 1 ? "" : "s") : ""} · home base {s.homeBase ? (s.homeBase.n || s.homeBase.z) : "not set"}</p>
       ) : (
         <div>
           <div style={S.grid2}>
@@ -1436,6 +1447,16 @@ function SettingsCard({ data, save }) {
               );
             })}
             <button style={Object.assign({}, S.smBtn, { marginTop: 6 })} onClick={addHub}>+ Add location</button>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <label style={S.lbl}>Home base — where the car has to end up</label>
+            <select style={Object.assign({}, S.inp, { width: "100%" })} value={homeZ} onChange={function (e) { setHomeZ(e.target.value); }}>
+              <option value="">— not set —</option>
+              {hubs.filter(function (h) { return (h.z || "").trim(); }).map(function (h, i) {
+                return (<option key={i} value={h.z}>{(h.n || h.z) + " (" + h.z + ")"}</option>);
+              })}
+            </select>
+            <p style={S.help}>Pick which search location you actually live near. AI scoring measures the "location" criterion from here — without it, a car parked 20 miles from a travel hub scores as "local" even when it's a thousand miles from you.</p>
           </div>
           <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, cursor: "pointer", fontSize: 13, color: "#c8c8d0" }}>
             <input type="checkbox" checked={franchiseOnly} onChange={function (e) { setFranchiseOnly(e.target.checked); }} />
@@ -3122,7 +3143,7 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
         {cand.color && <span>{cand.color}</span>}
         {cand.dealer && <span>{cand.dealer} ({cand.dealerType || "?"})</span>}
         {cand.location && <span>{cand.location}, {cand.state} {isSalt(cand.state) ? "🧂" : ""}</span>}
-        {cand.distMi != null && <span>📍 {cand.distMi} mi</span>}
+        {cand.distMi != null && <span title="Distance from the search location this turned up in — not from your home base">📍 ~{cand.distMi} mi</span>}
         {cand.dom != null && <span>{cand.dom}d listed</span>}
         {cand.dealRating && <span>Deal: {cand.dealRating}</span>}
         <TitleNote listing={cand} />
@@ -3243,7 +3264,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
         {l.color && <span>{l.color}</span>}
         <span>{l.dealer} ({l.dealerType})</span>
         <span>{l.location}, {l.state} {salt ? "🧂" : ""}</span>
-        {l.distMi != null && <span>📍 {l.distMi} mi</span>}
+        {l.distMi != null && <span title="Distance from the search location this turned up in — not from your home base">📍 ~{l.distMi} mi</span>}
         {l.dom != null && <span>{l.dom}d listed</span>}
         {l.dealRating && <span>Deal: {l.dealRating}</span>}
         {l.vin && <span style={{ fontFamily: "monospace", fontSize: 11 }}>VIN: …{l.vin.slice(-6)}</span>}

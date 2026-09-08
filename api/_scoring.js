@@ -36,7 +36,7 @@ export const CRITERION_GUIDANCE = {
   condition: "10 = clean title, 1-owner, no accidents, well-maintained; 1 = branded title, accidents, or neglect.",
   features: "10 = target trim or richer with all must-have + several nice-to-have features (a trim above the buyer's preferred level is a bonus, never a penalty); 1 = a trim below their preferred level / missing must-haves.",
   color: "10 = preferred/neutral color; 1 = a color the buyer wants to avoid (see requirements).",
-  location: "10 = local & low salt-belt exposure; 1 = far away and/or heavy road-salt region (rust risk).",
+  location: "10 = close to the buyer's HOME BASE & low salt-belt exposure; 1 = a long haul from home and/or a heavy road-salt region (rust risk). Judge the distance from the dealer's city/state to the home base — NOT from whichever search area the listing turned up in.",
   deal: "10 = priced well below comparable listings (great deal); 1 = priced above market.",
 };
 
@@ -113,8 +113,12 @@ function listingFacts(l) {
   // warranty. Surface it explicitly (l.dealerType === "CPO" handles listings
   // synced before cpo became its own field).
   if (l.cpo === true || l.dealerType === "CPO") f.push("Certified Pre-Owned (CPO): Yes — manufacturer-backed inspection & extended warranty");
-  add("Location", [l.location, l.state].filter(Boolean).join(", "));
-  add("Distance from buyer's search location", l.distMi != null ? l.distMi + " mi" : null);
+  add("Dealer location", [l.location, l.state].filter(Boolean).join(", "));
+  // NOT distance from home: the buyer searches several travel hubs, so this is
+  // the radius from whichever hub turned the car up. A car 20 mi from a Kentucky
+  // hub is still ~500 mi from a Durham NC home base. Labelled so the model can't
+  // read it as proximity to the buyer.
+  add("Distance from the search area it was found in (NOT from home)", l.distMi != null ? l.distMi + " mi" : null);
   add("Color", l.color);
   add("Days on market", l.dom);
   // Recent asking-price trajectory — a strong deal/negotiation signal.
@@ -133,6 +137,14 @@ function listingFacts(l) {
   if (l.carfax_clean_title === true) f.push("Carfax: clean title confirmed");
   add("Notes", l.notes);
   return f.join("\n");
+}
+
+// Where the buyer actually lives — the anchor for the "location" criterion.
+// Distinct from the search hubs, which are just places they're willing to look.
+export function homeBaseLabel(homeBase) {
+  if (!homeBase) return "";
+  if (typeof homeBase === "string") return homeBase.trim();
+  return [homeBase.n, homeBase.z].filter(Boolean).join(" ").trim();
 }
 
 function profileFacts(p) {
@@ -242,7 +254,19 @@ export function buildUserPrompt(listing, ctx) {
       + (bands.matchedTier ? "" : " NOTE: no baseline tier matches this listing's trim, so these are generic fallback numbers. If this trim sits above the buyer's preferred trims it should legitimately price above these bands — treat them as a floor, not a ceiling, and do not mark the listing down for clearing them on trim alone.")
     : "";
 
+  // The buyer searches several travel hubs, so a listing's distance-from-search-
+  // area says nothing about how far it is from them. Anchor "location" on home.
+  const home = homeBaseLabel(ctx.homeBase);
+  const homeSection = home
+    ? "BUYER'S HOME BASE: " + home + ". This is where the car has to end up, and the ONLY anchor for the \"location\" criterion — "
+      + "estimate the drive from the dealer's city/state to here. The buyer also searches other travel hubs far from home, so a listing "
+      + "sitting a few miles from one of those search areas is NOT nearby; score it on its real distance from " + home + "."
+    : "BUYER'S HOME BASE: not set. Judge \"location\" from the dealer's city/state against the buyer's search locations, and say the "
+      + "home base is unknown rather than assuming a listing is local.";
+
   return [
+    homeSection,
+    "",
     "BUYER PROFILE:",
     profileFacts(ctx.profile),
     "",
