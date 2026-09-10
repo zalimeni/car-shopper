@@ -7,6 +7,7 @@ import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
 import { listSnapshots, restoreSnapshot } from "./snapshots";
 import { buildPriceHistoryCsv } from "./priceExport";
 import { localPriceCheck } from "./priceCheck";
+import { sortRows, nextSort, sortIndicator } from "./tableSort";
 
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
 
@@ -2063,6 +2064,17 @@ function scoreHue(v) { return v >= 7 ? "#2d8659" : v >= 5 ? "#d4a017" : "#c44"; 
 // your own tracked/rejected data (free, offline), with an optional live
 // MarketCheck search to widen thin comps and an optional AI verdict weighted to
 // a confidence signal. Exported for render tests.
+// Sortable columns for the Price Check comps table (order matches the header).
+var COMP_COLS = [
+  { key: "year", label: "Year", best: "max", get: function (c) { return c.year; } },
+  { key: "trim", label: "Trim", get: function (c) { return c.trim; } },
+  { key: "mileage", label: "Mileage", best: "min", get: function (c) { return c.mileage; } },
+  { key: "price", label: "Price", best: "min", get: function (c) { return c.price; } },
+  { key: "status", label: "Status", get: function (c) { return c.live ? "live market" : c.status; } },
+  { key: "dealer", label: "Dealer", get: function (c) { return [c.dealerType, c.state].filter(Boolean).join(" · "); } },
+  { key: "when", label: "When", get: function (c) { return c.date; } },
+];
+
 // Confidence pill for a price read — colour + label by level, comp count and
 // price spread in the tooltip. Driven by compConfidence() in priceCheck.js.
 function ConfidenceBadge({ c }) {
@@ -2085,6 +2097,7 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings }) {
   var [result, setResult] = useState(null);
   var [ai, setAi] = useState(null); // { busy } | { text } | { error }
   var [live, setLive] = useState(null); // { busy } | { done, added, rateLimited, errors } | { error }
+  var [compSort, setCompSort] = useState(null); // null = the engine's own "closest comps first" order
   function set2(obj) { setQ(function (prev) { return Object.assign({}, prev, obj); }); }
   function set(k, v) { set2({ [k]: v }); }
 
@@ -2140,6 +2153,11 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings }) {
 
   var fld = { display: "flex", flexDirection: "column", gap: 3 };
   var money = function (n) { return "$" + Number(n || 0).toLocaleString(); };
+  // Untouched headers keep localPriceCheck's "closest comps first" ordering.
+  var baseComps = (result && result.comps) || [];
+  var sortedComps = compSort
+    ? sortRows(baseComps, COMP_COLS.find(function (c) { return c.key === compSort.key; }), compSort.dir)
+    : baseComps;
 
   return (
     <div>
@@ -2209,9 +2227,9 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings }) {
               </div>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%" }}>
-                  <thead><tr>{["Year", "Trim", "Mileage", "Price", "Status", "Dealer", "When"].map(function (h) { return (<th key={h} style={{ textAlign: "left", padding: "4px 8px", color: "#6b6b76", fontWeight: 500, borderBottom: "1px solid #2a2d38", whiteSpace: "nowrap" }}>{h}</th>); })}</tr></thead>
+                  <thead><tr>{COMP_COLS.map(function (col) { return (<th key={col.key} className="cs-sort" title={"Sort by " + col.label} onClick={function () { setCompSort(function (prev) { return nextSort(prev, col); }); }} style={{ textAlign: "left", padding: "4px 8px", color: "#6b6b76", fontWeight: 500, borderBottom: "1px solid #2a2d38", whiteSpace: "nowrap" }}>{col.label}{sortIndicator(compSort, col)}</th>); })}</tr></thead>
                   <tbody>
-                    {result.comps.map(function (c, i) {
+                    {sortedComps.map(function (c, i) {
                       return (
                         <tr key={i}>
                           <td style={S.pcCell}>{c.year || "—"}</td>
@@ -2272,6 +2290,7 @@ function CompareTab({ data }) {
   var [sel, setSel] = useState(function () { return profs.map(function (p) { return p.id; }); });
   var [cmpDealer, setCmpDealer] = useState("all");
   var [detail, setDetail] = useState(null); // { listing, crit|null, score, text }
+  var [sort, setSort] = useState({ key: "score", dir: "desc" }); // best-scoring first
   function toggle(id) { setSel(function (prev) { return prev.indexOf(id) > -1 ? prev.filter(function (x) { return x !== id; }) : prev.concat(id); }); }
 
   var base = data.listings.filter(function (l) { return l.status === "watch" && sel.indexOf(l.profileId) > -1; });
@@ -2281,11 +2300,11 @@ function CompareTab({ data }) {
   base.forEach(function (l) { if (l.dealerType && l.dealerType !== "CPO" && dealerOpts.indexOf(l.dealerType) === -1) dealerOpts.push(l.dealerType); });
   dealerOpts.sort();
   var anyCpo = base.some(isCpo);
-  var listings = base.filter(function (l) {
+  var filtered = base.filter(function (l) {
     if (cmpDealer === DEALER_CPO) return isCpo(l);
     if (cmpDealer !== "all") return (l.dealerType || "") === cmpDealer;
     return true;
-  }).slice().sort(function (a, b) { return (b.compositeScore || 0) - (a.compositeScore || 0); });
+  });
 
   // Primary-attribute columns. `best` marks which direction "wins" (highlight).
   var specs = [
@@ -2300,8 +2319,8 @@ function CompareTab({ data }) {
   ];
 
   function bestVal(get, dir) {
-    if (listings.length < 2 || !dir) return null;
-    var nums = listings.map(get).filter(function (v) { return typeof v === "number" && !isNaN(v); });
+    if (filtered.length < 2 || !dir) return null;
+    var nums = filtered.map(get).filter(function (v) { return typeof v === "number" && !isNaN(v); });
     if (!nums.length) return null;
     return dir === "min" ? Math.min.apply(null, nums) : Math.max.apply(null, nums);
   }
@@ -2309,10 +2328,24 @@ function CompareTab({ data }) {
   // Columns: total score, primary attributes, CPO, then each scoring criterion.
   var cols = [{ key: "score", label: "Score", kind: "score", best: "max", get: function (l) { return l.compositeScore || 0; } }]
     .concat(specs.map(function (s) { return { key: "spec:" + s.label, label: s.label, kind: "spec", best: s.best, get: s.get, fmt: s.fmt }; }))
-    .concat([{ key: "cpo", label: "CPO", kind: "cpo", get: isCpo }])
+    .concat([{ key: "cpo", label: "CPO", kind: "cpo", best: "max", get: isCpo }])
     .concat((data.criteria || []).map(function (c) { return { key: "crit:" + c.id, label: c.name + " (" + c.weight + ")", kind: "crit", best: "max", crit: c, get: function (l) { return l.scores && l.scores[c.id]; } }; }));
   var bestByCol = {};
   cols.forEach(function (col) { bestByCol[col.key] = bestVal(col.get, col.best); });
+
+  // The sticky identity column sorts too — by vehicle, then year.
+  var idCol = { key: "listing", label: "Listing", get: function (l) { return (l.vehicle || "") + " " + (l.year || ""); } };
+  var sortCols = [idCol].concat(cols);
+  var activeCol = sortCols.find(function (c) { return c.key === sort.key; }) || null;
+  var listings = sortRows(filtered, activeCol, sort.dir);
+
+  function headerProps(col) {
+    return {
+      className: "cs-sort",
+      onClick: function () { setSort(function (prev) { return nextSort(prev, col); }); },
+      title: "Sort by " + col.label,
+    };
+  }
 
   var rowLabel = { position: "sticky", left: 0, background: "#161820", textAlign: "left", padding: "7px 10px", borderBottom: "1px solid #1e2028", minWidth: 150, maxWidth: 210, zIndex: 1, verticalAlign: "top" };
   var cell = { padding: "7px 10px", borderBottom: "1px solid #1e2028", textAlign: "left", whiteSpace: "nowrap", color: "#c8c8d0" };
@@ -2349,7 +2382,7 @@ function CompareTab({ data }) {
     <div>
       <div style={S.secH}><h2 style={S.secT}>Compare</h2></div>
       <div style={S.card}>
-        <p style={S.help}>Watchlist listings (rows) for the selected profiles, ranked by total score, with each listing's price/mileage and a CPO column. Filter by dealer type below. Best value per column is highlighted (★ / green). Tap an underlined score (or a row's total) for the AI rationale.</p>
+        <p style={S.help}>Watchlist listings (rows) for the selected profiles, with each listing's price/mileage and a CPO column. Filter by dealer type below. Click any column heading to sort by it — click again to reverse; listings missing that value stay at the bottom either way. Best value per column is highlighted (★ / green). Tap an underlined score (or a row's total) for the AI rationale.</p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
           {profs.map(function (p) {
             var on = sel.indexOf(p.id) > -1;
@@ -2378,15 +2411,15 @@ function CompareTab({ data }) {
       {listings.length === 0 ? (
         <p style={S.empty}>No watchlist listings for the selected profile(s).</p>
       ) : (
-        <div style={Object.assign({}, S.card, { overflowX: "auto", padding: 0 })}>
+        <div className="cs-wide" style={Object.assign({}, S.card, { overflowX: "auto", padding: 0 })}>
           <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%" }}>
             <thead>
               <tr>
-                <th style={Object.assign({}, rowLabel, { color: "#6b6b76", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 500, borderBottom: "1px solid #2a2d38" })}>
-                  {listings.length} listing{listings.length > 1 ? "s" : ""}
+                <th {...headerProps(idCol)} style={Object.assign({}, rowLabel, { color: "#6b6b76", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 500, borderBottom: "1px solid #2a2d38" })}>
+                  {listings.length} listing{listings.length > 1 ? "s" : ""}{sortIndicator(sort, idCol)}
                 </th>
                 {cols.map(function (col) {
-                  return (<th key={col.key} style={Object.assign({}, cell, { fontSize: 11, fontWeight: 600, borderBottom: "1px solid #2a2d38", color: col.kind === "crit" ? "#b89edd" : "#8a8a96", verticalAlign: "bottom" })}>{col.label}</th>);
+                  return (<th key={col.key} {...headerProps(col)} style={Object.assign({}, cell, { fontSize: 11, fontWeight: 600, borderBottom: "1px solid #2a2d38", color: col.kind === "crit" ? "#b89edd" : "#8a8a96", verticalAlign: "bottom" })}>{col.label}{sortIndicator(sort, col)}</th>);
                 })}
               </tr>
             </thead>
@@ -2708,12 +2741,14 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
               {shownCands.length > 1 && (<button style={S.priBtn} onClick={approveAll}>Approve All</button>)}
             </div>
           </div>
-          {shownCands.map(function (c, i) {
-            return (<CandCard key={i} cand={c} onApprove={function () { approveCand(c); }} onDismiss={function () { dismissCand(c); }} data={data}
-              onScore={function () { scoreItems([c], []); }} scoreBusy={scoreBusy} keyOk={keyStatus.valid} criteriaStale={staleOf(c)}
-              scoring={scoringActive.indexOf(c.id || c.vin) > -1}
-              onExcludeTrim={c.trim ? function () { excludeTrim(c); } : null} />);
-          })}
+          <div className="cs-wide cs-tiles">
+            {shownCands.map(function (c, i) {
+              return (<CandCard key={i} cand={c} onApprove={function () { approveCand(c); }} onDismiss={function () { dismissCand(c); }} data={data}
+                onScore={function () { scoreItems([c], []); }} scoreBusy={scoreBusy} keyOk={keyStatus.valid} criteriaStale={staleOf(c)}
+                scoring={scoringActive.indexOf(c.id || c.vin) > -1}
+                onExcludeTrim={c.trim ? function () { excludeTrim(c); } : null} />);
+            })}
+          </div>
         </div>
       )}
 
@@ -2824,13 +2859,17 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       {staleW.length > 0 && (
         <div>
           <h3 style={S.grpT}>⏰ Needs check ({staleW.length})</h3>
-          {staleW.map(function (l) { return (<LCard {...cp(l, true)} />); })}
+          <div className="cs-wide cs-tiles">
+            {staleW.map(function (l) { return (<LCard {...cp(l, true)} />); })}
+          </div>
         </div>
       )}
       {freshW.length > 0 && (
         <div>
           <h3 style={S.grpT}>Watchlist ({freshW.length})</h3>
-          {freshW.map(function (l) { return (<LCard {...cp(l, false)} />); })}
+          <div className="cs-wide cs-tiles">
+            {freshW.map(function (l) { return (<LCard {...cp(l, false)} />); })}
+          </div>
         </div>
       )}
       {rejL.length > 0 && (
@@ -2839,7 +2878,11 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
             onClick={function () { setShowRej(!showRej); }}>
             {showRej ? "▾" : "▸"} Rejected ({rejL.length})
           </h3>
-          {showRej && rejL.map(function (l) { return (<LCard {...cp(l, false)} />); })}
+          {showRej && (
+            <div className="cs-wide cs-tiles">
+              {rejL.map(function (l) { return (<LCard {...cp(l, false)} />); })}
+            </div>
+          )}
         </div>
       )}
       {soldL.length > 0 && (
@@ -2848,7 +2891,11 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
             onClick={function () { setShowSold(!showSold); }}>
             {showSold ? "▾" : "▸"} Sold ({soldL.length})
           </h3>
-          {showSold && soldL.map(function (l) { return (<LCard {...cp(l, false)} />); })}
+          {showSold && (
+            <div className="cs-wide cs-tiles">
+              {soldL.map(function (l) { return (<LCard {...cp(l, false)} />); })}
+            </div>
+          )}
         </div>
       )}
 
