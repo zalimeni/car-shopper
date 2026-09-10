@@ -23,3 +23,53 @@ input, select, textarea, button {
 a {
   color: inherit;
 }
+
+/* ── Wide-viewport layout ──────────────────────────────────────────────
+   The app column stays 720px so nav, filters and forms keep their
+   proportions on a big screen. Only data-dense blocks opt into .cs-wide,
+   which breaks them out of that column and centres them on the VIEWPORT
+   (margin-left:50% puts the left edge at the parent's centre — which is
+   also the viewport's, since the app column is centred — then translate
+   pulls it back by half its own width). Below the breakpoint the class
+   does nothing and blocks stay in the normal flow. */
+@media (min-width: 1080px) {
+  .cs-wide {
+    width: min(94vw, 1500px);
+    margin-left: 50%;
+    transform: translateX(-50%);
+  }
+}
+
+/* Listing tiles: a single column on narrow screens, widening to 2 then 3
+   as room allows. Cards carry their own bottom margin in the single-column
+   layout, so drop it here and let `gap` do the spacing. `align-items:start`
+   keeps each tile its natural height instead of stretching short cards. */
+.cs-tiles {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.cs-tiles > * {
+  margin-bottom: 0;
+}
+
+@media (min-width: 1080px) {
+  .cs-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (min-width: 1400px) {
+  .cs-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* Sortable table headers */
+.cs-sort {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.cs-sort:hover {
+  color: #e4e4e7;
+}
