@@ -137,6 +137,23 @@ export function addHub(list, hub, index) {
   return { hubs: normalizeHubs((list || []).concat([hub]), index), added: true };
 }
 
+// Fill in missing coordinates from the ZIP list (hubs saved as a bare ZIP — e.g.
+// added while the location file couldn't load, or before the picker existed).
+// The nationwide search needs every hub's coordinates. Returns the same array
+// when nothing changed.
+export function withCoords(hubs, index) {
+  if (!index || !index.byZip) return hubs;
+  let changed = false;
+  const out = (hubs || []).map(function (h) {
+    if (!h || (isFinite(parseFloat(h.lat)) && isFinite(parseFloat(h.lon)))) return h;
+    const r = index.byZip[String(h.z || "").trim()];
+    if (!r) return h;
+    changed = true;
+    return Object.assign({}, h, { lat: r.lat, lon: r.lon });
+  });
+  return changed ? out : hubs;
+}
+
 // Fallback when the location file can't load: accept a bare 5-digit ZIP.
 export function hubFromZip(text) {
   const z = String(text || "").trim();

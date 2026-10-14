@@ -134,3 +134,20 @@ describe("search-area overlap", () => {
     expect(o).toEqual([]);
   });
 });
+
+describe("withCoords (fill bare-ZIP hubs for the nationwide search)", async () => {
+  const { withCoords } = await import("../src/locations.js");
+  const index = { byZip: { "27701": { lat: 35.99, lon: -78.9 } } };
+  it("fills missing coordinates by ZIP and leaves the rest alone", () => {
+    const hubs = [{ n: "Durham", z: "27701" }, { n: "Boston", z: "02108", lat: 42.36, lon: -71.06 }, { n: "Nowhere", z: "00000" }];
+    const out = withCoords(hubs, index);
+    expect(out[0]).toEqual({ n: "Durham", z: "27701", lat: 35.99, lon: -78.9 });
+    expect(out[1]).toBe(hubs[1]);
+    expect(out[2]).toBe(hubs[2]);
+  });
+  it("returns the same array when nothing changed (or no index)", () => {
+    const hubs = [{ z: "27701", lat: 1, lon: 2 }];
+    expect(withCoords(hubs, index)).toBe(hubs);
+    expect(withCoords(hubs, null)).toBe(hubs);
+  });
+});

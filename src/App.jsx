@@ -12,7 +12,7 @@ import { sortRows, nextSort, sortIndicator } from "./tableSort";
 import { homeMiles } from "./geo";
 import { parseMarkdown, clampMemo, MEMO_MAX } from "./markdown";
 import { summarize, ingestSnaps, recordSyncCalls, syncCost, syncsLeft, gaugeTone, dedupeKeyEntries, spentKeyIds, planSig } from "./quota";
-import { loadLocations, searchLocations, addHub as addHubTo, normalizeHubs, hubFromZip, hubParts, hubKey, hubOverlaps } from "./locations";
+import { loadLocations, withCoords, searchLocations, addHub as addHubTo, normalizeHubs, hubFromZip, hubParts, hubKey, hubOverlaps } from "./locations";
 
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
 
@@ -821,7 +821,14 @@ export default function App() {
           return prev.concat(dec.filter(function (c) { return !c.vin || !seen[c.vin]; }));
         });
       }
-      var res = await fetchListings(active, getSettings(data).hubs, opts, { franchiseOnly: !!getSettings(data).franchiseOnly, marketcheckKeys: mcKeys(data), spentKeys: mcSpent(data), fingerprints: searchFpMap(getSettings(data).mcSearches) }, onSyncProgress);
+      // The nationwide search needs every location's coordinates; fill in any saved
+      // as a bare ZIP from the location list (and keep them, below).
+      var origHubs = getSettings(data).hubs || [];
+      var syncHubs = origHubs;
+      if (syncHubs.length > 1 && syncHubs.some(function (h) { return !(isFinite(parseFloat(h.lat)) && isFinite(parseFloat(h.lon))); })) {
+        try { syncHubs = withCoords(syncHubs, await loadLocations()); } catch (e) { /* sync per location then */ }
+      }
+      var res = await fetchListings(active, syncHubs, opts, { franchiseOnly: !!getSettings(data).franchiseOnly, marketcheckKeys: mcKeys(data), spentKeys: mcSpent(data), fingerprints: searchFpMap(getSettings(data).mcSearches) }, onSyncProgress);
       // Reconcile + save against the LATEST state, not the `data` snapshot from
       // when the sync started — the fetches take a while and the UI stays live,
       // so approvals/edits/scores landed mid-sync must survive the final save.
@@ -863,9 +870,9 @@ export default function App() {
         var cutShort = res.rateLimited || (res.errors || []).some(function (m) { return /Stopped early/.test(String(m)); });
         if (!cutShort && res.calls > 0) {
           mq1 = recordSyncCalls(mq1, res.calls, nowIso);
-          mq1.lastSync = Object.assign({}, mq1.lastSync, { searches: res.queries || 0, unchanged: (res.unchanged || []).length, plan: planSig(active, getSettings(data).hubs || []) });
+          mq1.lastSync = Object.assign({}, mq1.lastSync, { searches: res.queries || 0, unchanged: (res.unchanged || []).length, plan: planSig(active, syncHubs) });
         }
-        syncPatch.settings = Object.assign({}, base.settings || {}, { mcQuota: mq1, mcSearches: mergeSearchFps(getSettings(base).mcSearches, res.fingerprints, nowIso) }, res.apiInfo ? { mcApi: Object.assign({}, res.apiInfo, { at: nowIso }) } : {});
+        syncPatch.settings = Object.assign({}, base.settings || {}, syncHubs !== origHubs && getSettings(base).hubs === origHubs ? { hubs: syncHubs } : {}, { mcQuota: mq1, mcSearches: mergeSearchFps(getSettings(base).mcSearches, res.fingerprints, nowIso) }, res.apiInfo ? { mcApi: Object.assign({}, res.apiInfo, { at: nowIso }) } : {});
       }
       await save(Object.assign({}, base, syncPatch));
       // Report the count actually added to the queue (reconcile's newCount also
@@ -876,7 +883,7 @@ export default function App() {
       // run those listings were just never checked, so don't report them as gone.
       var summaryOut = Object.assign({}, rec.summary, { newCount: added.length });
       if (res.rateLimited) summaryOut.notSeen = 0;
-      setSyncMsg({ ok: true, summary: summaryOut, skippedSeen: skippedSeen, unchanged: (res.unchanged || []).length, searches: res.queries || 0, errors: res.errors, notices: res.notices, mock: res.mock, rateLimited: res.rateLimited, rateLimitInfo: res.rateLimitInfo, quota: res.quota });
+      setSyncMsg({ ok: true, summary: summaryOut, skippedSeen: skippedSeen, unchanged: (res.unchanged || []).length, searches: res.queries || 0, nationalInfo: res.nationalInfo, errors: res.errors, notices: res.notices, mock: res.mock, rateLimited: res.rateLimited, rateLimitInfo: res.rateLimitInfo, quota: res.quota });
       setSyncing(false);
       // Auto-score only NEW candidates (never skipped, never already-queued, not
       // already scored, and passing their profile's trim filter — no point
@@ -1351,6 +1358,17 @@ var RESYNC_WARN_HOURS = 6;
 // The "Searching…" line while a sync runs. The nationwide request covers every
 // location at once, so it isn't counted as one; the per-location count only
 // appears for profiles it couldn't cover.
+// One clause for the final status line: did the nationwide search run, and how far did it get?
+export function nationalNote(n) {
+  if (!n) return "";
+  if (n.failed) return "nationwide search failed, so every location was searched";
+  if (n.skipped === "no-coords") return "nationwide search skipped: " + n.missing + " location" + (n.missing === 1 ? " has" : "s have") + " no coordinates (re-add from the location picker)";
+  if (n.skipped) return "";
+  var calls = " (" + n.calls + " call" + (n.calls === 1 ? "" : "s") + ")";
+  if (n.covered >= n.profiles) return "nationwide search covered every profile" + calls;
+  if (n.timedOut) return "nationwide search covered " + n.covered + " of " + n.profiles + " profiles before its time limit; the rest by location";
+  return "nationwide search covered " + n.covered + " of " + n.profiles + " profile" + (n.profiles === 1 ? "" : "s") + calls + "; the rest had too many matches nationally, so by location";
+}
 export function syncProgressText(info) {
   var found = " · " + (info.listings || []).length + " found";
   var locs = info.total + " location" + (info.total === 1 ? "" : "s");
@@ -3341,6 +3359,8 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
       text += " · " + syncMsg.errors.length + " query error(s): " + String(syncMsg.errors[0]).slice(0, 240);
       color = "#d4a017";
     }
+    var nat = nationalNote(syncMsg.nationalInfo);
+    if (nat) text += " · " + nat;
     if (syncMsg.notices && syncMsg.notices.length) text += " · " + syncMsg.notices.join(" ");
     if (syncMsg.rateLimited) {
       // Free-tier quota / rate limit: make it unmissable — results are partial.

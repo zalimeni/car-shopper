@@ -114,4 +114,12 @@ describe("nationwide search", () => {
     expect(r.notices.join(" ")).toMatch(/Nationwide search ran out of time/);
     expect(r.errors).toEqual([]);
   });
+  it("reports what the nationwide pass did", async () => {
+    mockFetch(() => ({ num_found: 1, listings: [car("A", 36, -78.9)] }));
+    const r = await searchListings("K", [rav4, prime], [DURHAM, BOSTON], { national: "only" });
+    expect(r.nationalInfo).toMatchObject({ skipped: null, covered: 2, profiles: 2, calls: 1, timedOut: false });
+    const z = await searchListings("K", [rav4], [DURHAM, { z: "02101" }], { national: "only" });
+    expect(z.nationalInfo).toEqual({ skipped: "no-coords", missing: 1 });
+    expect((await searchListings("K", [rav4], [DURHAM], { national: "only" })).nationalInfo).toEqual({ skipped: "one-location" });
+  });
 });
