@@ -131,6 +131,13 @@ export function summarize(userKeys, store, nowMs) {
   return { rows: rows, totalRemaining: totalRemaining, totalLimit: totalLimit, fraction: fl > 0 ? fr / fl : null, unknown: unknown, activeId: activeId, nextReset: nextReset };
 }
 
+// Ids of the keys whose stored snapshot says this month's quota is used up (and
+// hasn't reset yet). Sent with a sync so the server starts on the first live key
+// instead of spending a call per request to rediscover that a key is spent.
+export function spentKeyIds(userKeys, store, nowMs) {
+  return summarize(userKeys, store, nowMs).rows.filter(function (r) { return r.state === "spent"; }).map(function (r) { return r.id; });
+}
+
 // Calls one sync costs. Profiles that share a powertrain filter are merged into
 // one query per location (src/queryPlan.js — the same grouping the server uses),
 // so the floor is (query groups) x (locations). Pages depend on how many cars match,

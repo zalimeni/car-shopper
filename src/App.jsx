@@ -11,7 +11,7 @@ import { localPriceCheck } from "./priceCheck";
 import { sortRows, nextSort, sortIndicator } from "./tableSort";
 import { homeMiles } from "./geo";
 import { parseMarkdown, clampMemo, MEMO_MAX } from "./markdown";
-import { summarize, ingestSnaps, recordSyncCalls, syncCost, syncsLeft, gaugeTone, dedupeKeyEntries } from "./quota";
+import { summarize, ingestSnaps, recordSyncCalls, syncCost, syncsLeft, gaugeTone, dedupeKeyEntries, spentKeyIds } from "./quota";
 import { loadLocations, searchLocations, addHub as addHubTo, normalizeHubs, hubFromZip, hubParts, hubKey, hubOverlaps } from "./locations";
 
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
@@ -99,6 +99,11 @@ function getSettings(data) { return Object.assign({}, DEFAULT_SETTINGS, (data &&
 // Ordered list of the user's MarketCheck key strings (empty -> server uses its shared key).
 function mcKeys(data) {
   return (getSettings(data).marketcheckKeys || []).map(function (k) { return (k && k.key ? k.key : k) || ""; }).filter(Boolean);
+}
+// Ids of keys whose stored quota says they're spent this month — the server starts
+// past them instead of paying a call to find out again.
+function mcSpent(data) {
+  return spentKeyIds(getSettings(data).marketcheckKeys || [], getSettings(data).mcQuota);
 }
 
 // ── Utility ──
@@ -816,7 +821,7 @@ export default function App() {
           return prev.concat(dec.filter(function (c) { return !c.vin || !seen[c.vin]; }));
         });
       }
-      var res = await fetchListings(active, getSettings(data).hubs, opts, { franchiseOnly: !!getSettings(data).franchiseOnly, marketcheckKeys: mcKeys(data), fingerprints: searchFpMap(getSettings(data).mcSearches) }, onSyncProgress);
+      var res = await fetchListings(active, getSettings(data).hubs, opts, { franchiseOnly: !!getSettings(data).franchiseOnly, marketcheckKeys: mcKeys(data), spentKeys: mcSpent(data), fingerprints: searchFpMap(getSettings(data).mcSearches) }, onSyncProgress);
       // Reconcile + save against the LATEST state, not the `data` snapshot from
       // when the sync started — the fetches take a while and the UI stays live,
       // so approvals/edits/scores landed mid-sync must survive the final save.
@@ -868,7 +873,7 @@ export default function App() {
       // run those listings were just never checked, so don't report them as gone.
       var summaryOut = Object.assign({}, rec.summary, { newCount: added.length });
       if (res.rateLimited) summaryOut.notSeen = 0;
-      setSyncMsg({ ok: true, summary: summaryOut, skippedSeen: skippedSeen, unchanged: (res.unchanged || []).length, searches: res.queries || 0, errors: res.errors, mock: res.mock, rateLimited: res.rateLimited, rateLimitInfo: res.rateLimitInfo, quota: res.quota });
+      setSyncMsg({ ok: true, summary: summaryOut, skippedSeen: skippedSeen, unchanged: (res.unchanged || []).length, searches: res.queries || 0, errors: res.errors, notices: res.notices, mock: res.mock, rateLimited: res.rateLimited, rateLimitInfo: res.rateLimitInfo, quota: res.quota });
       setSyncing(false);
       // Auto-score only NEW candidates (never skipped, never already-queued, not
       // already scored, and passing their profile's trim filter — no point
@@ -2445,7 +2450,7 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings, onQuota
     setLive({ busy: true });
     // One location, not all of them: each location is a separate (billed) query,
     // and comps near home are the ones that matter for a fair-price read.
-    fetchPriceComps(result.query, [hub], mcKeys(data)).then(function (r) {
+    fetchPriceComps(result.query, [hub], mcKeys(data), mcSpent(data)).then(function (r) {
       var merged = localPriceCheck(data, candidates, result.query, { extra: r.listings });
       setResult(Object.assign({ query: result.query }, merged));
       setAi(null); // comps changed — any prior AI verdict is stale
@@ -3314,6 +3319,7 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
       text += " · " + syncMsg.errors.length + " query error(s): " + String(syncMsg.errors[0]).slice(0, 240);
       color = "#d4a017";
     }
+    if (syncMsg.notices && syncMsg.notices.length) text += " · " + syncMsg.notices.join(" ");
     if (syncMsg.rateLimited) {
       // Free-tier quota / rate limit: make it unmissable — results are partial.
       // Append when the limit clears if MarketCheck told us.

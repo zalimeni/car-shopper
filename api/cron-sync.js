@@ -25,6 +25,7 @@ import { safeEqual, DEFAULT_ALLOW } from "./_auth.js";
 import { adminClient, anonClient } from "./_supabaseAdmin.js";
 import { searchListings, resolveKeys, keyId } from "./marketcheck.js";
 import { reconcile, searchFpMap, mergeSearchFps } from "../src/reconcile.js";
+import { ingestSnaps, spentKeyIds } from "../src/quota.js";
 
 const PENDING_MAX = 100; // cap parked candidates so the blob stays bounded
 
@@ -102,7 +103,8 @@ export default async function handler(req, res) {
         profiles.map(function (p) { return { id: p.id, name: p.name, params: p.params }; }),
         hubs,
         { dealerType: dealerType, budgetMs: budgetMs, keys: keys,
-          fingerprints: searchFpMap(state.settings && state.settings.mcSearches), keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? apiKey : null); }) }
+          fingerprints: searchFpMap(state.settings && state.settings.mcSearches),
+          spentKeys: spentKeyIds((state.settings && state.settings.marketcheckKeys) || [], state.settings && state.settings.mcQuota), keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? apiKey : null); }) }
       );
 
       const rec = reconcile(state.listings || [], r.listings, todayStr, { unchangedKeys: r.unchanged });
@@ -125,7 +127,8 @@ export default async function handler(req, res) {
       });
       // Same API-version bookkeeping as the in-app sync (drift banner).
       const nowIso = new Date().toISOString();
-      nextData.settings = Object.assign({}, state.settings || {}, { mcSearches: mergeSearchFps(state.settings && state.settings.mcSearches, r.fingerprints, nowIso) },
+      nextData.settings = Object.assign({}, state.settings || {}, { mcSearches: mergeSearchFps(state.settings && state.settings.mcSearches, r.fingerprints, nowIso),
+          mcQuota: ingestSnaps(state.settings && state.settings.mcQuota, r.keyQuotas, nowIso) },
         r.apiInfo ? { mcApi: Object.assign({}, r.apiInfo, { at: nowIso }) } : {});
       // Don't advance lastSynced on an incomplete (rate-limited) run — leave it
       // at the last good sync so the "Last synced" display isn't misleading.

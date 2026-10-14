@@ -327,8 +327,8 @@ export default async function handler(req, res) {
     return;
   }
 
-  const r = await searchListings(apiKey, profiles, hubs, { dealerType: dealerType, keys: keys, fingerprints: body.fingerprints, keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? envKey : null); }) });
-  res.status(200).json({ listings: r.listings, errors: r.errors, rateLimited: !!r.rateLimited, rateLimitInfo: r.rateLimitInfo || null, quota: r.quota || null, keysUsed: r.keysUsed, keyQuotas: r.keyQuotas || [], calls: r.calls || 0, apiInfo: r.apiInfo, formatSuspect: !!r.formatSuspect, fingerprints: r.fingerprints, unchanged: r.unchanged, queries: r.queries });
+  const r = await searchListings(apiKey, profiles, hubs, { dealerType: dealerType, keys: keys, fingerprints: body.fingerprints, spentKeys: body.spentKeys, keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? envKey : null); }) });
+  res.status(200).json({ listings: r.listings, errors: r.errors, notices: r.notices, rateLimited: !!r.rateLimited, rateLimitInfo: r.rateLimitInfo || null, quota: r.quota || null, keysUsed: r.keysUsed, keyQuotas: r.keyQuotas || [], calls: r.calls || 0, apiInfo: r.apiInfo, formatSuspect: !!r.formatSuspect, fingerprints: r.fingerprints, unchanged: r.unchanged, queries: r.queries });
 }
 
 // Core active-inventory search for a set of profiles × hubs — shared by the
@@ -367,17 +367,30 @@ export function pageFingerprint(numFound, rows) {
   return fnv(String(numFound) + "|" + items.join(","));
 }
 
+// Index of the first key whose id isn't in `spent`. If every key is known spent we
+// still try the last one (one call, which reports the reset time) rather than none.
+export function firstLiveKey(ids, spent) {
+  const set = {};
+  (Array.isArray(spent) ? spent : []).forEach(function (id) { if (id) set[id] = true; });
+  for (let i = 0; i < ids.length; i++) if (!set[ids[i]]) return i;
+  return Math.max(0, ids.length - 1);
+}
+
 export async function searchListings(apiKey, profiles, hubs, opts) {
   opts = opts || {};
   const dealerType = opts.dealerType || null;
   // Ordered keys (each its own MarketCheck account, so each its own monthly
   // quota); we move to the next only when one's monthly quota is spent.
   const keys = (Array.isArray(opts.keys) && opts.keys.length) ? opts.keys : [apiKey];
-  let keyIdx = 0;
-  let keysUsed = 1; // how many keys we ended up drawing on (for reporting)
   const meter = { calls: 0 }; // HTTP requests actually sent — the true quota cost
   const snaps = {}; // key index -> latest { id, remaining, limit, reset, exhausted }
   const ids = Array.isArray(opts.keyIds) && opts.keyIds.length === keys.length ? opts.keyIds : keys.map(function (k) { return keyId(k, null); });
+  // Start on the first key not already known to be spent (opts.spentKeys = ids, from
+  // earlier requests of this sync or the stored quota) — otherwise every request of
+  // a per-location sync would pay one call to rediscover that key #1 is used up.
+  let keyIdx = firstLiveKey(ids, opts.spentKeys);
+  let keysUsed = keyIdx + 1; // how many keys we ended up drawing on (for reporting)
+  const notices = []; // informational (key failover), not errors
   const note = function (idx, r, bodyText) { const q = readQuota(r, bodyText); if (q) snaps[idx] = Object.assign({ id: ids[idx] }, q); };
   const seen = {}; // vin -> normalized listing (dedup across hubs, keep lowest price)
   const errors = [];
@@ -444,7 +457,7 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
               const spent = keyIdx + 1; // 1-based index of the key whose quota is used up
               keyIdx++;
               keysUsed = Math.max(keysUsed, keyIdx + 1);
-              errors.push(label + ": key #" + spent + " is out of monthly quota; continuing on key #" + (keyIdx + 1) + ".");
+              notices.push("Key #" + spent + " is out of monthly quota; continuing on key #" + (keyIdx + 1) + ".");
               continue; // retry same page with the next key (no start advance)
             }
             rateLimited = true;
@@ -559,7 +572,7 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
   return {
     formatSuspect: formatSuspect,
     apiInfo: Object.assign({ pinned: API_VERSION || null, pinRejected: !!meter.pinRejected }, meter.api || {}),
-    listings: Object.values(seen).map(function (l) { return Object.assign(l, { mcQ: Object.keys(tags[l.vin] || {}) }); }), errors: errors,
+    listings: Object.values(seen).map(function (l) { return Object.assign(l, { mcQ: Object.keys(tags[l.vin] || {}) }); }), errors: errors, notices: notices,
     fingerprints: fingerprints, unchanged: unchanged, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota,
     keysUsed: keysUsed, keyQuotas: Object.keys(snaps).map(function (i) { return snaps[i]; }), calls: meter.calls,
     queries: queries, splits: splits,

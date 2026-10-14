@@ -11,6 +11,14 @@
 
 import { supabase } from "./supabaseClient";
 import { mergeReports } from "./quota.js";
+
+// Ids of the keys a batch of per-key reports says are spent this month.
+function spentIn(reports) {
+  return (reports || []).filter(function (r) { return r && r.exhausted && r.id; }).map(function (r) { return r.id; });
+}
+function addUnique(list, items) {
+  (items || []).forEach(function (m) { if (list.indexOf(m) < 0) list.push(m); });
+}
 export { reconcile } from "./reconcile.js";
 
 export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
@@ -29,6 +37,10 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
   }
   const seen = {}; // vin -> listing, keeping the lowest price across hubs
   const errors = [];
+  const notices = []; // key failover etc. — reported once, not as errors
+  // Keys known spent (from the stored quota, then from each location's response),
+  // so later locations start on a live key instead of each re-hitting a spent one.
+  const spent = ((filters && filters.spentKeys) || []).slice();
   let keyQuotas = []; // per-key monthly quota as reported by MarketCheck
   let calls = 0;      // HTTP requests this sync actually spent
   let apiInfo = null; // MarketCheck API version / deprecation headers (latest seen)
@@ -41,7 +53,7 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
   for (let i = 0; i < hubList.length; i++) {
     const hub = hubList[i];
     try {
-      const r = await fetchChunk(profiles, [hub], opts, filters);
+      const r = await fetchChunk(profiles, [hub], opts, Object.assign({}, filters, { spentKeys: spent }));
       (r.listings || []).forEach(function (l) {
         if (!l.vin) return;
         const prev = seen[l.vin];
@@ -49,6 +61,8 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
         if (!prev || (l.price && (!prev.price || l.price < prev.price))) seen[l.vin] = l;
       });
       (r.errors || []).forEach(function (m) { errors.push(m); });
+      addUnique(notices, r.notices);
+      addUnique(spent, spentIn(r.keyQuotas));
       keyQuotas = mergeReports(keyQuotas, r.keyQuotas);
       calls += r.calls || 0;
       if (r.apiInfo) apiInfo = r.apiInfo;
@@ -67,7 +81,7 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
     // Quota hit: further locations will fail too, so stop rather than burn more.
     if (rateLimited) break;
   }
-  return { listings: Object.values(seen), errors: errors, mock: mock, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota, keyQuotas: keyQuotas, calls: calls, apiInfo: apiInfo, formatSuspect: formatSuspect, fingerprints: fingerprints, unchanged: unchanged, queries: queries };
+  return { listings: Object.values(seen), errors: errors, notices: notices, mock: mock, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota, keyQuotas: keyQuotas, calls: calls, apiInfo: apiInfo, formatSuspect: formatSuspect, fingerprints: fingerprints, unchanged: unchanged, queries: queries };
 }
 
 // One /api/marketcheck request for the given hubs (usually a single hub).
@@ -89,6 +103,7 @@ async function fetchChunk(profiles, hubs, opts, filters) {
       franchiseOnly: !!(filters && filters.franchiseOnly),
       marketcheckKeys: (filters && Array.isArray(filters.marketcheckKeys)) ? filters.marketcheckKeys : [],
       fingerprints: (filters && filters.fingerprints) || {},
+      spentKeys: (filters && Array.isArray(filters.spentKeys)) ? filters.spentKeys : [],
     }),
   });
   if (!res.ok) {
@@ -105,14 +120,14 @@ async function fetchChunk(profiles, hubs, opts, filters) {
     throw err;
   }
   const json = await res.json();
-  return { listings: json.listings || [], errors: json.errors || [], mock: !!json.mock, rateLimited: !!json.rateLimited, rateLimitInfo: json.rateLimitInfo || null, quota: json.quota || null, keyQuotas: json.keyQuotas || [], calls: json.calls || 0, apiInfo: json.apiInfo || null, formatSuspect: !!json.formatSuspect, fingerprints: json.fingerprints || {}, unchanged: json.unchanged || [], queries: json.queries || 0 };
+  return { listings: json.listings || [], errors: json.errors || [], notices: json.notices || [], mock: !!json.mock, rateLimited: !!json.rateLimited, rateLimitInfo: json.rateLimitInfo || null, quota: json.quota || null, keyQuotas: json.keyQuotas || [], calls: json.calls || 0, apiInfo: json.apiInfo || null, formatSuspect: !!json.formatSuspect, fingerprints: json.fingerprints || {}, unchanged: json.unchanged || [], queries: json.queries || 0 };
 }
 
 // Live-market comp broadening for the Price Check tool: fire a one-off
 // MarketCheck search for a specific vehicle and return normalized listings to
 // fold into the local comp pool. Separate from fetchListings (which reconciles
 // against tracked inventory) — this is a read-only, on-demand widen.
-export async function fetchPriceComps(query, hubs, marketcheckKeys) {
+export async function fetchPriceComps(query, hubs, marketcheckKeys, spentKeys) {
   const { data: sess } = await supabase.auth.getSession();
   const token = sess && sess.session ? sess.session.access_token : "";
   const res = await fetch("/api/pricecomps", {
@@ -125,6 +140,7 @@ export async function fetchPriceComps(query, hubs, marketcheckKeys) {
       query: query || {},
       hubs: Array.isArray(hubs) ? hubs : [],
       marketcheckKeys: Array.isArray(marketcheckKeys) ? marketcheckKeys : [],
+      spentKeys: Array.isArray(spentKeys) ? spentKeys : [],
     }),
   });
   const j = await res.json().catch(function () { return {}; });
