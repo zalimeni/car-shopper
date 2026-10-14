@@ -76,20 +76,27 @@ describe("summarize", () => {
 });
 
 describe("syncCost / syncsLeft", () => {
-  it("costs profiles x locations x 2 car types, up to 4 pages each", () => {
-    const c = syncCost(3, 2, null);
-    expect([c.min, c.max]).toEqual([12, 48]);
-    expect(c.perHub).toEqual({ min: 6, max: 24 });
-    expect(c.liveSearch).toEqual({ min: 4, max: 16 });
-    expect(c.measured).toBeNull();
+  const P = (id, pt) => ({ id, params: { make: "M", model: id, powertrain: pt } });
+  it("merges profiles with the same powertrain filter into one query per location", () => {
+    const c = syncCost([P("a", "Hybrid"), P("b", "hev"), P("c", "")], 3, null);
+    expect([c.profiles, c.groups, c.hubs]).toEqual([3, 2, 3]);
+    expect(c.min).toBe(6);               // 2 query groups x 3 locations, one page each
+    expect(c.max).toBe((8 + 4) * 3);     // merged pair may page 8 (2 x 4), the single 4
+    expect(c.perHub).toEqual({ min: 2, max: 12 });
+    expect(c.liveSearch).toEqual({ min: 1, max: 4 });
+  });
+  it("caps a big merged group at the 500-row (10-page) pagination ceiling", () => {
+    const five = ["a", "b", "c", "d", "e"].map((x) => P(x, ""));
+    expect(syncCost(five, 1, null).max).toBe(10);
   });
   it("converts remaining calls to whole syncs (best, worst, and at the measured cost)", () => {
-    const c = syncCost(3, 2, { calls: 14 });
-    expect(syncsLeft(500, c)).toEqual({ best: 41, worst: 10, measured: 35 });
+    const c = syncCost([P("a", ""), P("b", "")], 2, { calls: 7 });
+    expect([c.min, c.max]).toEqual([2, 16]);
+    expect(syncsLeft(500, c)).toEqual({ best: 250, worst: 31, measured: 71 });
   });
   it("returns null when there is nothing to estimate", () => {
-    expect(syncsLeft(500, syncCost(0, 2, null))).toBeNull();
-    expect(syncsLeft(null, syncCost(1, 1, null))).toBeNull();
+    expect(syncsLeft(500, syncCost([], 2, null))).toBeNull();
+    expect(syncsLeft(null, syncCost([P("a", "")], 1, null))).toBeNull();
   });
 });
 

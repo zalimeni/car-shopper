@@ -50,7 +50,7 @@ describe("sync reports per-key quota and the real call count", () => {
   it("returns each key's counters and counts every request sent", async () => {
     mockFetch({ AAAA1111: { status: 200, q: { remaining: 480, limit: 500, reset: "2026-11-01T00:00:00Z" } } });
     const r = await post(handler, Object.assign({ marketcheckKeys: ["AAAA1111"] }, SYNC));
-    expect(r.body.calls).toBe(2); // used + certified, one page each
+    expect(r.body.calls).toBe(1); // one used query (it includes certified), one page
     expect(r.body.keyQuotas).toEqual([{ id: "1111", remaining: 480, limit: 500, reset: "2026-11-01T00:00:00Z", exhausted: false }]);
   });
   it("records the spent key as exhausted and the next key's counters", async () => {

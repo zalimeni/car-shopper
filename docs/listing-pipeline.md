@@ -48,9 +48,15 @@ a thin proxy that holds only the MarketCheck key.
 ```
 App opens (user authenticated)  ──or── "Sync now" button
    └─> GET /api/marketcheck       (Vercel serverless function, Node)
-         For each ACTIVE profile × each hub (Boston 02101, Durham 27701 @ radius):
+         Group ACTIVE profiles that share a powertrain filter (src/queryPlan.js);
+         for each group × each hub (Boston 02101, Durham 27701 @ radius):
            # radius = MARKETCHECK_RADIUS, default 100mi (free-tier cap); raise on a paid plan
-           query MarketCheck /v2/search/car/active  (paginate)
+           ONE query MarketCheck /v2/search/car/active, car_type=used (paginate)
+             # make/model/year as comma-separated unions, widest price/miles caps;
+             # each row is attributed back to the profile whose own filters it meets.
+             # car_type=used already includes certified (no separate certified query).
+             # A merged group pages up to 200 rows per profile, never past the
+             # account's 500-row pagination ceiling; bigger groups split per profile.
          → return normalized listings (§5)        [holds MARKETCHECK_API_KEY only]
    └─> Browser (authed) reconciles vs. stored listings (§6)
    └─> Browser writes the updated app_state blob via the user's session (RLS)

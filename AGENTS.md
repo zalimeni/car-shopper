@@ -44,6 +44,7 @@ over architecture.
 | `src/Auth.jsx` | Magic-link auth gate + the "not authorized" screen. |
 | `src/main.jsx`, `src/index.css` | Entry point + global styles. |
 | `src/locations.js` | Search-location logic: parse/search `public/locations.txt`, dedupe + sort (state, then city) the saved hubs. Pure, tested. |
+| `src/queryPlan.js` | How profiles become MarketCheck queries: merge profiles that share a powertrain filter into one query per location, and attribute results back. Shared by the server (`searchListings`) and the quota gauge's cost estimate. Pure, tested. |
 | `src/markdown.js` | Safe Markdown parser for listing notes (text → typed tree, never HTML; http(s)-only links) + the `MEMO_MAX` (4,000-char) limit. Pure, tested. Rendered by `MarkdownView` / `ListingMemo` in `App.jsx`. |
 | `src/quota.js` | MarketCheck quota bookkeeping for the header gauge + modal: per-key snapshots (from syncs / live searches — never its own calls), capacity across keys (used in order), sync-cost estimates. Pure, tested. |
 | `public/locations.txt` | Flat file (`ST|City|ZIP|lat|lon`, ~41k rows) behind the location picker; lazy-loaded, not bundled. Built by `scripts/build-locations.mjs` from GeoNames (CC BY 4.0). |

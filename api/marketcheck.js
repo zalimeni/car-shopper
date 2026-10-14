@@ -16,6 +16,9 @@
 // maps it, for confirming live field names (API key redacted from the echo).
 
 import { authorize } from "./_auth.js";
+import { mapPowertrain, parseYears, groupProfiles, mergedProfile, attributeRow } from "../src/queryPlan.js";
+
+export { mapPowertrain, parseYears };
 
 const HOST = process.env.MARKETCHECK_HOST || "https://api.marketcheck.com";
 const ENDPOINT = "/v2/search/car/active";
@@ -28,9 +31,15 @@ const ROWS = 50; // page size per request
 // page and flag still-active listings as "not seen". Bounded to keep free-tier
 // API usage in check; override with MARKETCHECK_MAX_ROWS on a paid plan.
 const MAX_ROWS = Number(process.env.MARKETCHECK_MAX_ROWS) || 200;
-// Regular used + certified pre-owned are separate MarketCheck car_types (a
-// car_type=used query does NOT include CPO), so we query both to catch CPO cars.
-const CAR_TYPES = ["used", "certified"];
+// Only car_type=used is queried: it already includes certified pre-owned. Verified
+// against the live API (Oct 2026, 2021-22 RAV4 within 100 mi of Durham): used=167,
+// used+exclude_certified=156, certified=11 — so a separate certified query just
+// paid again for the same 11 cars. CPO is still detected per row (isCpo).
+const CAR_TYPES = ["used"];
+// The account's pagination ceiling (start + rows); beyond it MarketCheck answers
+// 422 "Subscribed package pagination limit of 500 rows exceeded" — and still
+// charges the call.
+const PAGE_LIMIT = Number(process.env.MARKETCHECK_PAGE_LIMIT) || 500;
 // Free tier rate-limits bursts; space sequential queries out and retry 429s.
 const THROTTLE_MS = Number(process.env.MARKETCHECK_THROTTLE_MS) || 500;
 const MAX_RETRIES = 3;
@@ -287,7 +296,8 @@ export default async function handler(req, res) {
 export async function searchListings(apiKey, profiles, hubs, opts) {
   opts = opts || {};
   const dealerType = opts.dealerType || null;
-  // Ordered keys to try; on a quota/rate-limit hit we fall through to the next.
+  // Ordered keys (each its own MarketCheck account, so each its own monthly
+  // quota); we move to the next only when one's monthly quota is spent.
   const keys = (Array.isArray(opts.keys) && opts.keys.length) ? opts.keys : [apiKey];
   let keyIdx = 0;
   let keysUsed = 1; // how many keys we ended up drawing on (for reporting)
@@ -297,6 +307,7 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
   const note = function (idx, r, bodyText) { const q = readQuota(r, bodyText); if (q) snaps[idx] = Object.assign({ id: ids[idx] }, q); };
   const seen = {}; // vin -> normalized listing (dedup across hubs, keep lowest price)
   const errors = [];
+  let queries = 0, splits = 0;
 
   // Stop issuing new queries before the function wall so we return partial
   // results instead of a 504. The client already splits by hub, so this is a
@@ -307,102 +318,124 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
   let rateLimited = false; // set on a 429/503/402 so the caller can warn clearly
   let rateLimitInfo = null; // reset/remaining headers from MarketCheck, when present
   let quota = null; // monthly quota snapshot from response headers (for a low-quota warning)
-
   let first = true;
-  for (const pr of profiles) {
-    if (timeUp) break;
-    for (const hub of hubs) {
-      if (timeUp) break;
-      for (const carType of CAR_TYPES) {
-        if (timeUp) break;
-        const label = (pr.name || pr.id || "?") + " @ " + (hub.n || hub.z || "?") + " [" + carType + "]";
-        // Page through results (bounded by MAX_ROWS) so a dense query doesn't
-        // truncate at 50 and drop still-active listings. `while` (not `for`) so a
-        // quota hit can retry the SAME page with the next key.
-        let start = 0;
-        while (start < MAX_ROWS) {
-          if (Date.now() > deadline) {
-            errors.push("Stopped early to avoid a timeout — some results may be missing. Use fewer locations, a smaller radius, or narrower filters.");
+
+  // One query (group × hub × car type), paged. onRow gets each raw row.
+  // A merged group may page up to MAX_ROWS per profile (never past the account's
+  // pagination ceiling). Merging can't cost more than separate queries —
+  // ceil((a+b)/50) <= ceil(a/50) + ceil(b/50) — unless it has to be split: when a
+  // merged group matches more than its cap we return "split" and the caller
+  // re-runs its profiles one by one (each then capped at MAX_ROWS, as before).
+  async function runQuery(group, hub, carType, onRow) {
+    const pr = mergedProfile(group);
+    const label = (pr.name || pr.id || "?") + " @ " + (hub.n || hub.z || "?") + " [" + carType + "]";
+    const cap = Math.min(PAGE_LIMIT, MAX_ROWS * group.length);
+    queries++;
+    let start = 0;
+    while (start < cap) {
+      if (Date.now() > deadline) {
+        errors.push("Stopped early to avoid a timeout — some results may be missing. Use fewer locations, a smaller radius, or narrower filters.");
+        timeUp = true;
+        return "stop";
+      }
+      if (!first) await sleep(THROTTLE_MS); // stay under the burst rate limit
+      first = false;
+      try {
+        const url = buildUrl(keys[keyIdx], pr, hub, start, carType, dealerType);
+        const r = await fetchWithRetry(url, { headers: { Accept: "application/json" } }, undefined, meter);
+        if (!r.ok) {
+          let body = "";
+          try { body = (await r.text()).slice(0, 300); } catch (e) { /* ignore */ }
+          note(keyIdx, r, body);
+          // Rate limit / quota. Move to the next key ONLY when this one's monthly
+          // quota is spent; a throttle was already
+          // retried with backoff on THIS key, so reaching here means it persisted.
+          if (r.status === 429 || r.status === 503 || r.status === 402) {
+            const monthlySpent = r.status === 402 || !!(snaps[keyIdx] && snaps[keyIdx].exhausted);
+            if (monthlySpent && keyIdx + 1 < keys.length) {
+              const spent = keyIdx + 1; // 1-based index of the key whose quota is used up
+              keyIdx++;
+              keysUsed = Math.max(keysUsed, keyIdx + 1);
+              errors.push(label + ": key #" + spent + " is out of monthly quota; continuing on key #" + (keyIdx + 1) + ".");
+              continue; // retry same page with the next key (no start advance)
+            }
+            rateLimited = true;
             timeUp = true;
-            break;
+            rateLimitInfo = {
+              status: r.status,
+              retryAfter: num(r.headers.get("retry-after")),
+              rateReset: r.headers.get("ratelimit-reset-time") || null,
+              quotaReset: r.headers.get("quota-reset-time") || null,
+              rateRemaining: num(r.headers.get("ratelimit-remaining")),
+              quotaRemaining: num(r.headers.get("quota-remaining")),
+            };
+            const whose = keys.length === 1 ? "your key" : "all " + keys.length + " keys";
+            errors.push(monthlySpent
+              ? "MarketCheck monthly quota is used up on " + whose + " (HTTP " + r.status + ") — results are incomplete; it resets with the month." + (body ? " [" + body.slice(0, 120) + "]" : "")
+              : "MarketCheck is rate-limiting requests (HTTP " + r.status + ") — results are incomplete; wait a bit and sync again." + (body ? " [" + body.slice(0, 120) + "]" : ""));
+            return "stop";
           }
-          if (!first) await sleep(THROTTLE_MS); // stay under the burst rate limit
-          first = false;
-          let numFound = null;
-          try {
-            const url = buildUrl(keys[keyIdx], pr, hub, start, carType, dealerType);
-            const r = await fetchWithRetry(url, { headers: { Accept: "application/json" } }, undefined, meter);
-            if (!r.ok) {
-              let body = "";
-              try { body = (await r.text()).slice(0, 300); } catch (e) { /* ignore */ }
-              note(keyIdx, r, body);
-              // Rate limit / quota. Move to the next key ONLY when this one's monthly
-              // quota is spent (retry the same page on it); a momentary throttle was
-              // already retried with backoff on THIS key, so reaching here means it
-              // persisted — stop rather than spend another key's quota to dodge it.
-              if (r.status === 429 || r.status === 503 || r.status === 402) {
-                const monthlySpent = r.status === 402 || !!(snaps[keyIdx] && snaps[keyIdx].exhausted);
-                if (monthlySpent && keyIdx + 1 < keys.length) {
-                  const spent = keyIdx + 1; // 1-based index of the key whose quota is used up
-                  keyIdx++;
-                  keysUsed = Math.max(keysUsed, keyIdx + 1);
-                  errors.push(label + ": key #" + spent + " is out of monthly quota; continuing on key #" + (keyIdx + 1) + ".");
-                  continue; // retry same page with the next key (no start advance)
-                }
-                rateLimited = true;
-                timeUp = true;
-                // Surface MarketCheck's documented reset/remaining headers so the
-                // UI can say when the limit clears (headers are case-insensitive).
-                rateLimitInfo = {
-                  status: r.status,
-                  retryAfter: num(r.headers.get("retry-after")),
-                  rateReset: r.headers.get("ratelimit-reset-time") || null,
-                  quotaReset: r.headers.get("quota-reset-time") || null,
-                  rateRemaining: num(r.headers.get("ratelimit-remaining")),
-                  quotaRemaining: num(r.headers.get("quota-remaining")),
-                };
-                errors.push(monthlySpent
-                  ? "MarketCheck monthly quota is used up on " + (keys.length === 1 ? "your key" : "all " + keys.length + " keys") + " (HTTP " + r.status + ") — results are incomplete; it resets with the month." + (body ? " [" + body.slice(0, 120) + "]" : "")
-                  : "MarketCheck is rate-limiting requests (HTTP " + r.status + ") — results are incomplete; wait a bit and sync again." + (body ? " [" + body.slice(0, 120) + "]" : ""));
-                break;
-              }
-              // Auto-debug: 4xx bodies name the offending param. Echo it (+ the
-              // sent query, key redacted) so the error itself is actionable.
-              const sent = url.split("?")[1] ? url.split("?")[1].replace(/api_key=[^&]*&?/, "") : "";
-              errors.push(label + ": MarketCheck HTTP " + r.status + (body ? " — " + body : "") + (r.status >= 400 && r.status < 500 ? " [sent: " + sent + "]" : ""));
-              break; // stop paging this profile×hub on error
-            }
-            // Track monthly quota from response headers (present on OK responses,
-            // per MarketCheck's tracking headers). Remaining only drops, so the
-            // latest snapshot is the most conservative.
-            note(keyIdx, r, "");
-            const qrem = num(r.headers.get("quota-remaining"));
-            if (qrem != null) quota = { remaining: qrem, limit: num(r.headers.get("quota-limit")), reset: r.headers.get("quota-reset-time") || null };
-            const json = await r.json();
-            numFound = typeof json.num_found === "number" ? json.num_found : null;
-            const rows = Array.isArray(json.listings) ? json.listings : [];
-            for (const row of rows) {
-              const norm = normalize(row, pr.id);
-              if (!norm || !norm.vin) continue;
-              // Backstop the dealer_type filter in case the API returns extras.
-              if (dealerType === "franchise" && norm.dealerType !== "franchise") continue;
-              const prev = seen[norm.vin];
-              // Lowest REAL price wins — a priced row always beats an unpriced one.
-              if (!prev || (norm.price && (!prev.price || norm.price < prev.price))) seen[norm.vin] = norm;
-            }
-            // Last page: fewer than a full page back, or we've covered num_found.
-            if (rows.length < ROWS || (numFound != null && start + ROWS >= numFound)) break;
-            start += ROWS; // advance to the next page
-          } catch (e) {
-            errors.push(label + ": " + (e && e.message ? e.message : "fetch failed"));
-            break;
-          }
+          // Auto-debug: 4xx bodies name the offending param. Echo it (+ the
+          // sent query, key redacted) so the error itself is actionable.
+          const sent = url.split("?")[1] ? url.split("?")[1].replace(/api_key=[^&]*&?/, "") : "";
+          errors.push(label + ": MarketCheck HTTP " + r.status + (body ? " — " + body : "") + (r.status >= 400 && r.status < 500 ? " [sent: " + sent + "]" : ""));
+          return "error";
+        }
+        note(keyIdx, r, "");
+        const qrem = num(r.headers.get("quota-remaining"));
+        if (qrem != null) quota = { remaining: qrem, limit: num(r.headers.get("quota-limit")), reset: r.headers.get("quota-reset-time") || null };
+        const json = await r.json();
+        const numFound = typeof json.num_found === "number" ? json.num_found : null;
+        const rows = Array.isArray(json.listings) ? json.listings : [];
+        rows.forEach(onRow);
+        // A merged query too big to page completely: run its profiles separately
+        // (this page's rows are already kept — dedupe handles the overlap).
+        if (start === 0 && group.length > 1 && numFound != null && numFound > cap) return "split";
+        if (rows.length < ROWS || (numFound != null && start + ROWS >= numFound)) return "done";
+        start += ROWS;
+      } catch (e) {
+        errors.push(label + ": " + (e && e.message ? e.message : "fetch failed"));
+        return "error";
+      }
+    }
+    return "done";
+  }
+
+  function keep(row, group) {
+    const p = attributeRow(row, group);
+    if (!p) return null; // matched only the merged union of filters, not any one profile
+    const norm = normalize(row, p.id);
+    if (!norm || !norm.vin) return null;
+    // Backstop the dealer_type filter in case the API returns extras.
+    if (dealerType === "franchise" && norm.dealerType !== "franchise") return null;
+    const prev = seen[norm.vin];
+    // Lowest REAL price wins — a priced row always beats an unpriced one.
+    if (!prev || (norm.price && (!prev.price || norm.price < prev.price))) seen[norm.vin] = norm;
+    return norm;
+  }
+
+  outer:
+  for (const group of groupProfiles(profiles)) {
+    for (const hub of hubs) {
+      for (const carType of CAR_TYPES) {
+        const onRow = function (row) { keep(row, group); };
+        const queue = [group];
+        while (queue.length) {
+          const g = queue.shift();
+          const out = await runQuery(g, hub, carType, onRow);
+          if (out === "stop") break outer;
+          if (out === "split") { splits++; g.forEach(function (p) { queue.push([p]); }); }
         }
       }
+      if (timeUp) break outer;
     }
   }
 
-  return { listings: Object.values(seen), errors: errors, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota, keysUsed: keysUsed, keyQuotas: Object.keys(snaps).map(function (i) { return snaps[i]; }), calls: meter.calls };
+  return {
+    listings: Object.values(seen), errors: errors, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota,
+    keysUsed: keysUsed, keyQuotas: Object.keys(snaps).map(function (i) { return snaps[i]; }), calls: meter.calls,
+    queries: queries, splits: splits,
+  };
 }
 
 // ── MarketCheck query construction ──
@@ -438,8 +471,7 @@ export function buildUrl(apiKey, profile, hub, start, carType, dealerType) {
   const p = profile.params || {};
   const q = new URLSearchParams();
   q.set("api_key", apiKey);
-  // "used" and "certified" are distinct car_types (used excludes CPO), so the
-  // sync runs both to cover regular + certified inventory.
+  // car_type=used includes certified pre-owned (see CAR_TYPES).
   q.set("car_type", carType || "used");
   // Optional dealer-type narrowing (e.g. "franchise" to exclude independents).
   if (dealerType) q.set("dealer_type", dealerType);
@@ -466,33 +498,7 @@ export function buildUrl(apiKey, profile, hub, start, carType, dealerType) {
   return HOST + ENDPOINT + "?" + q.toString();
 }
 
-// Map friendly powertrain words to MarketCheck's powertrain_type codes
-// (HEV/PHEV/Combustion). Pass through already-correct codes and unknowns.
-export function mapPowertrain(v) {
-  const k = String(v || "").trim().toLowerCase();
-  if (k === "hybrid" || k === "hev") return "HEV";
-  if (k === "phev" || k === "plug-in hybrid" || k === "plugin hybrid" || k === "plug in hybrid") return "PHEV";
-  if (k === "gas" || k === "gasoline" || k === "combustion") return "Combustion";
-  return v;
-}
 
-// "2019-2022" -> "2019,2020,2021,2022"; "2016, 2018" -> "2016,2018"
-export function parseYears(s) {
-  if (!s) return "";
-  const out = [];
-  String(s).split(",").forEach(function (part) {
-    const t = part.trim();
-    const range = t.match(/^(\d{4})\s*-\s*(\d{4})$/);
-    if (range) {
-      let a = +range[1], b = +range[2];
-      if (a > b) { const tmp = a; a = b; b = tmp; }
-      for (let y = a; y <= b; y++) out.push(y);
-    } else if (/^\d{4}$/.test(t)) {
-      out.push(+t);
-    }
-  });
-  return Array.from(new Set(out)).sort().join(",");
-}
 
 // Only http(s) URLs may flow into the app (they're rendered as <a href> /
 // <img src> in the client) — anything else (javascript:, data:, …) is dropped.
@@ -583,9 +589,8 @@ export function mapDealerType(row, dealer) {
 }
 
 // MarketCheck flags certified inventory with is_certified (value 1; the field is
-// only present on certified cars). NOTE: car_type=used does NOT return certified
-// vehicles — they're a distinct car_type=certified category — so the sync queries
-// both (see CAR_TYPES) and this labels which came back certified.
+// only present on certified cars). car_type=used returns certified cars too, so
+// this is how a used result gets labelled CPO.
 export function isCpo(row) {
   return !!row && (row.is_certified === 1 || row.is_certified === "1" || row.is_certified === true);
 }
