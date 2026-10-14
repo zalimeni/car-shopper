@@ -54,11 +54,12 @@ describe("QuotaModal", () => {
     expect(rows[1]).toMatch(/Spare.*…2222.*350.*\/ 500.*in use/);
     cleanup();
   });
-  it("estimates syncs from the CURRENT active profiles x locations (3 x 2 x 2 = 12 calls min)", () => {
+  it("estimates syncs from the CURRENT active profiles (merged by powertrain) x locations", () => {
     const { container } = open(data(store));
     const text = container.textContent;
-    expect(text).toMatch(/3 active profiles × 2 locations × 2 car types/);
-    expect(text).toMatch(/12–48 calls/);
+    // 3 active profiles with no powertrain filter -> one merged search x 2 locations
+    expect(text).toMatch(/3 active profiles merge into 1 search \(same powertrain filter\) × 2 locations/);
+    expect(text).toMatch(/2–20 calls/); // floor 1x2; ceiling 10 pages (500-row cap) x 2
     expect(text).toMatch(/last full sync actually used 14/);
     expect(text).toMatch(/≈ 25 syncs left at your last sync's cost/); // floor(350/14)
     cleanup();
@@ -66,8 +67,9 @@ describe("QuotaModal", () => {
   it("lists what each kind of call costs", () => {
     const { container } = open(data(store));
     const t = container.textContent;
-    expect(t).toMatch(/Sync of one location6–24/);
-    expect(t).toMatch(/Price Check → live market4–16/);
+    expect(t).toMatch(/Sync of one location1–10/);
+    expect(t).toMatch(/Price Check → live market1–4/);
+    expect(t).toMatch(/Daily scheduled sync.*≈ 420 \/ month/); // last full sync 14 x 30
     expect(t).not.toMatch(/Refresh/);
     cleanup();
   });

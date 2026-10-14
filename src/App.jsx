@@ -11,7 +11,7 @@ import { sortRows, nextSort, sortIndicator } from "./tableSort";
 import { homeMiles } from "./geo";
 import { parseMarkdown, clampMemo, MEMO_MAX } from "./markdown";
 import { summarize, ingestSnaps, recordSyncCalls, syncCost, syncsLeft, gaugeTone, dedupeKeyEntries } from "./quota";
-import { loadLocations, searchLocations, addHub as addHubTo, normalizeHubs, hubFromZip, hubParts, hubKey } from "./locations";
+import { loadLocations, searchLocations, addHub as addHubTo, normalizeHubs, hubFromZip, hubParts, hubKey, hubOverlaps } from "./locations";
 
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
 
@@ -1318,6 +1318,29 @@ export default function App() {
 }
 
 // ── Dashboard ──
+// Every sync spends real MarketCheck calls and there's no free "has anything
+// changed?" check (an ETag 304 is still billed). So before a manual sync within
+// RESYNC_WARN_HOURS of the last one, say what it costs and how fresh MarketCheck's
+// data is. Returns the confirm() text, or null when no warning is needed.
+var RESYNC_WARN_HOURS = 6;
+export function syncWarning(data, nowMs) {
+  if (!data || !data.lastSynced) return null;
+  var now = nowMs != null ? nowMs : Date.now();
+  var ageH = (now - Date.parse(data.lastSynced)) / 3600000;
+  if (!(ageH >= 0) || ageH >= RESYNC_WARN_HOURS) return null;
+  var s = getSettings(data);
+  var active = (data.profiles || []).filter(function (p) { return p.active; });
+  var cost = syncCost(active, (s.hubs || []).length, s.mcQuota && s.mcQuota.lastSync);
+  var sum = summarize(s.marketcheckKeys || [], s.mcQuota, now);
+  var newest = (data.listings || []).reduce(function (m, l) { return l.mcSeen && l.mcSeen > m ? l.mcSeen : m; }, "");
+  var ago = ageH < 1 ? Math.max(1, Math.round(ageH * 60)) + " min" : Math.round(ageH) + " hour" + (Math.round(ageH) === 1 ? "" : "s");
+  var calls = cost.measured ? "about " + cost.measured : (cost.min === cost.max ? String(cost.min) : cost.min + "–" + cost.max);
+  return "Your last sync was " + ago + " ago."
+    + (newest ? " MarketCheck's newest data on your listings is from " + newest + ", and it refreshes roughly daily, so a sync now will likely return the same results." : "")
+    + " It will use " + calls + " MarketCheck call" + (calls === "1" ? "" : "s")
+    + (sum.fraction != null ? " (" + Number(sum.totalRemaining).toLocaleString() + " left this month)" : "") + ".\n\nSync anyway?";
+}
+
 // Claude-style usage ring: how much of the monthly MarketCheck capacity (all keys
 // together) is left. Grey dashed until a sync or refresh has measured anything.
 var TONE_COLOR = { good: "#3fae74", warn: "#e8c96a", bad: "#e07a7a", none: "#555" };
@@ -1360,8 +1383,10 @@ export function QuotaModal({ data, summary, onClose }) {
     return function () { window.removeEventListener("keydown", onKey); };
   }, [onClose]);
   var s = getSettings(data);
-  var active = (data.profiles || []).filter(function (p) { return p.active; }).length;
-  var cost = syncCost(active, (s.hubs || []).length, s.mcQuota && s.mcQuota.lastSync);
+  var activeList = (data.profiles || []).filter(function (p) { return p.active; });
+  var active = activeList.length;
+  var cost = syncCost(activeList, (s.hubs || []).length, s.mcQuota && s.mcQuota.lastSync);
+  var perSync = cost.measured || cost.min; // what the daily scheduled sync would spend each run
   var left = syncsLeft(summary.totalRemaining, cost);
   var n = function (v) { return Number(v).toLocaleString(); };
   var range = function (a, b) { return a === b ? n(a) : n(a) + "–" + n(b); };
@@ -1422,7 +1447,7 @@ export function QuotaModal({ data, summary, onClose }) {
           <p style={S.help}>Add at least one active profile and one search location to estimate sync cost.</p>
         ) : (
           <div style={{ fontSize: 13, color: "#c8c8d0", lineHeight: 1.6 }}>
-            <div>With your current <strong>{active}</strong> active profile{active === 1 ? "" : "s"} × <strong>{cost.hubs}</strong> location{cost.hubs === 1 ? "" : "s"} × 2 car types (used + certified), one sync costs <strong>{range(cost.min, cost.max)}</strong> calls — the minimum when every search fits one page, more when a query has over 50 matches.</div>
+            <div>Your <strong>{active}</strong> active profile{active === 1 ? "" : "s"} {cost.groups < active ? <span>merge into <strong>{cost.groups}</strong> search{cost.groups === 1 ? "" : "es"} (same powertrain filter)</span> : <span>need <strong>{cost.groups}</strong> search{cost.groups === 1 ? "" : "es"}</span>} × <strong>{cost.hubs}</strong> location{cost.hubs === 1 ? "" : "s"}, so one sync costs <strong>{range(cost.min, cost.max)}</strong> calls — the minimum when every search fits in one 50-car page, more for searches with more matches.</div>
             {cost.measured ? <div>Your last full sync actually used <strong>{n(cost.measured)}</strong>.</div> : <div style={{ color: "#6b6b76" }}>No complete sync recorded yet to measure the real cost.</div>}
             {left ? (
               <div style={{ marginTop: 6 }}>
@@ -1446,6 +1471,7 @@ export function QuotaModal({ data, summary, onClose }) {
                 ["Price Check → live market", range(cost.liveSearch.min, cost.liveSearch.max)],
                 ["Debug raw VIN lookup", "1"],
                 ["Debug raw sample (+ up to 4 diagnosis re-runs if empty)", "1–5"],
+                ["Daily scheduled sync, if enabled on the server (30 runs)", "≈ " + n(perSync * 30) + " / month"],
               ].map(function (row) { return (<tr key={row[0]}><td style={td}>{row[0]}</td><td style={td}>{row[1]}</td></tr>); })}
             </tbody>
           </table>
@@ -1632,6 +1658,14 @@ export function LocationPicker({ hubs, onChange }) {
           </div>
         )}
       </div>
+      {hubOverlaps(shown, idx).map(function (o) {
+        var name = function (h) { var p = hubParts(h, idx); return p.st ? p.city + ", " + p.st : (h.n || h.z); };
+        return (
+          <div key={hubKey(o.a) + hubKey(o.b)} style={{ fontSize: 12, color: "#d4a017", marginTop: 6, lineHeight: 1.45 }}>
+            ⚠ {name(o.a)} and {name(o.b)} are {o.miles} mi apart, so their search areas overlap about {Math.round(o.overlap * 100)}%. Each location is its own search on every sync — dropping one would save its calls and lose few cars.
+          </div>
+        );
+      })}
       {note && <div style={{ fontSize: 12, color: "#d4a017", marginTop: 6 }}>{note}</div>}
       {loadErr && <div style={{ fontSize: 12, color: "#d4a017", marginTop: 6 }}>City suggestions couldn't load — you can still enter a 5-digit ZIP and press Enter.</div>}
     </div>
@@ -2287,6 +2321,21 @@ function scoreHue(v) { return v >= 7 ? "#2d8659" : v >= 5 ? "#d4a017" : "#c44"; 
 // your own tracked/rejected data (free, offline), with an optional live
 // MarketCheck search to widen thin comps and an optional AI verdict weighted to
 // a confidence signal. Exported for render tests.
+// Where Price Check's live search looks: the home base when it's set (using the
+// matching search location's coordinates if the saved home base predates them),
+// else the first search location. null when there are no locations.
+export function liveSearchHub(s) {
+  var hubs = (s && s.hubs) || [];
+  var hb = s && s.homeBase;
+  if (hb && (hb.z || hb.n)) {
+    var match = hubs.find(function (h) { return hb.z && h.z === hb.z; });
+    if (hb.lat != null && hb.lon != null) return Object.assign({}, match || {}, hb);
+    if (match) return match;
+    if (hb.z) return hb;
+  }
+  return hubs[0] || null;
+}
+
 // Sortable columns for the Price Check comps table (order matches the header).
 var COMP_COLS = [
   { key: "year", label: "Year", best: "max", get: function (c) { return c.year; } },
@@ -2338,10 +2387,12 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings, onQuota
   // re-run the local engine over the combined pool. On-demand (spends quota).
   function runLive() {
     if (!result || result.error) return;
-    var hubs = getSettings(data).hubs || [];
-    if (!hubs.length) { setLive({ error: "Add a search location in Settings to check the live market." }); return; }
+    var hub = liveSearchHub(getSettings(data));
+    if (!hub) { setLive({ error: "Add a search location in Settings to check the live market." }); return; }
     setLive({ busy: true });
-    fetchPriceComps(result.query, hubs, mcKeys(data)).then(function (r) {
+    // One location, not all of them: each location is a separate (billed) query,
+    // and comps near home are the ones that matter for a fair-price read.
+    fetchPriceComps(result.query, [hub], mcKeys(data)).then(function (r) {
       var merged = localPriceCheck(data, candidates, result.query, { extra: r.listings });
       setResult(Object.assign({ query: result.query }, merged));
       setAi(null); // comps changed — any prior AI verdict is stale
@@ -2482,7 +2533,7 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings, onQuota
                 {live.rateLimited ? " (MarketCheck quota hit mid-search — results may be partial.)" : ""}
               </div>
             )}
-            <div style={{ fontSize: 11, color: "#6b6b76", marginTop: 6 }}>Searches your Settings locations via MarketCheck (uses your quota) and folds current asking prices into the comps above.</div>
+            <div style={{ fontSize: 11, color: "#6b6b76", marginTop: 6 }}>Searches MarketCheck around {(function () { var h = liveSearchHub(getSettings(data)); return h ? (h.n || h.z) : "your first location"; })()} (your home base, else your first search location — about 1–4 calls) and folds current asking prices into the comps above.</div>
           </div>
 
           <div style={{ marginTop: 12, borderTop: "1px solid #1e2028", paddingTop: 10 }}>
@@ -2714,7 +2765,7 @@ function HelpTab() {
         <p style={li}><span style={b}>Criteria</span> — the weighted factors (price, mileage, condition, etc.) behind each listing's composite score. Editing weights re-scores everything automatically.</p>
         <p style={li}><span style={b}>Results</span> — sync, review candidates, and manage your watchlist. This is where you'll spend most of your time.</p>
         <p style={li}><span style={b}>Compare</span> — side-by-side table of watchlist listings for the profiles you pick, across primary specs and each scoring criterion plus the total; best value per row is highlighted.</p>
-        <p style={li}><span style={b}>Price</span> — is an asking price fair? Enter a VIN or a description (year/make/model/trim/mileage) and it's judged against comparable cars in your own tracked, rejected, sold, skipped &amp; candidate data — free and offline. A confidence badge reflects how many comps backed the read and how tightly they cluster. Thin on local comps? <span style={b}>Check the live market</span> fires a one-off MarketCheck search for that vehicle (uses your quota) to widen the pool. With an Anthropic key you can also ask AI for a plain-English verdict, weighted to the confidence. Great for sanity-checking a private listing you found elsewhere.</p>
+        <p style={li}><span style={b}>Price</span> — is an asking price fair? Enter a VIN or a description (year/make/model/trim/mileage) and it's judged against comparable cars in your own tracked, rejected, sold, skipped &amp; candidate data — free and offline. A confidence badge reflects how many comps backed the read and how tightly they cluster. Thin on local comps? <span style={b}>Check the live market</span> fires a one-off MarketCheck search for that vehicle around your home base (1–4 calls of your quota) to widen the pool. With an Anthropic key you can also ask AI for a plain-English verdict, weighted to the confidence. Great for sanity-checking a private listing you found elsewhere.</p>
       </div>
 
       <div style={S.card}>
@@ -2881,7 +2932,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       <div style={S.secH}>
         <h2 style={S.secT}>Listings</h2>
         <div style={{ display: "flex", gap: 6 }}>
-          <button style={Object.assign({}, S.secBtn, syncing ? { opacity: 0.6 } : {})} disabled={syncing} onClick={function () { doSync(); }}>{syncing ? "Syncing…" : "↻ Sync"}</button>
+          <button style={Object.assign({}, S.secBtn, syncing ? { opacity: 0.6 } : {})} disabled={syncing} onClick={function () { var w = syncWarning(data); if (!w || window.confirm(w)) doSync(); }}>{syncing ? "Syncing…" : "↻ Sync"}</button>
           <button style={S.secBtn} onClick={function () { setShowImport(!showImport); setShowAdd(false); }}>{showImport ? "Close" : "Import"}</button>
           <button style={S.priBtn} onClick={function () { setShowAdd(!showAdd); setShowImport(false); setEdListing(null); }}>{showAdd ? "Cancel" : "+ Add"}</button>
         </div>

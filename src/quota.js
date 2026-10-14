@@ -11,10 +11,14 @@
 // the sum across keys, and "where we are" is the first key with calls left. The
 // shared server key is used only when you have no keys of your own.
 
-// Mirrors api/marketcheck.js: 2 car types (used + certified) per profile x location,
-// each paged 50 rows at a time up to MARKETCHECK_MAX_ROWS (default 200 -> 4 pages).
-export const CAR_TYPES = 2;
+import { groupProfiles } from "./queryPlan.js";
+
+// Mirrors api/marketcheck.js: one car type (used — it includes certified), 50 rows
+// per page, up to 200 rows per profile (4 pages), and never past the account's
+// 500-row pagination ceiling (10 pages) for a merged query.
+export const ROWS = 50;
 export const MAX_PAGES = 4;
+export const PAGE_CEILING = 10;
 
 // Settings' save step: trim, drop blanks, and drop repeats of the same key (first
 // wins, but it adopts a later copy's label if it had none). This is the ONLY place
@@ -127,17 +131,23 @@ export function summarize(userKeys, store, nowMs) {
   return { rows: rows, totalRemaining: totalRemaining, totalLimit: totalLimit, fraction: fl > 0 ? fr / fl : null, unknown: unknown, activeId: activeId, nextReset: nextReset };
 }
 
-// Calls one sync costs: profiles x locations x car types x pages. Pages depend on
-// how many cars match (50 per page, up to MAX_PAGES), so it's a range until a
-// real sync tells us (`measured`).
+// Calls one sync costs. Profiles that share a powertrain filter are merged into
+// one query per location (src/queryPlan.js — the same grouping the server uses),
+// so the floor is (query groups) x (locations). Pages depend on how many cars match,
+// so it's a range until a real sync tells us (`measured`). `activeProfiles` is the
+// array of active profiles (a bare count is accepted and treated as unmergeable).
 export function syncCost(activeProfiles, hubs, lastSync) {
-  const P = activeProfiles || 0, H = hubs || 0;
-  const min = P * H * CAR_TYPES;
+  const groups = Array.isArray(activeProfiles) ? groupProfiles(activeProfiles) : Array.from({ length: activeProfiles || 0 }, function () { return [null]; });
+  const P = groups.reduce(function (a, g) { return a + g.length; }, 0);
+  const H = hubs || 0;
+  const G = groups.length;
+  const pagesMax = groups.reduce(function (a, g) { return a + Math.min(PAGE_CEILING, MAX_PAGES * g.length); }, 0);
   return {
-    profiles: P, hubs: H, min: min, max: min * MAX_PAGES,
+    profiles: P, groups: G, hubs: H, min: G * H, max: pagesMax * H,
     measured: lastSync && lastSync.calls > 0 ? lastSync.calls : null,
-    perHub: { min: P * CAR_TYPES, max: P * CAR_TYPES * MAX_PAGES },
-    liveSearch: { min: H * CAR_TYPES, max: H * CAR_TYPES * MAX_PAGES },
+    perHub: { min: G, max: pagesMax },
+    // Price Check's live search runs one query around the home base.
+    liveSearch: { min: 1, max: MAX_PAGES },
   };
 }
 

@@ -100,3 +100,37 @@ describe("the shipped public/locations.txt", () => {
     expect(searchLocations(real, "louisville ky")[0].label).toBe("Louisville, KY");
   });
 });
+
+import { circleOverlap, hubOverlaps } from "../src/locations.js";
+describe("search-area overlap", () => {
+  it("circle overlap: identical = 1, far apart = 0, half-radius apart ≈ 69%", () => {
+    expect(circleOverlap(0, 100, 100)).toBe(1);
+    expect(circleOverlap(250, 100, 100)).toBe(0);
+    expect(circleOverlap(100, 100, 100)).toBeCloseTo(0.391, 2);
+    expect(circleOverlap(50, 100, 100)).toBeCloseTo(0.685, 2);
+  });
+  it("a small area inside a big one counts as fully covered", () => {
+    expect(circleOverlap(20, 100, 30)).toBe(1);
+  });
+  it("flags Durham + Raleigh (about 23 mi apart) but not Durham + Boston", () => {
+    const hubs = [
+      { n: "Durham, NC", z: "27701", lat: 35.994, lon: -78.899 },
+      { n: "Raleigh, NC", z: "27601", lat: 35.772, lon: -78.638 },
+      { n: "Boston, MA", z: "02108", lat: 42.357, lon: -71.064 },
+    ];
+    const o = hubOverlaps(hubs);
+    expect(o.length).toBe(1);
+    expect([o[0].a.n, o[0].b.n]).toEqual(["Durham, NC", "Raleigh, NC"]);
+    expect(o[0].miles).toBeGreaterThan(18);
+    expect(o[0].miles).toBeLessThan(28);
+    expect(o[0].overlap).toBeGreaterThan(0.8);
+  });
+  it("uses the ZIP index for legacy locations without coordinates, skips ones it can't place", () => {
+    const o = hubOverlaps([{ n: "Durham NC", z: "27701" }, { n: "Durham", z: "27702" }, { n: "??", z: "00000" }], idx);
+    expect(o.length).toBe(1);
+  });
+  it("respects a per-location radius", () => {
+    const o = hubOverlaps([{ n: "A", lat: 35, lon: -78, r: 10 }, { n: "B", lat: 35.3, lon: -78, r: 10 }]); // ~21 mi apart, 10-mi circles
+    expect(o).toEqual([]);
+  });
+});
