@@ -38,10 +38,11 @@ const MAX_RETRIES = 3;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Fetch that retries on HTTP 429 with backoff (honoring Retry-After).
-async function fetchWithRetry(url, opts, maxRetries) {
+async function fetchWithRetry(url, opts, maxRetries, meter) {
   const limit = maxRetries != null ? maxRetries : MAX_RETRIES;
   let attempt = 0;
   while (true) {
+    if (meter) meter.calls++; // every request actually sent, retries included
     const r = await fetch(url, opts);
     if (r.status !== 429 || attempt >= limit) return r;
     const ra = parseFloat(r.headers.get("retry-after") || "");
@@ -49,6 +50,27 @@ async function fetchWithRetry(url, opts, maxRetries) {
     await sleep(waitMs);
     attempt++;
   }
+}
+
+// Short, non-secret handle for a key: the shared server key is "shared", any
+// other is its last four characters (what the Settings list can also derive).
+export function keyId(key, sharedKey) {
+  return sharedKey && key === sharedKey ? "shared" : String(key || "").slice(-4);
+}
+
+// Monthly quota as reported on a response (headers are on every response). A 429
+// is ambiguous — it's also the per-second throttle — so a key only counts as
+// exhausted when the monthly counter says 0 or the body names the monthly quota.
+export function readQuota(r, bodyText) {
+  const num = function (v) { const n = parseFloat(v); return isFinite(n) ? n : null; };
+  const h = function (k) { return r.headers && r.headers.get ? r.headers.get(k) : null; };
+  const remaining = num(h("quota-remaining"));
+  const limit = num(h("quota-limit"));
+  const reset = h("quota-reset-time") || null;
+  const quotaWords = /quota|monthly/i.test(String(bodyText || ""));
+  const spent = (r.status === 429 || r.status === 402 || r.status === 503) && (remaining === 0 || (remaining == null && quotaWords));
+  if (remaining == null && limit == null && !reset && !spent) return null;
+  return { remaining: spent ? 0 : remaining, limit: limit, reset: reset, exhausted: !!spent };
 }
 
 // Quota / rate-limit statuses that mean "this key is spent — try the next one".
@@ -233,8 +255,8 @@ export default async function handler(req, res) {
     return;
   }
 
-  const r = await searchListings(apiKey, profiles, hubs, { dealerType: dealerType, keys: keys });
-  res.status(200).json({ listings: r.listings, errors: r.errors, rateLimited: !!r.rateLimited, rateLimitInfo: r.rateLimitInfo || null, quota: r.quota || null, keysUsed: r.keysUsed });
+  const r = await searchListings(apiKey, profiles, hubs, { dealerType: dealerType, keys: keys, keyIds: keys.map(function (k) { return keyId(k, envKey); }) });
+  res.status(200).json({ listings: r.listings, errors: r.errors, rateLimited: !!r.rateLimited, rateLimitInfo: r.rateLimitInfo || null, quota: r.quota || null, keysUsed: r.keysUsed, keyQuotas: r.keyQuotas || [], calls: r.calls || 0 });
 }
 
 // Core active-inventory search for a set of profiles × hubs — shared by the
@@ -247,6 +269,10 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
   const keys = (Array.isArray(opts.keys) && opts.keys.length) ? opts.keys : [apiKey];
   let keyIdx = 0;
   let keysUsed = 1; // how many keys we ended up drawing on (for reporting)
+  const meter = { calls: 0 }; // HTTP requests actually sent — the true quota cost
+  const snaps = {}; // key index -> latest { id, remaining, limit, reset, exhausted }
+  const ids = Array.isArray(opts.keyIds) && opts.keyIds.length === keys.length ? opts.keyIds : keys.map(function (k) { return keyId(k, null); });
+  const note = function (idx, r, bodyText) { const q = readQuota(r, bodyText); if (q) snaps[idx] = Object.assign({ id: ids[idx] }, q); };
   const seen = {}; // vin -> normalized listing (dedup across hubs, keep lowest price)
   const errors = [];
 
@@ -283,10 +309,11 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
           let numFound = null;
           try {
             const url = buildUrl(keys[keyIdx], pr, hub, start, carType, dealerType);
-            const r = await fetchWithRetry(url, { headers: { Accept: "application/json" } });
+            const r = await fetchWithRetry(url, { headers: { Accept: "application/json" } }, undefined, meter);
             if (!r.ok) {
               let body = "";
               try { body = (await r.text()).slice(0, 300); } catch (e) { /* ignore */ }
+              note(keyIdx, r, body);
               // Rate limit / quota exhausted. Fall over to the next key if we have
               // one and retry this same page; only give up once all keys are spent.
               if (r.status === 429 || r.status === 503 || r.status === 402) {
@@ -321,6 +348,7 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
             // Track monthly quota from response headers (present on OK responses,
             // per MarketCheck's tracking headers). Remaining only drops, so the
             // latest snapshot is the most conservative.
+            note(keyIdx, r, "");
             const qrem = num(r.headers.get("quota-remaining"));
             if (qrem != null) quota = { remaining: qrem, limit: num(r.headers.get("quota-limit")), reset: r.headers.get("quota-reset-time") || null };
             const json = await r.json();
@@ -347,10 +375,19 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
     }
   }
 
-  return { listings: Object.values(seen), errors: errors, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota, keysUsed: keysUsed };
+  return { listings: Object.values(seen), errors: errors, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota, keysUsed: keysUsed, keyQuotas: Object.keys(snaps).map(function (i) { return snaps[i]; }), calls: meter.calls };
 }
 
 // ── MarketCheck query construction ──
+// Smallest possible search, for reading a key's quota headers (api/quota.js).
+export function buildProbeUrl(apiKey) {
+  const q = new URLSearchParams();
+  q.set("api_key", apiKey);
+  q.set("car_type", "used");
+  q.set("rows", "1");
+  return HOST + ENDPOINT + "?" + q.toString();
+}
+
 // One VIN, any car_type (a VIN may be listed under more than one).
 export function buildVinUrl(apiKey, vin) {
   const q = new URLSearchParams();

@@ -8,6 +8,7 @@
     "api/baseline.js": { "maxDuration": 60 },
     "api/pricecheck.js": { "maxDuration": 60 },
     "api/pricecomps.js": { "maxDuration": 60 },
+    "api/quota.js": { "maxDuration": 30 },
     "api/cron-sync.js": { "maxDuration": 60 }
   },
   "crons": [{ "path": "/api/cron-sync", "schedule": "0 10 * * *" }],

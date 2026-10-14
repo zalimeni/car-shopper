@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import storage from "./storage";
 import { signOut } from "./Auth";
-import { fetchListings, fetchPriceComps, fetchRawSample, reconcile } from "./sync";
+import { fetchListings, fetchPriceComps, fetchRawSample, fetchQuota, reconcile } from "./sync";
 import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBaseline, generatePriceAssessment, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
 import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
 import { listSnapshots, restoreSnapshot } from "./snapshots";
@@ -9,6 +9,7 @@ import { buildPriceHistoryCsv } from "./priceExport";
 import { localPriceCheck } from "./priceCheck";
 import { sortRows, nextSort, sortIndicator } from "./tableSort";
 import { homeMiles } from "./geo";
+import { summarize, ingestSnaps, recordSyncCalls, syncCost, syncsLeft, gaugeTone } from "./quota";
 import { loadLocations, searchLocations, addHub as addHubTo, normalizeHubs, hubFromZip, hubParts, hubKey } from "./locations";
 
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
@@ -88,6 +89,7 @@ var DEFAULT_SETTINGS = {
   // hubs above are only places they're willing to SEARCH, so without this a car
   // 20 mi from a travel hub reads as "local" when it's a thousand miles away.
   homeBase: null, // { n, z } — picked from hubs in Settings
+  mcQuota: null, // latest MarketCheck quota snapshot per key + last sync cost (see src/quota.js)
 };
 function getSettings(data) { return Object.assign({}, DEFAULT_SETTINGS, (data && data.settings) || {}); }
 // Ordered list of the user's MarketCheck key strings (empty -> server uses its shared key).
@@ -841,6 +843,14 @@ export default function App() {
       // pointing at the last GOOD sync. Still persist the partial listing updates.
       var syncPatch = { listings: rec.listings };
       if (!res.rateLimited) syncPatch.lastSynced = new Date().toISOString();
+      // Keep each key's latest monthly quota (MarketCheck reports it on every
+      // response) and — for a clean, complete run — what the sync actually cost.
+      if (!res.mock) {
+        var nowIso = new Date().toISOString();
+        var mq1 = ingestSnaps(getSettings(base).mcQuota, res.keyQuotas, nowIso);
+        if (!res.rateLimited && !(res.errors && res.errors.length) && res.calls > 0) mq1 = recordSyncCalls(mq1, res.calls, nowIso);
+        syncPatch.settings = Object.assign({}, base.settings || {}, { mcQuota: mq1 });
+      }
       await save(Object.assign({}, base, syncPatch));
       // Report the count actually added to the queue (reconcile's newCount also
       // counts skipped VINs, which we hide), and note how many matched skips.
@@ -918,6 +928,27 @@ export default function App() {
     } catch (e) { setRawDebug("Error: " + (e && e.message ? e.message : String(e))); }
     setRawBusy(false);
   }, [data, rawBusy]);
+
+  // ── MarketCheck quota gauge ──
+  var [quotaOpen, setQuotaOpen] = useState(false);
+  var [quotaBusy, setQuotaBusy] = useState(false);
+  var [quotaErr, setQuotaErr] = useState("");
+  var quotaSummary = summarize(((data && getSettings(data).marketcheckKeys) || []), data && getSettings(data).mcQuota);
+  // Reads every key's quota — one MarketCheck call per key, so only on request.
+  var refreshQuota = useCallback(async function () {
+    if (!data || quotaBusy) return;
+    setQuotaBusy(true); setQuotaErr("");
+    try {
+      var r = await fetchQuota(mcKeys(data));
+      var cur = dataRef.current || data;
+      var nowIso = new Date().toISOString();
+      var reports = r.keys.filter(function (k) { return k.remaining != null || k.exhausted || k.limit != null; });
+      var bad = r.keys.filter(function (k) { return k.error; });
+      await save(Object.assign({}, cur, { settings: Object.assign({}, cur.settings || {}, { mcQuota: ingestSnaps(getSettings(cur).mcQuota, reports, nowIso) }) }));
+      if (bad.length) setQuotaErr(bad.map(function (k) { return (k.id === "shared" ? "Shared key" : "Key …" + k.id) + ": " + k.error; }).join(" · "));
+    } catch (e) { setQuotaErr((e && e.message) || "Quota check failed"); }
+    setQuotaBusy(false);
+  }, [data, quotaBusy, save]);
 
   var viewProfile = useCallback(function (profileId) {
     setFilterProf(profileId);
@@ -1146,7 +1177,10 @@ export default function App() {
       <header style={S.header}>
         <div style={S.hRow}>
           <h1 style={S.title}>Car Shopper</h1>
-          <span style={S.badge}>{saving ? "Saving..." : "Saved ✓"}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <QuotaGauge summary={quotaSummary} onClick={function () { setQuotaOpen(true); }} />
+            <span style={S.badge}>{saving ? "Saving..." : "Saved ✓"}</span>
+          </div>
         </div>
         <p style={S.sub}>{getSettings(data).tagline}</p>
         <nav style={S.nav}>
@@ -1161,6 +1195,11 @@ export default function App() {
           })}
         </nav>
       </header>
+
+      {quotaOpen && (
+        <QuotaModal data={data} summary={quotaSummary} busy={quotaBusy} err={quotaErr}
+          onRefresh={refreshQuota} onClose={function () { setQuotaOpen(false); }} />
+      )}
 
       {conflictMsg && (
         <div style={S.conflictBar}>
@@ -1288,6 +1327,151 @@ export default function App() {
 }
 
 // ── Dashboard ──
+// Claude-style usage ring: how much of the monthly MarketCheck capacity (all keys
+// together) is left. Grey dashed until a sync or refresh has measured anything.
+var TONE_COLOR = { good: "#3fae74", warn: "#e8c96a", bad: "#e07a7a", none: "#555" };
+function QuotaRing({ fraction, size, stroke, children }) {
+  var r = (size - stroke) / 2, c = 2 * Math.PI * r;
+  var f = fraction == null ? 0 : Math.max(0, Math.min(1, fraction));
+  var color = TONE_COLOR[gaugeTone(fraction)];
+  return (
+    <svg width={size} height={size} viewBox={"0 0 " + size + " " + size} style={{ flex: "none" }} aria-hidden="true">
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#2a2d38" strokeWidth={stroke} strokeDasharray={fraction == null ? "2 3" : undefined} />
+      {fraction != null && f > 0 && (
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round"
+          strokeDasharray={(c * f) + " " + c} transform={"rotate(-90 " + size / 2 + " " + size / 2 + ")"} />
+      )}
+      {children}
+    </svg>
+  );
+}
+export function QuotaGauge({ summary, onClick }) {
+  var f = summary.fraction;
+  var label = f == null ? "MarketCheck quota: not measured yet — click for details"
+    : "MarketCheck quota: " + Number(summary.totalRemaining).toLocaleString() + " calls left (" + Math.round(f * 100) + "%) — click for details";
+  return (
+    <button onClick={onClick} title={label} aria-label={label}
+      style={{ background: "none", border: "none", padding: 2, cursor: "pointer", display: "flex", alignItems: "center", lineHeight: 0 }}>
+      <QuotaRing fraction={f} size={24} stroke={3}>
+        {f == null && <text x="12" y="16" textAnchor="middle" fontSize="11" fill="#777">?</text>}
+      </QuotaRing>
+    </button>
+  );
+}
+
+// Breakdown behind the gauge: per-key calls and reset dates, how many syncs the
+// remaining calls cover for the CURRENT profiles/locations, and what each kind of
+// call costs. Keys are used in order, so capacity is just the sum across them.
+export function QuotaModal({ data, summary, busy, err, onRefresh, onClose }) {
+  useEffect(function () {
+    function onKey(e) { if (e.key === "Escape") onClose(); }
+    window.addEventListener("keydown", onKey);
+    return function () { window.removeEventListener("keydown", onKey); };
+  }, [onClose]);
+  var s = getSettings(data);
+  var active = (data.profiles || []).filter(function (p) { return p.active; }).length;
+  var cost = syncCost(active, (s.hubs || []).length, s.mcQuota && s.mcQuota.lastSync);
+  var left = syncsLeft(summary.totalRemaining, cost);
+  var n = function (v) { return Number(v).toLocaleString(); };
+  var range = function (a, b) { return a === b ? n(a) : n(a) + "–" + n(b); };
+  var tone = gaugeTone(summary.fraction);
+  var th = { textAlign: "left", padding: "4px 8px", color: "#6b6b76", fontWeight: 500, borderBottom: "1px solid #2a2d38", whiteSpace: "nowrap", fontSize: 11 };
+  var td = { padding: "6px 8px", borderBottom: "1px solid #1e2028", color: "#c8c8d0", fontSize: 12, verticalAlign: "top" };
+  var stateColor = { "in use": "#3fae74", standby: "#8a8a96", spent: "#e07a7a", unmeasured: "#e8c96a" };
+  var keyCount = summary.rows.length;
+  return (
+    <div onMouseDown={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.62)", zIndex: 200, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "6vh 12px 12px", overflowY: "auto" }}>
+      <div role="dialog" aria-modal="true" aria-label="MarketCheck quota" onMouseDown={function (e) { e.stopPropagation(); }}
+        style={Object.assign({}, S.card, { width: "100%", maxWidth: 600, margin: 0, background: "#161820", boxShadow: "0 16px 48px rgba(0,0,0,0.6)" })}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <QuotaRing fraction={summary.fraction} size={72} stroke={7}>
+            <text x="36" y="41" textAnchor="middle" fontSize="16" fontWeight="600" fill="#e4e4e7">{summary.fraction == null ? "?" : Math.round(summary.fraction * 100) + "%"}</text>
+          </QuotaRing>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, margin: 0, color: "#f0f0f3" }}>MarketCheck quota</h3>
+            <div style={{ fontSize: 13, color: TONE_COLOR[tone], marginTop: 2 }}>
+              {summary.fraction == null ? "Not measured yet — run a sync or press Refresh"
+                : n(summary.totalRemaining) + " of " + n(summary.totalLimit) + " calls left" + (summary.unknown ? " (+ " + summary.unknown + " unmeasured key" + (summary.unknown > 1 ? "s" : "") + ")" : "")}
+            </div>
+            <div style={{ fontSize: 11, color: "#6b6b76", marginTop: 2 }}>
+              {keyCount} key{keyCount === 1 ? "" : "s"}, used in order — the next one takes over when one runs out.{summary.nextReset ? " Next reset " + fmtResetTs(new Date(summary.nextReset).toISOString()) + "." : ""}
+            </div>
+          </div>
+          <button style={S.smBtn} onClick={onClose}>Close</button>
+        </div>
+
+        <h4 style={{ fontSize: 12, color: "#8a8a96", margin: "16px 0 4px", textTransform: "uppercase", letterSpacing: "0.04em" }}>Keys</h4>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead><tr>{["#", "Key", "Calls left", "Resets", "Status"].map(function (h) { return (<th key={h} style={th}>{h}</th>); })}</tr></thead>
+            <tbody>
+              {summary.rows.map(function (r, i) {
+                var pct = r.known && r.limit ? Math.max(0, Math.min(1, r.remaining / r.limit)) : 0;
+                return (
+                  <tr key={r.id}>
+                    <td style={td}>{i + 1}</td>
+                    <td style={td}>{r.label}{r.tail ? <span style={{ color: "#6b6b76" }}> {r.tail}</span> : null}</td>
+                    <td style={td}>
+                      {r.known ? (<div>
+                        <strong style={{ color: "#f0f0f3" }}>{n(r.remaining)}</strong>{r.limit != null ? <span style={{ color: "#6b6b76" }}> / {n(r.limit)}</span> : null}
+                        {r.limit ? (<div style={{ height: 4, background: "#2a2d38", borderRadius: 2, marginTop: 4, width: 110 }}><div style={{ height: 4, borderRadius: 2, width: Math.round(pct * 110), background: TONE_COLOR[gaugeTone(pct)] }} /></div>) : null}
+                      </div>) : <span style={{ color: "#6b6b76" }}>—</span>}
+                    </td>
+                    <td style={Object.assign({}, td, { whiteSpace: "nowrap" })}>{r.assumed ? <span style={{ color: "#6b6b76", whiteSpace: "normal" }}>renewed — refresh to confirm</span> : (r.reset ? fmtResetTs(r.reset) : "—")}</td>
+                    <td style={td}><span style={{ color: stateColor[r.state] }}>{r.state}</span>{r.known && r.at && !r.assumed ? <div style={{ color: "#555", fontSize: 10 }}>as of {fmtResetTs(r.at)}</div> : null}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <h4 style={{ fontSize: 12, color: "#8a8a96", margin: "16px 0 4px", textTransform: "uppercase", letterSpacing: "0.04em" }}>Syncs left</h4>
+        {cost.min === 0 ? (
+          <p style={S.help}>Add at least one active profile and one search location to estimate sync cost.</p>
+        ) : (
+          <div style={{ fontSize: 13, color: "#c8c8d0", lineHeight: 1.6 }}>
+            <div>With your current <strong>{active}</strong> active profile{active === 1 ? "" : "s"} × <strong>{cost.hubs}</strong> location{cost.hubs === 1 ? "" : "s"} × 2 car types (used + certified), one sync costs <strong>{range(cost.min, cost.max)}</strong> calls — the minimum when every search fits one page, more when a query has over 50 matches.</div>
+            {cost.measured ? <div>Your last full sync actually used <strong>{n(cost.measured)}</strong>.</div> : <div style={{ color: "#6b6b76" }}>No complete sync recorded yet to measure the real cost.</div>}
+            {left ? (
+              <div style={{ marginTop: 6 }}>
+                {summary.fraction == null && !summary.totalRemaining ? "Quota not measured yet." : (<span>
+                  ≈ <strong style={{ color: "#f0f0f3" }}>{left.measured != null ? n(left.measured) : range(left.worst, left.best)}</strong> sync{(left.measured != null ? left.measured : left.best) === 1 ? "" : "s"} left
+                  {left.measured != null ? " at your last sync's cost" : ""}{left.measured != null || left.worst === left.best ? "" : " (worst–best case)"}.
+                </span>)}
+              </div>
+            ) : null}
+          </div>
+        )}
+
+        <h4 style={{ fontSize: 12, color: "#8a8a96", margin: "16px 0 4px", textTransform: "uppercase", letterSpacing: "0.04em" }}>What each call costs</h4>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead><tr>{["Action", "Calls"].map(function (h) { return (<th key={h} style={th}>{h}</th>); })}</tr></thead>
+            <tbody>
+              {[
+                ["Full sync (all locations)", range(cost.min, cost.max) + (cost.measured ? " · last " + n(cost.measured) : "")],
+                ["Sync of one location", range(cost.perHub.min, cost.perHub.max)],
+                ["Price Check → live market", range(cost.liveSearch.min, cost.liveSearch.max)],
+                ["Debug raw VIN lookup", "1"],
+                ["Debug raw sample (+ up to 4 diagnosis re-runs if empty)", "1–5"],
+                ["Refresh this quota (1 per key)", String(keyCount)],
+              ].map(function (row) { return (<tr key={row[0]}><td style={td}>{row[0]}</td><td style={td}>{row[1]}</td></tr>); })}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+          <button style={Object.assign({}, S.priBtn, busy ? { opacity: 0.6 } : {})} disabled={busy} onClick={onRefresh}>{busy ? "Reading quota…" : "Refresh quota"}</button>
+          <span style={{ fontSize: 11, color: "#6b6b76", flex: 1, minWidth: 180 }}>Reads each key's remaining calls — uses {keyCount} call{keyCount === 1 ? "" : "s"}. Syncs update these numbers for free as they run.</span>
+        </div>
+        {err && <div style={{ fontSize: 12, color: "#e8c96a", marginTop: 8 }}>{err}</div>}
+        <p style={Object.assign({}, S.help, { marginTop: 10 })}>Quota is monthly per key. A burst of requests can also be throttled per second without using up the month — that clears in moments and isn't counted as spent.</p>
+      </div>
+    </div>
+  );
+}
+
 function DashView({ data, watch, rej, sold, staleN, setTab, markAllChk, viewProfile }) {
   var act = data.profiles.filter(function (p) { return p.active; });
   var settings = getSettings(data);

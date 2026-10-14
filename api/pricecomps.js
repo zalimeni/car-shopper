@@ -11,7 +11,7 @@
 // server key) — user-initiated, so quota burn stays in their control.
 
 import { authorize } from "./_auth.js";
-import { searchListings } from "./marketcheck.js";
+import { searchListings, keyId } from "./marketcheck.js";
 
 // How far above the subject's mileage to fetch (client bands around it after).
 const MILES_HEADROOM = 30000;
@@ -50,7 +50,7 @@ export default async function handler(req, res) {
   const profile = { id: "pricecheck", name: "price check", params: params };
 
   try {
-    const r = await searchListings(keys[0], [profile], hubs, { keys: keys, budgetMs: 45000 });
+    const r = await searchListings(keys[0], [profile], hubs, { keys: keys, budgetMs: 45000, keyIds: keys.map(function (k) { return keyId(k, envKey); }) });
     res.status(200).json({
       listings: r.listings,
       errors: r.errors,
@@ -58,6 +58,8 @@ export default async function handler(req, res) {
       rateLimitInfo: r.rateLimitInfo || null,
       quota: r.quota || null,
       keysUsed: r.keysUsed,
+      keyQuotas: r.keyQuotas || [],
+      calls: r.calls || 0,
     });
   } catch (e) {
     res.status(502).json({ error: (e && e.message) ? String(e.message).slice(0, 200) : "Live market check failed" });
