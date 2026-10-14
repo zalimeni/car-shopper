@@ -2852,7 +2852,7 @@ function HelpTab() {
       <div style={S.card}>
         <h3 style={S.cardH}>Listings &amp; scores</h3>
         <p style={li}>The big number on a card is the <span style={b}>composite score</span> (your weighted criteria). AI per-criterion scores feed into it; the <span style={b}>✨ AI assessment</span> box shows the summary and a per-criterion breakdown.</p>
-        <p style={li}><span style={b}>Notes</span> — every listing card has <span style={b}>📝 Add notes</span> for free-form notes in Markdown (headings, <span style={b}>**bold**</span>, lists, <span style={b}>- [ ]</span> checklists, links), up to 4,000 characters — about a page. They're yours alone: separate from the rejection reason and from the price-change log sync keeps, and not shown to the AI when it scores.</p>
+        <p style={li}><span style={b}>Notes</span> — every listing card has <span style={b}>📝 Add notes</span> for free-form notes in Markdown (headings, <span style={b}>**bold**</span>, lists, <span style={b}>- [ ]</span> checklists, links), up to 4,000 characters — about a page. They're separate from the rejection reason and from the price-change log sync keeps. AI scoring reads them as first-hand information about that car (a test drive, a dealer call) whenever it next scores that listing. Editing notes never triggers or flags a re-score — use ✨ Re-score on the card when a note matters.</p>
         <p style={li}><span style={b}>Statuses</span>: Watchlist (active), Rejected (with a reason, restorable), and <span style={b}>Sold</span> (no longer available — archived, restorable). Stale watched listings surface under "Needs check" — confirm with <span style={b}>Still avail</span>.</p>
         <p style={li}><span style={b}>Title note</span>: "✓ Carfax clean title" means confirmed; "ⓘ Title not Carfax-confirmed" just means the dealer didn't state it (verify yourself) — it's not a salvage flag and doesn't affect the score.</p>
       </div>
@@ -3432,6 +3432,13 @@ export function MarkdownView({ text }) {
 // editor with Write / Preview tabs and a live character count. Saves explicitly
 // (each save writes the whole app state) and is kept apart from `notes` (sync's
 // running log) and `rejectReason`.
+// Shown with the notes (viewer + editor): what scoring does with them, and that
+// editing them is free — it never marks the score stale or starts a re-score.
+var MEMO_SCORING_HINT = "AI scoring reads these notes the next time this car is scored. Editing them won't mark its score out of date — use ✨ Re-score if a change matters.";
+function MemoHint() {
+  return (<div style={{ fontSize: 10, color: "#6b6b76", marginTop: 6, lineHeight: 1.4 }}>✨ {MEMO_SCORING_HINT}</div>);
+}
+
 export function ListingMemo({ l, onSave }) {
   var [draft, setDraft] = useState(null); // null = viewing
   var [tab, setTab] = useState("write");
@@ -3455,6 +3462,7 @@ export function ListingMemo({ l, onSave }) {
           <MarkdownView text={memo} />
         </div>
         {long && <button style={{ background: "none", border: "none", color: "#8ab4f8", fontSize: 11, cursor: "pointer", padding: "4px 0 0", fontFamily: "inherit" }} onClick={function () { setExpanded(!expanded); }}>{expanded ? "Show less ▴" : "Show more ▾"}</button>}
+        <MemoHint />
       </div>
     );
   }
@@ -3484,6 +3492,7 @@ export function ListingMemo({ l, onSave }) {
         <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { setDraft(null); }}>Cancel</button>
         <span style={{ fontSize: 10, color: "#555", marginLeft: "auto" }}>{full ? "Limit reached" : "⌘/Ctrl+Enter saves"}</span>
       </div>
+      <MemoHint />
     </div>
   );
 }
