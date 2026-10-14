@@ -893,7 +893,7 @@ export default function App() {
     if (typeof window === "undefined" || !data) return;
     window.__rawSync = function (vin) {
       var active = data.profiles.filter(function (p) { return p.active; });
-      return fetchRawSample(active, getSettings(data).hubs, vin).then(function (r) { console.log("[rawSync]", r); return r; });
+      return fetchRawSample(active, getSettings(data).hubs, vin, mcKeys(data)).then(function (r) { console.log("[rawSync]", r); return r; });
     };
   }, [data]);
 
@@ -907,7 +907,7 @@ export default function App() {
     setRawBusy(true); setRawDebug("");
     try {
       var active = data.profiles.filter(function (p) { return p.active; });
-      var r = await fetchRawSample(active, getSettings(data).hubs, vin.trim());
+      var r = await fetchRawSample(active, getSettings(data).hubs, vin.trim(), mcKeys(data));
       setRawDebug(JSON.stringify(r, null, 2));
     } catch (e) { setRawDebug("Error: " + (e && e.message ? e.message : String(e))); }
     setRawBusy(false);

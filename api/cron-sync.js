@@ -54,8 +54,8 @@ export default async function handler(req, res) {
 
   const db = adminClient();
   if (!db) { res.status(500).json({ error: "Supabase secret key is not configured on the server" }); return; }
-  const apiKey = process.env.MARKETCHECK_API_KEY;
-  if (!apiKey) { res.status(500).json({ error: "MARKETCHECK_API_KEY is not configured on the server" }); return; }
+  // The shared key is only a fallback now — a user's own keys are enough on their own.
+  const apiKey = process.env.MARKETCHECK_API_KEY || "";
 
   const emails = (process.env.CRON_SYNC_EMAILS || DEFAULT_ALLOW)
     .split(",").map(function (s) { return s.trim().toLowerCase(); }).filter(Boolean);
@@ -97,8 +97,9 @@ export default async function handler(req, res) {
         .map(function (k) { return (k && k.key ? k.key : k) || ""; }).map(function (k) { return String(k).trim(); }).filter(Boolean);
       const keys = userKeys.slice();
       if (apiKey && keys.indexOf(apiKey) === -1) keys.push(apiKey);
+      if (!keys.length) { out.skipped = "no MarketCheck key (add one in Settings, or set MARKETCHECK_API_KEY)"; continue; }
       const r = await searchListings(
-        keys[0] || apiKey,
+        keys[0],
         profiles.map(function (p) { return { id: p.id, name: p.name, params: p.params }; }),
         hubs,
         { dealerType: dealerType, budgetMs: budgetMs, keys: keys }
