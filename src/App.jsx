@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import storage from "./storage";
 import { signOut } from "./Auth";
 import { fetchListings, fetchPriceComps, fetchRawSample, reconcile } from "./sync";
@@ -9,6 +9,7 @@ import { buildPriceHistoryCsv } from "./priceExport";
 import { localPriceCheck } from "./priceCheck";
 import { sortRows, nextSort, sortIndicator } from "./tableSort";
 import { homeMiles } from "./geo";
+import { parseMarkdown, clampMemo, MEMO_MAX } from "./markdown";
 import { summarize, ingestSnaps, recordSyncCalls, syncCost, syncsLeft, gaugeTone, dedupeKeyEntries } from "./quota";
 import { loadLocations, searchLocations, addHub as addHubTo, normalizeHubs, hubFromZip, hubParts, hubKey } from "./locations";
 
@@ -257,7 +258,7 @@ function validateListing(obj, index, profileIds) {
   return errors;
 }
 
-function parseImport(text, profileIds) {
+export function parseImport(text, profileIds) {
   var result = { listings: [], errors: [], warnings: [] };
   var parsed;
   try {
@@ -307,6 +308,7 @@ function parseImport(text, profileIds) {
         link: safeHttpUrl(obj.link),
         dealRating: String(obj.dealRating || ""),
         notes: String(obj.notes || ""),
+        memo: clampMemo(obj.memo), // free-form markdown notes (separate from `notes`, which sync writes to)
         status: VALID_STATUSES.indexOf(obj.status) > -1 ? obj.status : "watch",
         scores: obj.scores && typeof obj.scores === "object" ? obj.scores : {},
         rejectReason: String(obj.rejectReason || ""),
@@ -2746,6 +2748,7 @@ function HelpTab() {
       <div style={S.card}>
         <h3 style={S.cardH}>Listings &amp; scores</h3>
         <p style={li}>The big number on a card is the <span style={b}>composite score</span> (your weighted criteria). AI per-criterion scores feed into it; the <span style={b}>✨ AI assessment</span> box shows the summary and a per-criterion breakdown.</p>
+        <p style={li}><span style={b}>Notes</span> — every listing card has <span style={b}>📝 Add notes</span> for free-form notes in Markdown (headings, <span style={b}>**bold**</span>, lists, <span style={b}>- [ ]</span> checklists, links), up to 4,000 characters — about a page. They're yours alone: separate from the rejection reason and from the price-change log sync keeps, and not shown to the AI when it scores.</p>
         <p style={li}><span style={b}>Statuses</span>: Watchlist (active), Rejected (with a reason, restorable), and <span style={b}>Sold</span> (no longer available — archived, restorable). Stale watched listings surface under "Needs check" — confirm with <span style={b}>Still avail</span>.</p>
         <p style={li}><span style={b}>Title note</span>: "✓ Carfax clean title" means confirmed; "ⓘ Title not Carfax-confirmed" just means the dealer didn't state it (verify yourself) — it's not a salvage flag and doesn't affect the score.</p>
       </div>
@@ -3263,6 +3266,122 @@ function AiPanel({ keyStatus, autoScore, setAutoScore, scoreBusy, scoreMsg, scor
 
 // AI assessment readout on a card: overall summary + collapsible per-criterion
 // rationales. Renders nothing until a listing has been scored.
+// ── Listing notes (markdown) ──
+// Rendered from parseMarkdown()'s tree as React elements — never as raw HTML — so
+// whatever is typed (or pasted, or imported) can only ever show up as text.
+var MD = {
+  p: { margin: "0 0 6px", lineHeight: 1.55 },
+  h: { margin: "8px 0 4px", color: "#f0f0f3", fontWeight: 600, lineHeight: 1.3 },
+  list: { margin: "0 0 6px", paddingLeft: 20, lineHeight: 1.55 },
+  code: { fontFamily: "'IBM Plex Mono',monospace", fontSize: "0.92em", background: "#1b1e27", border: "1px solid #2a2d38", borderRadius: 4, padding: "0 4px" },
+  pre: { fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, background: "#12141a", border: "1px solid #2a2d38", borderRadius: 6, padding: "8px 10px", margin: "0 0 6px", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word" },
+  quote: { margin: "0 0 6px", padding: "2px 0 2px 10px", borderLeft: "3px solid #3a3f4d", color: "#9a9aa6" },
+};
+function mdInline(nodes, k) {
+  return (nodes || []).map(function (n, i) {
+    var key = k + "." + i;
+    if (n.t === "text") return n.v;
+    if (n.t === "br") return <br key={key} />;
+    if (n.t === "code") return <code key={key} style={MD.code}>{n.v}</code>;
+    if (n.t === "b") return <strong key={key} style={{ color: "#f0f0f3" }}>{mdInline(n.c, key)}</strong>;
+    if (n.t === "i") return <em key={key}>{mdInline(n.c, key)}</em>;
+    if (n.t === "s") return <s key={key} style={{ opacity: 0.7 }}>{mdInline(n.c, key)}</s>;
+    if (n.t === "a") return <a key={key} href={n.href} target="_blank" rel="noopener noreferrer" style={{ color: "#8ab4f8" }}>{mdInline(n.c, key)}</a>;
+    return null;
+  });
+}
+function mdBlocks(blocks, k) {
+  return (blocks || []).map(function (b, i) {
+    var key = k + "." + i;
+    if (b.type === "heading") return <div key={key} role="heading" aria-level={b.level} style={Object.assign({}, MD.h, { fontSize: b.level === 1 ? 16 : b.level === 2 ? 15 : 13 })}>{mdInline(b.c, key)}</div>;
+    if (b.type === "p") return <p key={key} style={MD.p}>{b.lines.map(function (ln, j) { return (<Fragment key={j}>{j > 0 && <br />}{mdInline(ln, key + "." + j)}</Fragment>); })}</p>;
+    if (b.type === "hr") return <hr key={key} style={{ border: "none", borderTop: "1px solid #2a2d38", margin: "8px 0" }} />;
+    if (b.type === "code") return <pre key={key} style={MD.pre}>{b.text}</pre>;
+    if (b.type === "quote") return <blockquote key={key} style={MD.quote}>{mdBlocks(b.blocks, key)}</blockquote>;
+    if (b.type === "list") {
+      var Tag = b.ordered ? "ol" : "ul";
+      return (
+        <Tag key={key} style={MD.list}>
+          {b.items.map(function (it, j) {
+            var task = it.checked != null;
+            return (
+              <li key={j} style={task ? { listStyle: "none", marginLeft: -18 } : undefined}>
+                {task && <span role="img" aria-label={it.checked ? "done" : "to do"} style={{ marginRight: 6, color: it.checked ? "#3fae74" : "#6b6b76" }}>{it.checked ? "☑" : "☐"}</span>}
+                <span style={it.checked ? { opacity: 0.6, textDecoration: "line-through" } : undefined}>{mdInline(it.c, key + "." + j)}</span>
+                {it.children.length > 0 && mdBlocks(it.children, key + "." + j)}
+              </li>
+            );
+          })}
+        </Tag>
+      );
+    }
+    return null;
+  });
+}
+export function MarkdownView({ text }) {
+  return <div style={{ fontSize: 13, color: "#c8c8d0", wordBreak: "break-word" }}>{mdBlocks(parseMarkdown(text), "md")}</div>;
+}
+
+// The notes block on a listing card: rendered notes (long ones fold), or an
+// editor with Write / Preview tabs and a live character count. Saves explicitly
+// (each save writes the whole app state) and is kept apart from `notes` (sync's
+// running log) and `rejectReason`.
+export function ListingMemo({ l, onSave }) {
+  var [draft, setDraft] = useState(null); // null = viewing
+  var [tab, setTab] = useState("write");
+  var [expanded, setExpanded] = useState(false);
+  var memo = l.memo || "";
+  var box = { marginTop: 8, padding: "8px 10px", background: "#13151b", border: "1px solid #23262d", borderRadius: 6 };
+
+  if (draft == null) {
+    if (!memo) {
+      return (<button style={Object.assign({}, S.smBtn, { marginTop: 8, color: "#8a8a96", border: "1px dashed #3a3f4d" })} onClick={function () { setDraft(""); setTab("write"); }}>📝 Add notes</button>);
+    }
+    var long = memo.length > 600 || memo.split("\n").length > 10;
+    var folded = long && !expanded;
+    return (
+      <div style={box}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+          <span style={{ fontSize: 10, color: "#6b6b76", textTransform: "uppercase", letterSpacing: "0.05em" }}>📝 Notes</span>
+          <button style={S.smBtn} onClick={function () { setDraft(memo); setTab("write"); }}>Edit notes</button>
+        </div>
+        <div style={folded ? { maxHeight: 150, overflow: "hidden", WebkitMaskImage: "linear-gradient(#000 70%, transparent)", maskImage: "linear-gradient(#000 70%, transparent)" } : undefined}>
+          <MarkdownView text={memo} />
+        </div>
+        {long && <button style={{ background: "none", border: "none", color: "#8ab4f8", fontSize: 11, cursor: "pointer", padding: "4px 0 0", fontFamily: "inherit" }} onClick={function () { setExpanded(!expanded); }}>{expanded ? "Show less ▴" : "Show more ▾"}</button>}
+      </div>
+    );
+  }
+
+  var n = draft.length, near = n >= MEMO_MAX * 0.9, full = n >= MEMO_MAX;
+  function commit() { onSave(clampMemo(draft).replace(/\s+$/, "")); setDraft(null); setExpanded(false); }
+  var tabBtn = function (id, label) {
+    return (<button style={Object.assign({}, S.smBtn, tab === id ? { color: "#fff", border: "1px solid #2563eb" } : { color: "#8a8a96" })} onClick={function () { setTab(id); }}>{label}</button>);
+  };
+  return (
+    <div style={box}>
+      <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+        {tabBtn("write", "Write")}{tabBtn("preview", "Preview")}
+        <span style={{ flex: 1 }} />
+        <span style={{ fontSize: 11, color: full ? "#c44" : near ? "#d4a017" : "#6b6b76" }} aria-live="polite">{n.toLocaleString()} / {MEMO_MAX.toLocaleString()}</span>
+      </div>
+      {tab === "write" ? (
+        <textarea style={Object.assign({}, S.ta, { width: "100%", boxSizing: "border-box", minHeight: 170, resize: "vertical" })} value={draft} maxLength={MEMO_MAX} autoFocus
+          aria-label="Listing notes (markdown)" placeholder={"Free-form notes. Markdown works:\n**bold**, - lists, - [ ] checklists, [links](https://…)"}
+          onChange={function (e) { setDraft(e.target.value); }}
+          onKeyDown={function (e) { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); commit(); } else if (e.key === "Escape") setDraft(null); }} />
+      ) : (
+        <div style={{ minHeight: 60 }}>{draft.trim() ? <MarkdownView text={draft} /> : <span style={{ fontSize: 12, color: "#6b6b76" }}>Nothing to preview yet.</span>}</div>
+      )}
+      <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center" }}>
+        <button style={Object.assign({}, S.priBtn, { padding: "5px 12px", fontSize: 12 }, draft === memo ? { opacity: 0.5 } : {})} disabled={draft === memo} onClick={commit}>Save notes</button>
+        <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { setDraft(null); }}>Cancel</button>
+        <span style={{ fontSize: 10, color: "#555", marginLeft: "auto" }}>{full ? "Limit reached" : "⌘/Ctrl+Enter saves"}</span>
+      </div>
+    </div>
+  );
+}
+
 function AiBox({ listing, criteria }) {
   var [open, setOpen] = useState(false);
   var summary = listing.aiSummary;
@@ -3502,7 +3621,7 @@ function LForm({ profiles, criteria, onSave, initial }) {
           <select style={S.inp} value={f.dealerType} onChange={function (e) { set("dealerType", e.target.value); }}>
             {["CPO", "franchise", "independent", "private"].map(function (t) { return (<option key={t} value={t}>{t}</option>); })}
           </select></div>
-        <div style={Object.assign({}, S.field, { gridColumn: "1/-1" })}><label style={S.lbl}>Notes</label><textarea style={S.ta} value={f.notes || ""} onChange={function (e) { set("notes", e.target.value); }} rows={2} /></div>
+        <div style={Object.assign({}, S.field, { gridColumn: "1/-1" })}><label style={S.lbl}>Quick note <span style={{ color: "#555", fontWeight: 400 }}>(sync appends price changes here — use "Add notes" on the card for longer, markdown notes)</span></label><textarea style={S.ta} value={f.notes || ""} onChange={function (e) { set("notes", e.target.value); }} rows={2} /></div>
         {f.state && isSalt(f.state) && <div style={Object.assign({}, S.saltW, { gridColumn: "1/-1" })}>⚠ Salt-belt ({f.state})</div>}
       </div>
       <h4 style={Object.assign({}, S.cardH, { marginTop: 16 })}>Scores (1–10)</h4>
@@ -3597,6 +3716,8 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
       })()}
       {l.notes && <div style={{ fontSize: 12, color: "#6b6b76", fontStyle: "italic", marginTop: 4 }}>{l.notes}</div>}
       {l.rejectReason && <div style={{ fontSize: 12, color: "#c44", marginTop: 4 }}>Rejected: {l.rejectReason}</div>}
+
+      <ListingMemo l={l} onSave={function (v) { onUpd({ memo: v }); }} />
 
       <AiBox listing={l} criteria={data.criteria} />
 
