@@ -44,6 +44,12 @@ const PAGE_LIMIT = Number(process.env.MARKETCHECK_PAGE_LIMIT) || 500;
 // Free tier rate-limits bursts; space sequential queries out and retry 429s.
 const THROTTLE_MS = Number(process.env.MARKETCHECK_THROTTLE_MS) || 500;
 const MAX_RETRIES = 3;
+// No single MarketCheck call may hang the function: past this it's abandoned.
+const CALL_TIMEOUT_MS = Number(process.env.MARKETCHECK_CALL_TIMEOUT_MS) || 15000;
+// The nationwide pass gets its own short budget, so a slow one (each nationwide
+// page can take seconds) hands its unfinished profiles to per-location search
+// instead of running into the 60 s function / browser limit ("Load failed").
+const NATIONAL_BUDGET_MS = Number(process.env.MARKETCHECK_NATIONAL_BUDGET_MS) || 25000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -84,7 +90,13 @@ async function fetchWithRetry(url, opts, maxRetries, meter) {
   let pin = !!API_VERSION && !(meter && meter.pinRejected);
   while (true) {
     if (meter) meter.calls++; // every request actually sent, retries included
-    const r = await fetch(url, withVersion(opts, pin));
+    let r;
+    try {
+      r = await fetch(url, withVersion(Object.assign({ signal: AbortSignal.timeout(CALL_TIMEOUT_MS) }, opts || {}), pin));
+    } catch (e) {
+      if (e && (e.name === "TimeoutError" || e.name === "AbortError")) throw new Error("MarketCheck didn't answer within " + Math.round(CALL_TIMEOUT_MS / 1000) + " s");
+      throw e;
+    }
     if (pin && (r.status === 400 || r.status === 404)) {
       let text = "";
       try { text = r.clone ? await r.clone().text() : ""; } catch (e) { /* ignore */ }
@@ -439,6 +451,7 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
   const deadline = Date.now() + (Number(opts.budgetMs) || Number(process.env.MARKETCHECK_BUDGET_MS) || 50000);
   const num = function (v) { const n = parseFloat(v); return isFinite(n) ? n : null; };
   let timeUp = false;
+  let natDeadline = 0, natTimedOut = false; // the nationwide pass's own budget
   let rateLimited = false; // set on a 429/503/402 so the caller can warn clearly
   let rateLimitInfo = null; // reset/remaining headers from MarketCheck, when present
   let quota = null; // monthly quota snapshot from response headers (for a low-quota warning)
@@ -463,6 +476,10 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
     queries++;
     let start = 0;
     while (start < cap) {
+      if (hub.national && Date.now() > natDeadline) {
+        natTimedOut = true;
+        return res("local"); // out of nationwide time: search this one per location
+      }
       if (Date.now() > deadline) {
         errors.push("Stopped early to avoid a timeout — some results may be missing. Use fewer locations, a smaller radius, or narrower filters.");
         timeUp = true;
@@ -576,7 +593,11 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
       const g = item.g;
       const out = await runQuery(g, hub, carType, function (row, key) { keep(row, g, key, !!hub.national); });
       const parent = item.parent;
-      if (out.s === "local") g.forEach(function (p) { local[p.id] = p; });
+      // Nationwide couldn't cover it (too big, out of time, or a failed call):
+      // per-location search picks it up.
+      if (out.s === "local" || (hub.national && out.s === "error")) g.forEach(function (p) { local[p.id] = p; });
+      // ...so a failed nationwide call isn't a lost search — say so, not "error".
+      if (hub.national && out.s === "error" && errors.length) notices.push(errors.pop() + " — searched per location instead.");
       if (out.s === "done" || out.s === "unchanged") fingerprints[out.key] = out.fp;
       if (out.s === "unchanged") unchanged.push(out.key);
       if (out.s === "unchanged-split") {
@@ -611,8 +632,10 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
   let local = {};
   let national = 0;
   let go = true;
+  const natStart = Date.now(), natCalls0 = meter.calls;
   if (opts.national && hubs.length > 1 && geoHubs(hubs)) {
     const nat = { national: true, sig: hubsSig(hubs) };
+    natDeadline = Math.min(deadline, natStart + NATIONAL_BUDGET_MS);
     for (const group of groupProfiles(profiles)) {
       for (const carType of CAR_TYPES) {
         national++;
@@ -623,6 +646,7 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
   } else {
     (profiles || []).forEach(function (p) { if (p) local[p.id] = p; });
   }
+  if (natTimedOut) notices.push("Nationwide search ran out of time after " + Math.round((Date.now() - natStart) / 1000) + " s (" + (meter.calls - natCalls0) + " calls); the rest is searched per location.");
   const localList = (profiles || []).filter(function (p) { return p && local[p.id]; });
   if (go && opts.national !== "only") {
     outer:

@@ -88,4 +88,30 @@ describe("nationwide search", () => {
     expect(again.listings[0].mcQ).toEqual(again.unchanged);
     expect(pageFingerprint(120, rows)).toBe(Object.values(first.fingerprints)[0]);
   });
+  it("a failed nationwide call hands its profiles to per-location search, as a notice", async () => {
+    calls = [];
+    global.fetch = vi.fn(async (url) => { calls.push(url); return { ok: false, status: 500, headers: { get: () => null }, text: async () => "boom", json: async () => ({}), clone: () => ({ text: async () => "boom" }) }; });
+    const r = await searchListings("K", [rav4], [DURHAM, BOSTON], { national: "only" });
+    expect(r.localProfiles).toEqual(["rav4"]);
+    expect(r.errors).toEqual([]);
+    expect(r.notices[0]).toMatch(/nationwide.*HTTP 500.*searched per location instead/);
+  });
+  it("out of nationwide time: unfinished profiles go per location instead of the run stopping", async () => {
+    process.env.MARKETCHECK_NATIONAL_BUDGET_MS = "1";
+    vi.resetModules();
+    const m = await import("../api/marketcheck.js");
+    let n = 0;
+    global.fetch = vi.fn(async (url) => {
+      n++; await new Promise((r) => setTimeout(r, 5));
+      const q = Object.fromEntries(new URL(url).searchParams);
+      const text = JSON.stringify({ num_found: 900, listings: [car("T" + n, 36, -78.9, q.powertrain_type)] });
+      return { ok: true, status: 200, headers: { get: () => null }, text: async () => text, json: async () => JSON.parse(text), clone: () => ({ text: async () => text }) };
+    });
+    const r = await m.searchListings("K", [rav4, prime], [DURHAM, BOSTON], { national: "only" });
+    delete process.env.MARKETCHECK_NATIONAL_BUDGET_MS;
+    expect(n).toBe(1); // the merged page, then out of time
+    expect(r.localProfiles.sort()).toEqual(["prime", "rav4"]);
+    expect(r.notices.join(" ")).toMatch(/Nationwide search ran out of time/);
+    expect(r.errors).toEqual([]);
+  });
 });

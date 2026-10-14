@@ -810,7 +810,7 @@ export default function App() {
       var skV = {};
       (data.skipped || []).forEach(function (s) { if (s.vin) skV[s.vin] = true; });
       function onSyncProgress(info) {
-        if (!auto) setSyncMsg({ busy: true, text: "Searching… " + info.done + "/" + info.total + " location" + (info.total > 1 ? "s" : "") + " · " + info.listings.length + " found" });
+        if (!auto) setSyncMsg({ busy: true, text: syncProgressText(info) });
         var pr = reconcile(data.listings, info.listings, today());
         var dec = pr.candidates
           .map(function (c) { return Object.assign({}, c, { compositeScore: calcScore(c.scores, data.criteria), _candidate: true }); })
@@ -1346,7 +1346,22 @@ export default function App() {
 // changed?" check (an ETag 304 is still billed). So before a manual sync within
 // RESYNC_WARN_HOURS of the last one, say what it costs and how fresh MarketCheck's
 // data is. Returns the confirm() text, or null when no warning is needed.
+
 var RESYNC_WARN_HOURS = 6;
+// The "Searching…" line while a sync runs. The nationwide request covers every
+// location at once, so it isn't counted as one; the per-location count only
+// appears for profiles it couldn't cover.
+export function syncProgressText(info) {
+  var found = " · " + (info.listings || []).length + " found";
+  var locs = info.total + " location" + (info.total === 1 ? "" : "s");
+  if (info.phase === "national") return "Searching nationwide across " + locs + "…";
+  if (info.phase === "done") return "Searched nationwide across " + locs + found;
+  if (info.phase === "local") {
+    var note = info.covered ? " (nationwide covered " + info.covered + " of " + info.profiles + " profile" + (info.profiles === 1 ? "" : "s") + ")" : "";
+    return "Searching… " + info.done + "/" + locs + found + note;
+  }
+  return "Searching… " + info.done + "/" + locs + found; // single-request sync
+}
 export function syncWarning(data, nowMs) {
   if (!data || !data.lastSynced) return null;
   var now = nowMs != null ? nowMs : Date.now();
