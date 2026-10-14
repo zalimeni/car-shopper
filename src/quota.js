@@ -1,10 +1,12 @@
 // MarketCheck quota bookkeeping for the gauge + modal. Pure (no DOM / network).
 //
 // What we can know: every MarketCheck response carries the key's monthly
-// Quota-Limit / Quota-Remaining / Quota-Reset-Time. Syncs hand those back per key
-// (api/marketcheck.js `keyQuotas`), and an explicit probe (api/quota.js) reads
-// them at the cost of one call per key. We keep the latest snapshot per key in
-// settings.mcQuota so it syncs across devices; nothing here polls.
+// Quota-Limit / Quota-Remaining / Quota-Reset-Time. MarketCheck has no free way
+// to read them: no usage endpoint, and any request — even one that errors — is a
+// billed call. So we never spend a call just to look: syncs and live Price Check
+// searches hand the headers back per key (api/marketcheck.js `keyQuotas`) and we
+// keep the latest snapshot per key in settings.mcQuota (synced across devices).
+// Nothing here polls.
 //
 // Keys are used strictly in order (your keys top-to-bottom), spilling to the next
 // only when one's monthly quota is spent — so total remaining capacity is simply
