@@ -46,29 +46,39 @@ describe("summarize", () => {
     expect(s.rows.map((r) => r.state)).toEqual(["in use", "standby"]);
     expect(s.totalRemaining).toBe(600);
   });
-  it("treats an unmeasured key as unknown, excluded from the fraction", () => {
+  it("presumes a never-used key has the free plan's 500 calls until it reports", () => {
     const s = summarize(keys, store({ "1111": { remaining: 250, limit: 500, reset: "2026-11-01T00:00:00Z" } }), NOW);
-    expect(s.unknown).toBe(1);
-    expect(s.fraction).toBeCloseTo(0.5, 5);
-    expect(s.rows[1].state).toBe("unmeasured");
+    expect(s.rows[1]).toMatchObject({ presumed: true, remaining: 500, limit: 500, state: "standby" });
+    expect([s.unknown, s.presumed, s.totalRemaining, s.totalLimit]).toEqual([0, 1, 750, 1000]);
+    expect(s.fraction).toBeCloseTo(0.75, 5);
+  });
+  it("once a key reports, its real numbers replace the presumption", () => {
+    const s = summarize(keys, store({ "2222": { remaining: 80, limit: 100, reset: "2026-11-01T00:00:00Z" } }), NOW);
+    expect(s.rows[1]).toMatchObject({ remaining: 80, limit: 100 });
+    expect(s.rows[1].presumed).toBeFalsy();
   });
   it("assumes a key whose reset date has passed has renewed", () => {
     const s = summarize(keys, store({ "1111": { remaining: 0, limit: 500, exhausted: true, reset: "2026-10-01T00:00:00Z" } }), NOW);
     expect(s.rows[0]).toMatchObject({ assumed: true, remaining: 500 });
     expect(s.rows[0].state).toBe("in use");
   });
-  it("has no fraction at all before anything is measured", () => {
+  it("before anything is measured your keys read as full, presumed", () => {
     const s = summarize(keys, null, NOW);
-    expect(s.fraction).toBeNull();
-    expect(s.unknown).toBe(2);
+    expect([s.fraction, s.presumed, s.unknown, s.totalRemaining]).toEqual([1, 2, 0, 1000]);
+    expect(s.rows.map((r) => r.state)).toEqual(["in use", "standby"]);
+  });
+  it("the shared server key isn't presumed (its plan is unknown)", () => {
+    const s = summarize([], null, NOW);
+    expect([s.fraction, s.unknown, s.presumed]).toEqual([null, 1, 0]);
+    expect(s.rows[0].state).toBe("unmeasured");
   });
   it("shows the shared key only when there is no configured list — otherwise it's ignored entirely", () => {
     expect(summarize([], store({}), NOW).rows.map((r) => r.id)).toEqual(["shared"]);
     // a stale shared snapshot must not leak into the rows or totals once you have keys
     const s = summarize(keys, store({ shared: { remaining: 40, limit: 100 }, "1111": { remaining: 10, limit: 500 } }), NOW);
     expect(s.rows.map((r) => r.id)).toEqual(["1111", "2222"]);
-    expect(s.totalRemaining).toBe(10);
-    expect(s.totalLimit).toBe(500);
+    expect(s.totalRemaining).toBe(10 + 500); // 2222 never used: presumed 500
+    expect(s.totalLimit).toBe(1000); // never the shared key's 100
   });
   it("derives key ids the same way the server does", () => {
     expect(keyIdOf("sk-aaaa1111")).toBe("1111");

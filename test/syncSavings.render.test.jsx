@@ -40,7 +40,7 @@ describe("syncWarning (confirm before a redundant sync)", () => {
   });
   it("estimates from the merged plan before any sync has been measured", () => {
     const d = base(); d.settings = Object.assign({}, d.settings, { mcQuota: null });
-    expect(syncWarning(d, NOW)).toMatch(/It will use 2–16 MarketCheck calls\./); // 1 merged search x 2 locations, up to 8 pages each
+    expect(syncWarning(d, NOW)).toMatch(/It will use 2–16 MarketCheck calls \(500 left this month\)\./); // the unused key presumed at 500 // 1 merged search x 2 locations, up to 8 pages each
   });
   it("counts minutes when it was very recent", () => {
     expect(syncWarning(base({ lastSynced: "2026-10-14T11:50:00Z" }), NOW)).toMatch(/10 min ago/);
