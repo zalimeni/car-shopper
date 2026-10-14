@@ -146,3 +146,23 @@ describe("notes survive export -> import, clamped, as their own field", () => {
     expect(parseImport(JSON.stringify([row()]), ["p1"]).listings[0].memo).toBe("");
   });
 });
+
+describe("notes say how scoring uses them", () => {
+  const hint = /AI scoring reads these notes the next time this car is scored\. Editing them won't mark its score out of date/;
+  it("in the viewer", () => {
+    render(<ListingMemo l={{ memo: "Test drove it" }} onSave={() => {}} />);
+    expect(screen.getByText(hint)).toBeTruthy();
+    cleanup();
+  });
+  it("in the editor", () => {
+    render(<ListingMemo l={{}} onSave={() => {}} />);
+    fireEvent.click(screen.getByText(/Add notes/));
+    expect(screen.getByText(hint)).toBeTruthy();
+    cleanup();
+  });
+  it("not on the empty 'Add notes' button, to keep cards quiet", () => {
+    render(<ListingMemo l={{}} onSave={() => {}} />);
+    expect(screen.queryByText(hint)).toBeNull();
+    cleanup();
+  });
+});
