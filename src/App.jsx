@@ -182,6 +182,13 @@ function hashStr(s) {
 // mileage) are intentionally excluded — those are tracked separately via
 // reviewPending. Stamped onto each item at score time so we can flag a score as
 // stale once the user edits how scoring works.
+// A listing's own notes are a scoring input too (api/_scoring.js memoSection), so
+// they're folded into that listing's fingerprint — only when present, so listings
+// without notes keep their existing scores' fingerprints.
+export function withMemo(sig, item) {
+  var m = String((item && item.memo) || "").trim();
+  return m ? sig + "~" + hashStr(m) : sig;
+}
 function scoreInputHash(data, profile) {
   var parts = [data.scoreModel || DEFAULT_SCORE_MODEL, data.scorePrompt || ""];
   // Home base drives the "location" score, so moving it must mark scores stale.
@@ -756,8 +763,8 @@ export default function App() {
       });
       if (!byRef.size) return;
       var pick = function (x) { var r = byRef.get(x); if (r) return r; var k = x.id || x.vin; return k ? byKey[k] : null; };
-      setCandidates(function (prev) { return prev.map(function (c) { if (c.id) return c; var r = pick(c); return r ? applyScore(c, r, data.criteria, scoreInputHash(data, profileById[c.profileId])) : c; }); });
-      patchListings(function (list) { return list.map(function (l) { var r = pick(l); return r ? applyScore(l, r, data.criteria, scoreInputHash(data, profileById[l.profileId])) : l; }); });
+      setCandidates(function (prev) { return prev.map(function (c) { if (c.id) return c; var r = pick(c); return r ? applyScore(c, r, data.criteria, withMemo(scoreInputHash(data, profileById[c.profileId]), c)) : c; }); });
+      patchListings(function (list) { return list.map(function (l) { var r = pick(l); return r ? applyScore(l, r, data.criteria, withMemo(scoreInputHash(data, profileById[l.profileId]), l)) : l; }); });
     }
 
     try {
@@ -2852,7 +2859,7 @@ function HelpTab() {
       <div style={S.card}>
         <h3 style={S.cardH}>Listings &amp; scores</h3>
         <p style={li}>The big number on a card is the <span style={b}>composite score</span> (your weighted criteria). AI per-criterion scores feed into it; the <span style={b}>✨ AI assessment</span> box shows the summary and a per-criterion breakdown.</p>
-        <p style={li}><span style={b}>Notes</span> — every listing card has <span style={b}>📝 Add notes</span> for free-form notes in Markdown (headings, <span style={b}>**bold**</span>, lists, <span style={b}>- [ ]</span> checklists, links), up to 4,000 characters — about a page. They're yours alone: separate from the rejection reason and from the price-change log sync keeps, and not shown to the AI when it scores.</p>
+        <p style={li}><span style={b}>Notes</span> — every listing card has <span style={b}>📝 Add notes</span> for free-form notes in Markdown (headings, <span style={b}>**bold**</span>, lists, <span style={b}>- [ ]</span> checklists, links), up to 4,000 characters — about a page. They're separate from the rejection reason and from the price-change log sync keeps. AI scoring reads them as first-hand information about that car (a test drive, a dealer call), so editing a listing's notes flags just that listing for a re-score.</p>
         <p style={li}><span style={b}>Statuses</span>: Watchlist (active), Rejected (with a reason, restorable), and <span style={b}>Sold</span> (no longer available — archived, restorable). Stale watched listings surface under "Needs check" — confirm with <span style={b}>Still avail</span>.</p>
         <p style={li}><span style={b}>Title note</span>: "✓ Carfax clean title" means confirmed; "ⓘ Title not Carfax-confirmed" just means the dealer didn't state it (verify yourself) — it's not a salvage flag and doesn't affect the score.</p>
       </div>
@@ -2957,7 +2964,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   var noProfSig = scoreInputHash(data, null);
   function staleOf(item) {
     var sig = item && item.profileId != null && sigByProfile[item.profileId] != null ? sigByProfile[item.profileId] : noProfSig;
-    return scoreIsStale(item, sig);
+    return scoreIsStale(item, withMemo(sig, item));
   }
   var staleCount = shownCands.filter(staleOf).length + watchFilteredAll.filter(staleOf).length;
 
