@@ -38,15 +38,45 @@ const MAX_RETRIES = 3;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Fetch that retries on HTTP 429 with backoff (honoring Retry-After).
-async function fetchWithRetry(url, opts) {
+async function fetchWithRetry(url, opts, maxRetries) {
+  const limit = maxRetries != null ? maxRetries : MAX_RETRIES;
   let attempt = 0;
   while (true) {
     const r = await fetch(url, opts);
-    if (r.status !== 429 || attempt >= MAX_RETRIES) return r;
+    if (r.status !== 429 || attempt >= limit) return r;
     const ra = parseFloat(r.headers.get("retry-after") || "");
     const waitMs = ra > 0 ? Math.min(ra * 1000, 5000) : Math.min(500 * Math.pow(2, attempt), 4000);
     await sleep(waitMs);
     attempt++;
+  }
+}
+
+// Quota / rate-limit statuses that mean "this key is spent — try the next one".
+function isQuotaStatus(status) { return status === 429 || status === 503 || status === 402; }
+
+// The ordered key list as a cursor, so a run that rolls over to key #2 keeps
+// using it for its remaining calls instead of re-hitting the spent one.
+function keyRing(keys) {
+  return {
+    i: 0,
+    keys: keys,
+    key: function () { return keys[this.i]; },
+    next: function () { if (this.i + 1 < keys.length) { this.i++; return true; } return false; },
+    used: function () { return { keyUsed: this.i + 1, keysAvailable: keys.length }; },
+  };
+}
+
+// fetchWithRetry, but on a quota/rate-limit response move to the next key in the
+// ring and repeat the same request. Only the last key's failure is returned.
+// While another key is in reserve there's no point backing off on a 429, so the
+// retry/backoff only applies to the final key.
+async function fetchAcrossKeys(ring, makeUrl, opts) {
+  while (true) {
+    const url = makeUrl(ring.key());
+    const hasSpare = ring.i + 1 < ring.keys.length;
+    const r = await fetchWithRetry(url, opts, hasSpare ? 0 : undefined);
+    if (isQuotaStatus(r.status) && ring.next()) continue;
+    return { r: r, url: url };
   }
 }
 
@@ -101,10 +131,12 @@ export default async function handler(req, res) {
   if (raw && typeof body.vin === "string" && body.vin.trim()) {
     const vin = body.vin.trim().toUpperCase();
     if (!/^[A-HJ-NPR-Z0-9]{17}$/.test(vin)) { res.status(400).json({ error: "That doesn't look like a 17-character VIN" }); return; }
-    const url = buildVinUrl(apiKey, vin);
-    const out = { request: url.replace(/(api_key=)[^&]*/, "$1REDACTED"), vin: vin };
+    const ring = keyRing(keys);
+    const out = { request: buildVinUrl("REDACTED", vin), vin: vin };
     try {
-      const r = await fetchWithRetry(url, { headers: { Accept: "application/json" } });
+      const f = await fetchAcrossKeys(ring, function (k) { return buildVinUrl(k, vin); }, { headers: { Accept: "application/json" } });
+      const r = f.r;
+      Object.assign(out, ring.used());
       out.status = r.status;
       const text = await r.text();
       let json = null;
@@ -128,10 +160,13 @@ export default async function handler(req, res) {
       res.status(400).json({ error: "raw mode needs at least one profile and one hub" });
       return;
     }
-    const url = buildUrl(apiKey, pr, hub);
-    const debug = { request: url.replace(/(api_key=)[^&]*/, "$1REDACTED"), profile: pr.id, hub: hub };
+    const ring = keyRing(keys);
+    const url = buildUrl("REDACTED", pr, hub);
+    const debug = { request: url, profile: pr.id, hub: hub };
     try {
-      const r = await fetchWithRetry(url, { headers: { Accept: "application/json" } });
+      const f = await fetchAcrossKeys(ring, function (k) { return buildUrl(k, pr, hub); }, { headers: { Accept: "application/json" } });
+      const r = f.r;
+      Object.assign(debug, ring.used());
       debug.status = r.status;
       const text = await r.text();
       let json = null;
@@ -157,10 +192,13 @@ export default async function handler(req, res) {
         debug.diagnosis = [];
         for (const v of variants) {
           await sleep(THROTTLE_MS);
-          const u = new URL(url);
-          v.drop.forEach(function (k) { u.searchParams.delete(k); });
           try {
-            const rr = await fetchWithRetry(u.toString(), { headers: { Accept: "application/json" } });
+            const ff = await fetchAcrossKeys(ring, function (k) {
+              const u = new URL(buildUrl(k, pr, hub));
+              v.drop.forEach(function (d) { u.searchParams.delete(d); });
+              return u.toString();
+            }, { headers: { Accept: "application/json" } });
+            const rr = ff.r;
             const jj = await rr.json().catch(function () { return null; });
             const entry = { relaxed: v.relaxed, status: rr.status, num_found: jj && jj.num_found != null ? jj.num_found : null };
             // Whenever the powertrain filter is dropped we get real listings —
