@@ -72,9 +72,11 @@ export function readApiInfo(r) {
 }
 
 // Fetch that retries on HTTP 429 with backoff (honoring Retry-After), sending the
-// pinned API version. If MarketCheck rejects the pin itself (a 400 that names the
-// version) it retries once unpinned, so a bad pin can't take sync down — and says
-// so via meter.pinRejected, which the UI surfaces.
+// pinned API version. If MarketCheck rejects the pin itself it retries once
+// unpinned, so a bad pin can't take sync down — and says so via meter.pinRejected,
+// which the UI surfaces. Verified live (Oct 2026): an unknown x-version answers
+// HTTP 404 {"message":"release not found"} — so a 400 or 404 whose body names the
+// release/version counts as a rejected pin.
 async function fetchWithRetry(url, opts, maxRetries, meter) {
   const limit = maxRetries != null ? maxRetries : MAX_RETRIES;
   let attempt = 0;
@@ -82,10 +84,10 @@ async function fetchWithRetry(url, opts, maxRetries, meter) {
   while (true) {
     if (meter) meter.calls++; // every request actually sent, retries included
     const r = await fetch(url, withVersion(opts, pin));
-    if (pin && r.status === 400) {
+    if (pin && (r.status === 400 || r.status === 404)) {
       let text = "";
       try { text = r.clone ? await r.clone().text() : ""; } catch (e) { /* ignore */ }
-      if (/version/i.test(text)) { pin = false; if (meter) meter.pinRejected = true; continue; }
+      if (/release|version/i.test(text)) { pin = false; if (meter) meter.pinRejected = true; continue; }
     }
     if (meter) { const a = readApiInfo(r); if (a) meter.api = a; }
     // A 429 that says the MONTH is spent won't clear by waiting — return at once.
