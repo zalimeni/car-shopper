@@ -32,7 +32,7 @@ describe("reconcile", () => {
   const result = reconcile(existing, fetched, TODAY);
 
   it("summarizes the run", () => {
-    expect(result.summary).toEqual({ fetched: 2, priceUpdates: 1, refreshed: 0, newCount: 1, notSeen: 1 });
+    expect(result.summary).toEqual({ fetched: 2, priceUpdates: 1, refreshed: 0, newCount: 1, notSeen: 1, kept: 0 });
   });
 
   it("records the price drop with a note + refreshes lastSeen", () => {

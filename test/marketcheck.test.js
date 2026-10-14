@@ -111,7 +111,7 @@ describe("normalize", () => {
       color: "Midnight Black Metallic",
       link: "https://www.courtesymitsubishima.com/auto/used-2021-toyota-rav4-hybrid-le-attleboro-ma/121137914/",
       photo: "",
-      dom: 18,
+      dom: null, // older fixture: no dos_active / dom_active (its plain dom 18 is deliberately ignored)
       distMi: 36, // MarketCheck `dist` 35.74, rounded
       dLat: null, // this older fixture's dealer has no coordinates
       dLon: null,
@@ -259,5 +259,18 @@ describe("fees, dealer coordinates and MarketCheck freshness (real Tucson record
   it("is null-safe when the record has none of those", () => {
     const n = normalize({ vin: "X", price: 100, build: {} }, "p");
     expect([n.fees, n.dLat, n.dLon, n.mcSeen]).toEqual([null, null, null, null]);
+  });
+});
+
+describe("days listed comes from dos_active (this source, active stretch)", () => {
+  // From the live Tucson record: dom 109 counted earlier listings; dos_active 67 matched the dealer's own listing date.
+  const base = { vin: "KM8JCCD14RU211946", price: 1, build: { make: "Hyundai", model: "Tucson", year: 2024 } };
+  it("prefers dos_active over dom", () => {
+    expect(normalize(Object.assign({ dom: 109, dom_180: 73, dom_active: 67, dos_active: 67 }, base), "p").dom).toBe(67);
+    expect(normalize(Object.assign({ dom: 109, dos_active: 12 }, base), "p").dom).toBe(12);
+  });
+  it("falls back to dom_active, and never to the cross-listing dom", () => {
+    expect(normalize(Object.assign({ dom: 109, dom_active: 40 }, base), "p").dom).toBe(40);
+    expect(normalize(Object.assign({ dom: 109 }, base), "p").dom).toBeNull();
   });
 });

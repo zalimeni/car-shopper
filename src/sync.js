@@ -32,6 +32,7 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
   let keyQuotas = []; // per-key monthly quota as reported by MarketCheck
   let calls = 0;      // HTTP requests this sync actually spent
   let apiInfo = null; // MarketCheck API version / deprecation headers (latest seen)
+  let fingerprints = {}, unchanged = [], queries = 0; // unchanged-search short-circuit
   let formatSuspect = false;
   let mock = false;
   let rateLimited = false;
@@ -51,6 +52,9 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
       keyQuotas = mergeReports(keyQuotas, r.keyQuotas);
       calls += r.calls || 0;
       if (r.apiInfo) apiInfo = r.apiInfo;
+      Object.assign(fingerprints, r.fingerprints || {});
+      unchanged = unchanged.concat(r.unchanged || []);
+      queries += r.queries || 0;
       if (r.formatSuspect) formatSuspect = true;
       if (r.mock) mock = true;
       if (r.rateLimited) { rateLimited = true; if (r.rateLimitInfo) rateLimitInfo = r.rateLimitInfo; }
@@ -63,7 +67,7 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
     // Quota hit: further locations will fail too, so stop rather than burn more.
     if (rateLimited) break;
   }
-  return { listings: Object.values(seen), errors: errors, mock: mock, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota, keyQuotas: keyQuotas, calls: calls, apiInfo: apiInfo, formatSuspect: formatSuspect };
+  return { listings: Object.values(seen), errors: errors, mock: mock, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota, keyQuotas: keyQuotas, calls: calls, apiInfo: apiInfo, formatSuspect: formatSuspect, fingerprints: fingerprints, unchanged: unchanged, queries: queries };
 }
 
 // One /api/marketcheck request for the given hubs (usually a single hub).
@@ -84,6 +88,7 @@ async function fetchChunk(profiles, hubs, opts, filters) {
       hubs: hubs || [],
       franchiseOnly: !!(filters && filters.franchiseOnly),
       marketcheckKeys: (filters && Array.isArray(filters.marketcheckKeys)) ? filters.marketcheckKeys : [],
+      fingerprints: (filters && filters.fingerprints) || {},
     }),
   });
   if (!res.ok) {
@@ -100,7 +105,7 @@ async function fetchChunk(profiles, hubs, opts, filters) {
     throw err;
   }
   const json = await res.json();
-  return { listings: json.listings || [], errors: json.errors || [], mock: !!json.mock, rateLimited: !!json.rateLimited, rateLimitInfo: json.rateLimitInfo || null, quota: json.quota || null, keyQuotas: json.keyQuotas || [], calls: json.calls || 0, apiInfo: json.apiInfo || null, formatSuspect: !!json.formatSuspect };
+  return { listings: json.listings || [], errors: json.errors || [], mock: !!json.mock, rateLimited: !!json.rateLimited, rateLimitInfo: json.rateLimitInfo || null, quota: json.quota || null, keyQuotas: json.keyQuotas || [], calls: json.calls || 0, apiInfo: json.apiInfo || null, formatSuspect: !!json.formatSuspect, fingerprints: json.fingerprints || {}, unchanged: json.unchanged || [], queries: json.queries || 0 };
 }
 
 // Live-market comp broadening for the Price Check tool: fire a one-off
