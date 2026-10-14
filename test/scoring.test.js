@@ -231,3 +231,11 @@ describe("coerceResult", () => {
     expect(coerceResult(parsed, CRIT).scores).toEqual({ price: 8, mileage: 4, deal: 6 });
   });
 });
+
+describe("user notes stay out of the AI prompt", () => {
+  it("never includes a listing's memo (nor leaks it via the sync notes line)", () => {
+    const out = buildUserPrompt({ year: 2021, vehicle: "Toyota RAV4", price: 24000, notes: "↓ Price $25,000 → $24,000", memo: "PRIVATE-NOTE: seller seemed evasive" }, { criteria: [{ id: "price", name: "Price", weight: 25 }] });
+    expect(out).not.toContain("PRIVATE-NOTE");
+    expect(out).toContain("↓ Price $25,000 → $24,000"); // the sync log is still a scoring input, as before
+  });
+});
