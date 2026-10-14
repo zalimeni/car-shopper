@@ -1199,7 +1199,7 @@ export default function App() {
 
       {mcKeys(data).length === 0 && tab !== "Settings" && (
         <div style={S.conflictBar}>
-          <span style={{ flex: 1 }}>No MarketCheck API key set — syncs fall back to the app's shared key and may hit its monthly quota. Add your own for reliable results.</span>
+          <span style={{ flex: 1 }}>No MarketCheck API key set — syncs use the app's shared key and may hit its monthly quota. Add your own for reliable results (once you do, the shared key is no longer used).</span>
           <button style={S.smBtn} onClick={function () { setTab("Settings"); }}>Open Settings</button>
         </div>
       )}
@@ -1717,7 +1717,7 @@ function SettingsCard({ data, save }) {
             })}
             <button style={Object.assign({}, S.smBtn, { marginTop: 6 })} onClick={addMck}>+ Add MarketCheck key</button>
           </div>
-          <p style={S.help}>Budget powers the "budget left" math; locations are where dealer inventory is searched (~100 mi radius each). Franchise-only applies to future syncs; listings already saved from independent dealers stay until you remove them. Your MarketCheck keys are stored in your synced settings and used server-side per sync — add several so a fallback kicks in when the first hits its monthly quota. Leave empty to use the app's shared key.</p>
+          <p style={S.help}>Budget powers the "budget left" math; locations are where dealer inventory is searched (~100 mi radius each). Franchise-only applies to future syncs; listings already saved from independent dealers stay until you remove them. Your MarketCheck keys are stored in your synced settings and used server-side, top to bottom — the next one takes over only when the one before it has used up its monthly quota. Add any and the app's shared key is never used, even if yours run out; leave the list empty to use the shared key.</p>
           <button style={Object.assign({}, S.priBtn, { marginTop: 6 })} onClick={saveAll}>Save settings</button>
         </div>
       )}

@@ -62,10 +62,18 @@ describe("summarize", () => {
     expect(s.fraction).toBeNull();
     expect(s.unknown).toBe(2);
   });
-  it("lists the shared key only once we've heard from it (or when there's nothing else)", () => {
-    expect(summarize(keys, store({}), NOW).rows.length).toBe(2);
-    expect(summarize(keys, store({ shared: { remaining: 40, limit: 100 } }), NOW).rows.map((r) => r.id)).toEqual(["1111", "2222", "shared"]);
+  it("shows the shared key only when there is no configured list — otherwise it's ignored entirely", () => {
     expect(summarize([], store({}), NOW).rows.map((r) => r.id)).toEqual(["shared"]);
+    // a stale shared snapshot must not leak into the rows or totals once you have keys
+    const s = summarize(keys, store({ shared: { remaining: 40, limit: 100 }, "1111": { remaining: 10, limit: 500 } }), NOW);
+    expect(s.rows.map((r) => r.id)).toEqual(["1111", "2222"]);
+    expect(s.totalRemaining).toBe(10);
+    expect(s.totalLimit).toBe(500);
+  });
+  it("counts a key listed twice once", () => {
+    const s = summarize([{ key: "sk-aaaa1111" }, { key: "sk-aaaa1111" }, { key: "sk-bbbb2222" }], store({ "1111": { remaining: 100, limit: 500 } }), NOW);
+    expect(s.rows.map((r) => r.id)).toEqual(["1111", "2222"]);
+    expect(s.totalRemaining).toBe(100);
   });
   it("derives key ids the same way the server does", () => {
     expect(keyIdOf("sk-aaaa1111")).toBe("1111");
