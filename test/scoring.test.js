@@ -164,7 +164,29 @@ describe("home base anchors the location criterion", () => {
   });
   it("scores location against home base, not the search area", () => {
     expect(withHome).toContain("HOME BASE");
-    expect(withHome).toContain("NOT from whichever search area");
+    expect(withHome).toContain("from whichever search area the listing turned up in");
+  });
+});
+
+describe("computed distance and fees reach the scorer", () => {
+  const home = { n: "Durham, NC", z: "27701", lat: 35.997, lon: -78.897 };
+  const crit = [{ id: "location", name: "Location", weight: 10 }];
+  const car = { year: 2024, vehicle: "Hyundai Tucson", price: 25988, fees: 695, location: "Sheffield", state: "AL", distMi: 40, dLat: 34.772847, dLon: -87.669898 };
+  const withHome = buildUserPrompt(car, { criteria: crit, homeBase: home });
+
+  it("states a real straight-line distance from home, separate from the search-area radius", () => {
+    expect(withHome).toMatch(/Straight-line distance from the buyer's HOME BASE: \d{3} mi/);
+    expect(withHome).toContain("Distance from the search area it was found in (NOT from home): 40 mi");
+  });
+  it("tells the model to use the stated figure", () => {
+    expect(withHome).toContain("use the \"Straight-line distance from the buyer's HOME BASE\" figure");
+  });
+  it("omits the figure (and falls back to city/state) when coordinates are missing", () => {
+    expect(buildUserPrompt({ year: 2024, price: 1, distMi: 40 }, { criteria: crit, homeBase: home })).not.toContain("Straight-line distance from the buyer's HOME BASE:");
+    expect(buildUserPrompt(car, { criteria: crit, homeBase: { n: "Durham", z: "27701" } })).not.toContain("Straight-line distance from the buyer's HOME BASE:");
+  });
+  it("shows the price as before-fees so the fee isn't mistaken for price", () => {
+    expect(withHome).toContain("Price: $25,988 (before $695 in dealer fees)");
   });
 });
 

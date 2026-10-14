@@ -39,6 +39,21 @@ export function reconcile(existing, fetched, todayStr) {
     // Keep the market facts that drift over time current on every sighting.
     if (f.dom != null) next.dom = f.dom;
     if (f.distMi != null) next.distMi = f.distMi;
+    if (f.fees != null) next.fees = f.fees;
+    if (f.dLat != null && f.dLon != null) { next.dLat = f.dLat; next.dLon = f.dLon; }
+    if (f.mcSeen) next.mcSeen = f.mcSeen;
+    // One-time basis correction: listings synced before we stored prices
+    // pre-fee carry the fee inside `price`. When the new price differs by exactly
+    // that fee it isn't a price move — fix the stored price (and its history)
+    // quietly instead of announcing a phantom drop.
+    if (f.price && l.source === "marketcheck" && l.fees == null && f.fees > 0 && l.price - f.price === f.fees) {
+      next.price = f.price;
+      if (Array.isArray(l.priceHistory) && l.priceHistory.length) {
+        next.priceHistory = l.priceHistory.map(function (p) { return p && p.price ? Object.assign({}, p, { price: p.price - f.fees }) : p; });
+      }
+      summary.refreshed++;
+      return next;
+    }
     if (f.price && f.price !== l.price) {
       const dir = f.price < l.price ? "↓" : "↑";
       next.notes = appendNote(l.notes, dir + " Price $" + (l.price || 0).toLocaleString() + " → $" + f.price.toLocaleString() + " (" + todayStr + ")");

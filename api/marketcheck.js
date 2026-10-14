@@ -451,6 +451,14 @@ export function normalize(row, profileId) {
   const build = row.build || {};
   const dealer = row.dealer || {};
   const vehicle = ((build.make || "") + " " + (build.model || "")).trim();
+  // Some dealer feeds quote a price that already includes fees (doc fee etc.),
+  // flagged by price_includes_fees. Others quote it before fees. Store the
+  // price BEFORE fees either way — it's what the dealer's site headlines — and
+  // keep the fee separately, so cars from different feeds compare like-for-like.
+  const quoted = Number(row.price) || 0;
+  const feeAmt = Number(row.fees) > 0 ? Number(row.fees) : 0;
+  const price = quoted && feeAmt && row.price_includes_fees === true && quoted > feeAmt ? quoted - feeAmt : quoted;
+  const coord = function (v) { const n = parseFloat(v); return isFinite(n) ? n : null; };
   return {
     vin: row.vin || "",
     vehicle: vehicle,
@@ -458,7 +466,8 @@ export function normalize(row, profileId) {
     // version is the fuller variant (e.g. "Hybrid LE AWD") — surfaces the
     // powertrain on the card; fall back to the plain trim.
     trim: build.version || build.trim || "",
-    price: Number(row.price) || 0,
+    price: price,
+    fees: feeAmt || null,
     mileage: Number(row.miles) || 0,
     dealer: dealer.name || "",
     dealerType: mapDealerType(row, dealer),
@@ -472,6 +481,12 @@ export function normalize(row, profileId) {
     link: safeHttpUrl(row.vdp_url),
     photo: pickPhoto(row),
     dom: row.dom != null ? Number(row.dom) : null,
+    // Dealer coordinates -> true miles from the buyer's home base (src/geo.js).
+    dLat: coord(dealer.latitude),
+    dLon: coord(dealer.longitude),
+    // When MarketCheck last saw this car at this price (YYYY-MM-DD). Distinct from
+    // our own lastSeen (the day WE synced): a stale crawl hides behind a fresh sync.
+    mcSeen: typeof row.last_seen_at_date === "string" && row.last_seen_at_date.length >= 10 ? row.last_seen_at_date.slice(0, 10) : null,
     // Miles from the search location (MarketCheck returns `dist` on geo/zip
     // queries) — surfaced on cards and fed to the "location" scoring criterion.
     distMi: row.dist != null && !isNaN(Number(row.dist)) ? Math.round(Number(row.dist)) : null,

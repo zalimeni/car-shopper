@@ -5,6 +5,8 @@
 // The app's criteria are user-editable, so the schema and the rubric are built
 // from whatever criteria the client sends rather than hardcoded.
 
+import { homeMiles } from "../src/geo.js";
+
 // Models the user may pick for scoring (allowlisted so a request can't drive
 // arbitrary model strings). Default is Sonnet — strong judgment for this
 // structured task at a lower cost than Opus. SCORING_MODEL env var, when set to
@@ -36,7 +38,7 @@ export const CRITERION_GUIDANCE = {
   condition: "10 = clean title, 1-owner, no accidents, well-maintained; 1 = branded title, accidents, or neglect.",
   features: "10 = target trim or richer with all must-have + several nice-to-have features (a trim above the buyer's preferred level is a bonus, never a penalty); 1 = a trim below their preferred level / missing must-haves.",
   color: "10 = preferred/neutral color; 1 = a color the buyer wants to avoid (see requirements).",
-  location: "10 = close to the buyer's HOME BASE & low salt-belt exposure; 1 = a long haul from home and/or a heavy road-salt region (rust risk). Judge the distance from the dealer's city/state to the home base — NOT from whichever search area the listing turned up in.",
+  location: "10 = close to the buyer's HOME BASE & low salt-belt exposure; 1 = a long haul from home and/or a heavy road-salt region (rust risk). Judge the distance to the home base — use the stated straight-line figure when the listing has one, otherwise the dealer's city/state — NOT the distance from whichever search area the listing turned up in.",
   deal: "10 = priced well below comparable listings (great deal); 1 = priced above market.",
 };
 
@@ -95,13 +97,13 @@ export const SCORE_SYSTEM =
 
 // Compact, deterministic listing serialization for the prompt — only fields that
 // are present. Includes Carfax / pricing extras when the listing carries them.
-function listingFacts(l) {
+function listingFacts(l, homeBase) {
   const f = [];
   const add = function (label, v) { if (v !== undefined && v !== null && v !== "") f.push(label + ": " + v); };
   add("Year", l.year);
   add("Vehicle", l.vehicle);
   add("Trim", l.trim);
-  add("Price", l.price != null ? "$" + Number(l.price).toLocaleString() : null);
+  add("Price", l.price != null ? "$" + Number(l.price).toLocaleString() + (l.fees > 0 ? " (before $" + Number(l.fees).toLocaleString() + " in dealer fees)" : "") : null);
   // Only surface MSRP when it's a real original-sticker signal (> asking price);
   // on used inventory MarketCheck's msrp often just echoes price.
   add("MSRP", l.msrp != null && l.price != null && Number(l.msrp) > Number(l.price) ? "$" + Number(l.msrp).toLocaleString() : null);
@@ -119,6 +121,10 @@ function listingFacts(l) {
   // hub is still ~500 mi from a Durham NC home base. Labelled so the model can't
   // read it as proximity to the buyer.
   add("Distance from the search area it was found in (NOT from home)", l.distMi != null ? l.distMi + " mi" : null);
+  // Computed from the dealer's coordinates, so the model needn't guess from a
+  // city name. Straight-line; the drive is usually 20-30% longer.
+  const hm = homeMiles(l, homeBase);
+  add("Straight-line distance from the buyer's HOME BASE", hm != null ? hm + " mi (driving is typically 20-30% longer)" : null);
   add("Color", l.color);
   add("Days on market", l.dom);
   // Recent asking-price trajectory — a strong deal/negotiation signal.
@@ -259,7 +265,7 @@ export function buildUserPrompt(listing, ctx) {
   const home = homeBaseLabel(ctx.homeBase);
   const homeSection = home
     ? "BUYER'S HOME BASE: " + home + ". This is where the car has to end up, and the ONLY anchor for the \"location\" criterion — "
-      + "estimate the drive from the dealer's city/state to here. The buyer also searches other travel hubs far from home, so a listing "
+      + "use the \"Straight-line distance from the buyer's HOME BASE\" figure in the listing when one is given, otherwise estimate the drive from the dealer's city/state to here. The buyer also searches other travel hubs far from home, so a listing "
       + "sitting a few miles from one of those search areas is NOT nearby; score it on its real distance from " + home + "."
     : "BUYER'S HOME BASE: not set. Judge \"location\" from the dealer's city/state against the buyer's search locations, and say the "
       + "home base is unknown rather than assuming a listing is local.";
@@ -278,7 +284,7 @@ export function buildUserPrompt(listing, ctx) {
     rubric.join("\n"),
     "",
     "LISTING TO EVALUATE:",
-    listingFacts(listing),
+    listingFacts(listing, ctx.homeBase),
     "",
     "Return a score (1-10) and one-sentence rationale for every criterion id " +
       "listed above, plus a 1-2 sentence overall summary of this listing as a buy.",
