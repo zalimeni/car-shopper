@@ -341,7 +341,7 @@ export default async function handler(req, res) {
   }
 
   const r = await searchListings(apiKey, profiles, hubs, { dealerType: dealerType, keys: keys, fingerprints: body.fingerprints, spentKeys: body.spentKeys, national: body.national === "only" ? "only" : !!body.national, keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? envKey : null); }) });
-  res.status(200).json({ listings: r.listings, errors: r.errors, notices: r.notices, rateLimited: !!r.rateLimited, rateLimitInfo: r.rateLimitInfo || null, quota: r.quota || null, keysUsed: r.keysUsed, keyQuotas: r.keyQuotas || [], calls: r.calls || 0, apiInfo: r.apiInfo, formatSuspect: !!r.formatSuspect, fingerprints: r.fingerprints, unchanged: r.unchanged, queries: r.queries, localProfiles: r.localProfiles });
+  res.status(200).json({ listings: r.listings, errors: r.errors, notices: r.notices, rateLimited: !!r.rateLimited, rateLimitInfo: r.rateLimitInfo || null, quota: r.quota || null, keysUsed: r.keysUsed, keyQuotas: r.keyQuotas || [], calls: r.calls || 0, apiInfo: r.apiInfo, formatSuspect: !!r.formatSuspect, fingerprints: r.fingerprints, unchanged: r.unchanged, queries: r.queries, localProfiles: r.localProfiles, nationalInfo: r.nationalInfo || null });
 }
 
 // Core active-inventory search for a set of profiles × hubs — shared by the
@@ -633,6 +633,11 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
   let national = 0;
   let go = true;
   const natStart = Date.now(), natCalls0 = meter.calls;
+  // What the nationwide pass did, for the status line: skipped (and why) or how much it covered.
+  const nationalInfo = !opts.national ? null
+    : hubs.length < 2 ? { skipped: "one-location" }
+    : !geoHubs(hubs) ? { skipped: "no-coords", missing: hubs.filter(function (h) { return !(isFinite(parseFloat(h && h.lat)) && isFinite(parseFloat(h && h.lon))); }).length }
+    : { skipped: null };
   if (opts.national && hubs.length > 1 && geoHubs(hubs)) {
     const nat = { national: true, sig: hubsSig(hubs) };
     natDeadline = Math.min(deadline, natStart + NATIONAL_BUDGET_MS);
@@ -648,6 +653,7 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
   }
   if (natTimedOut) notices.push("Nationwide search ran out of time after " + Math.round((Date.now() - natStart) / 1000) + " s (" + (meter.calls - natCalls0) + " calls); the rest is searched per location.");
   const localList = (profiles || []).filter(function (p) { return p && local[p.id]; });
+  if (nationalInfo && !nationalInfo.skipped) Object.assign(nationalInfo, { covered: (profiles || []).length - localList.length, profiles: (profiles || []).length, calls: meter.calls - natCalls0, ms: Date.now() - natStart, timedOut: natTimedOut });
   if (go && opts.national !== "only") {
     outer:
     for (const group of groupProfiles(localList)) {
@@ -670,7 +676,7 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
     listings: Object.values(seen).map(function (l) { return Object.assign(l, { mcQ: Object.keys(tags[l.vin] || {}) }); }), errors: errors, notices: notices,
     fingerprints: fingerprints, unchanged: unchanged, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota,
     keysUsed: keysUsed, keyQuotas: Object.keys(snaps).map(function (i) { return snaps[i]; }), calls: meter.calls,
-    queries: queries, splits: splits, national: national,
+    queries: queries, splits: splits, national: national, nationalInfo: nationalInfo,
     // Profiles still needing per-location searches (only reported for national "only").
     localProfiles: opts.national === "only" ? localList.map(function (p) { return p.id; }) : [],
   };

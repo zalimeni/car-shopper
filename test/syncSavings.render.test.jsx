@@ -85,3 +85,16 @@ describe("syncProgressText", async () => {
     expect(syncProgressText({ phase: "local", done: 3, total: 16, listings: [], covered: 0, profiles: 3 })).toBe("Searching… 3/16 locations · 0 found");
   });
 });
+
+describe("nationalNote (final status line)", async () => {
+  const { nationalNote } = await import("../src/App.jsx");
+  it("says why nationwide was skipped, or how far it got", () => {
+    expect(nationalNote(null)).toBe("");
+    expect(nationalNote({ skipped: "one-location" })).toBe("");
+    expect(nationalNote({ skipped: "no-coords", missing: 3 })).toMatch(/skipped: 3 locations have no coordinates/);
+    expect(nationalNote({ covered: 3, profiles: 3, calls: 4 })).toBe("nationwide search covered every profile (4 calls)");
+    expect(nationalNote({ covered: 1, profiles: 3, calls: 3 })).toMatch(/covered 1 of 3 profiles \(3 calls\); the rest had too many matches/);
+    expect(nationalNote({ covered: 0, profiles: 3, calls: 9, timedOut: true })).toMatch(/before its time limit/);
+    expect(nationalNote({ failed: "Load failed" })).toMatch(/failed, so every location was searched/);
+  });
+});

@@ -876,7 +876,7 @@ export default function App() {
       // run those listings were just never checked, so don't report them as gone.
       var summaryOut = Object.assign({}, rec.summary, { newCount: added.length });
       if (res.rateLimited) summaryOut.notSeen = 0;
-      setSyncMsg({ ok: true, summary: summaryOut, skippedSeen: skippedSeen, unchanged: (res.unchanged || []).length, searches: res.queries || 0, errors: res.errors, notices: res.notices, mock: res.mock, rateLimited: res.rateLimited, rateLimitInfo: res.rateLimitInfo, quota: res.quota });
+      setSyncMsg({ ok: true, summary: summaryOut, skippedSeen: skippedSeen, unchanged: (res.unchanged || []).length, searches: res.queries || 0, nationalInfo: res.nationalInfo, errors: res.errors, notices: res.notices, mock: res.mock, rateLimited: res.rateLimited, rateLimitInfo: res.rateLimitInfo, quota: res.quota });
       setSyncing(false);
       // Auto-score only NEW candidates (never skipped, never already-queued, not
       // already scored, and passing their profile's trim filter — no point
@@ -1351,6 +1351,17 @@ var RESYNC_WARN_HOURS = 6;
 // The "Searching…" line while a sync runs. The nationwide request covers every
 // location at once, so it isn't counted as one; the per-location count only
 // appears for profiles it couldn't cover.
+// One clause for the final status line: did the nationwide search run, and how far did it get?
+export function nationalNote(n) {
+  if (!n) return "";
+  if (n.failed) return "nationwide search failed, so every location was searched";
+  if (n.skipped === "no-coords") return "nationwide search skipped: " + n.missing + " location" + (n.missing === 1 ? " has" : "s have") + " no coordinates (saving Settings fills them in)";
+  if (n.skipped) return "";
+  var calls = " (" + n.calls + " call" + (n.calls === 1 ? "" : "s") + ")";
+  if (n.covered >= n.profiles) return "nationwide search covered every profile" + calls;
+  if (n.timedOut) return "nationwide search covered " + n.covered + " of " + n.profiles + " profiles before its time limit; the rest by location";
+  return "nationwide search covered " + n.covered + " of " + n.profiles + " profile" + (n.profiles === 1 ? "" : "s") + calls + "; the rest had too many matches nationally, so by location";
+}
 export function syncProgressText(info) {
   var found = " · " + (info.listings || []).length + " found";
   var locs = info.total + " location" + (info.total === 1 ? "" : "s");
@@ -1523,7 +1534,7 @@ export function QuotaModal({ data, summary, onClose }) {
             {cost.national ? (
               <div>Your <strong>{active}</strong> active profile{active === 1 ? "" : "s"} share one search, run <strong>nationwide</strong> and kept to your <strong>{cost.hubs}</strong> locations' radii: as little as <strong>{n(cost.min)}</strong> call when it fits in one 50-car page, up to 10 when it pages. If too many cars match nationally it costs one extra call, then searches each location as before: up to <strong>{n(cost.max)}</strong>.</div>
             ) : (
-              <div>Your <strong>{active}</strong> active profile{active === 1 ? "" : "s"} share one search × <strong>{cost.hubs}</strong> location{cost.hubs === 1 ? "" : "s"}, so one sync costs <strong>{range(cost.min, cost.max)}</strong> calls — the minimum when every search fits in one 50-car page, more for searches with more matches.{cost.hubs > 1 ? " (A cheaper nationwide search needs every location to have coordinates — re-add ZIP-only ones from the location picker.)" : ""}</div>
+              <div>Your <strong>{active}</strong> active profile{active === 1 ? "" : "s"} share one search × <strong>{cost.hubs}</strong> location{cost.hubs === 1 ? "" : "s"}, so one sync costs <strong>{range(cost.min, cost.max)}</strong> calls — the minimum when every search fits in one 50-car page, more for searches with more matches.{cost.hubs > 1 ? " (A cheaper nationwide search needs every location to have coordinates — saving Settings fills them in from their ZIPs.)" : ""}</div>
             )}
             {cost.measured ? <div>Your last full sync actually used <strong>{n(cost.measured)}</strong>{s.mcQuota && s.mcQuota.lastSync && s.mcQuota.lastSync.unchanged ? <span> — {s.mcQuota.lastSync.unchanged} of {s.mcQuota.lastSync.searches} searches were unchanged and stopped after one page</span> : null}.</div> : <div style={{ color: "#6b6b76" }}>No sync of your current profiles and locations recorded yet to measure the real cost.</div>}
             {left ? (
@@ -1773,8 +1784,14 @@ export function SettingsCard({ data, save }) {
     });
   }
 
+  // Saving settings also fills any location's missing coordinates by ZIP (the
+  // nationwide search needs them), so the location index is loaded first; if it
+  // can't load, the save goes ahead without.
   function saveAll() {
-    var cleanHubs = normalizeHubs(hubs);
+    Promise.resolve().then(loadLocations).catch(function () { return null; }).then(saveWith);
+  }
+  function saveWith(idx) {
+    var cleanHubs = normalizeHubs(hubs, idx);
     var cleanMck = dedupeKeyEntries(mck); // the one place duplicate keys are handled
     // Home base is stored as its own {n,z} (not a pointer into hubs) so renaming
     // or removing a search location can't silently orphan it.
@@ -2231,6 +2248,9 @@ function Wizard({ data, onComplete }) {
   var starterProfiles = data.profiles || [];
 
   function finish() {
+    Promise.resolve().then(loadLocations).catch(function () { return null; }).then(finishWith);
+  }
+  function finishWith(idx) {
     var profiles = keepProfiles ? starterProfiles : [];
     var n = profiles.filter(function (p) { return p.active; }).length || profiles.length;
     var hubNames = hubs.filter(function (h) { return h.z || h.n; }).map(function (h) { return h.n || h.z; });
@@ -2238,7 +2258,7 @@ function Wizard({ data, onComplete }) {
     var tagline = (n ? n + " car" + (n > 1 ? "s" : "") : "Car search")
       + (hubNames.length ? " · " + hubNames.join(", ") : "")
       + (budgetNum ? " · ≤$" + Math.round(budgetNum / 1000) + "K" : "");
-    var cleanHubs = normalizeHubs(hubs);
+    var cleanHubs = normalizeHubs(hubs, idx);
     onComplete(Object.assign({}, data, {
       settings: Object.assign({}, s, { budget: budgetNum, hubs: cleanHubs, tagline: tagline }),
       profiles: profiles,
@@ -3341,6 +3361,8 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
       text += " · " + syncMsg.errors.length + " query error(s): " + String(syncMsg.errors[0]).slice(0, 240);
       color = "#d4a017";
     }
+    var nat = nationalNote(syncMsg.nationalInfo);
+    if (nat) text += " · " + nat;
     if (syncMsg.notices && syncMsg.notices.length) text += " · " + syncMsg.notices.join(" ");
     if (syncMsg.rateLimited) {
       // Free-tier quota / rate limit: make it unmissable — results are partial.

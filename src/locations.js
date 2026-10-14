@@ -108,8 +108,9 @@ export function hubParts(h, index) {
 }
 
 // Drop blanks, dedupe by hubKey (first wins, but fill in missing coordinates from
-// a later duplicate), and sort by state then city then ZIP. Entries whose state
-// can't be determined sort last, by label.
+// a later duplicate), fill any still-missing coordinates by ZIP from the location
+// index when given (the nationwide search needs every hub's), and sort by state
+// then city then ZIP. Entries whose state can't be determined sort last, by label.
 export function normalizeHubs(list, index) {
   const seen = {};
   const out = [];
@@ -123,6 +124,11 @@ export function normalizeHubs(list, index) {
     }
     seen[k] = out.length;
     out.push(Object.assign({}, h, { n: String(h.n || "").trim(), z: String(h.z || "").trim() }));
+  });
+  out.forEach(function (h) {
+    if (h.lat != null && h.lon != null) return;
+    const r = index && index.byZip && index.byZip[h.z];
+    if (r) { h.lat = r.lat; h.lon = r.lon; }
   });
   return out.map(function (h) { return { h: h, p: hubParts(h, index) }; }).sort(function (a, b) {
     if (!a.p.st !== !b.p.st) return a.p.st ? -1 : 1;

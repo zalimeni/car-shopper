@@ -134,3 +134,17 @@ describe("search-area overlap", () => {
     expect(o).toEqual([]);
   });
 });
+
+describe("normalizeHubs fills missing coordinates by ZIP (on settings save)", () => {
+  const index = { byZip: { "27701": { lat: 35.99, lon: -78.9 } } };
+  it("fills a bare-ZIP hub from the index and leaves located / unknown ones alone", () => {
+    const out = normalizeHubs([{ n: "Durham NC", z: "27701" }, { n: "Boston MA", z: "02108", lat: 42.36, lon: -71.06 }, { n: "Nowhere", z: "00000" }], index);
+    const by = Object.fromEntries(out.map((h) => [h.z, h]));
+    expect([by["27701"].lat, by["27701"].lon]).toEqual([35.99, -78.9]);
+    expect(by["02108"].lat).toBe(42.36);
+    expect(by["00000"].lat).toBeUndefined();
+  });
+  it("without an index nothing is invented", () => {
+    expect(normalizeHubs([{ n: "Durham NC", z: "27701" }])[0].lat).toBeUndefined();
+  });
+});

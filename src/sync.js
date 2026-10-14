@@ -56,6 +56,7 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
   let quota = null; // lowest remaining across hubs
   let rest = profiles || [];
   let steps = [{ hubs: hubList, national: true }];
+  let nationalInfo = null; // what the nationwide pass did (skipped / covered), for the status line
   let localDone = 0, covered = null; // per-location requests finished; profiles nationwide covered
   const allCount = (profiles || []).length;
   const goLocal = function () { steps = steps.concat(hubList.map(function (h) { return { hubs: [h] }; })); };
@@ -75,6 +76,7 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
         (r.localProfiles || []).forEach(function (id) { left[id] = true; });
         rest = rest.filter(function (p) { return left[p.id]; });
         covered = allCount - rest.length;
+        nationalInfo = r.nationalInfo || null;
         if (rest.length) goLocal();
       }
       (r.listings || []).forEach(function (l) {
@@ -104,6 +106,7 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
         // slow response): every location is searched instead, so nothing is lost.
         notices.push("Nationwide search failed (" + why + "); searched each location instead.");
         covered = 0;
+        nationalInfo = { failed: why };
         goLocal();
       } else {
         errors.push((step.national ? "nationwide search" : (hub.n || hub.z || "location")) + ": " + why);
@@ -114,7 +117,7 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
     // Quota hit: further locations will fail too, so stop rather than burn more.
     if (rateLimited) break;
   }
-  return { listings: Object.values(seen), errors: errors, notices: notices, mock: mock, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota, keyQuotas: keyQuotas, calls: calls, apiInfo: apiInfo, formatSuspect: formatSuspect, fingerprints: fingerprints, unchanged: unchanged, queries: queries };
+  return { listings: Object.values(seen), nationalInfo: nationalInfo, errors: errors, notices: notices, mock: mock, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota, keyQuotas: keyQuotas, calls: calls, apiInfo: apiInfo, formatSuspect: formatSuspect, fingerprints: fingerprints, unchanged: unchanged, queries: queries };
 }
 
 // One /api/marketcheck request for the given hubs (usually a single hub).
@@ -154,7 +157,7 @@ async function fetchChunk(profiles, hubs, opts, filters) {
     throw err;
   }
   const json = await res.json();
-  return { listings: json.listings || [], errors: json.errors || [], notices: json.notices || [], mock: !!json.mock, rateLimited: !!json.rateLimited, rateLimitInfo: json.rateLimitInfo || null, quota: json.quota || null, keyQuotas: json.keyQuotas || [], calls: json.calls || 0, apiInfo: json.apiInfo || null, formatSuspect: !!json.formatSuspect, fingerprints: json.fingerprints || {}, unchanged: json.unchanged || [], queries: json.queries || 0, localProfiles: Array.isArray(json.localProfiles) ? json.localProfiles : (profiles || []).map(function (p) { return p.id; }) };
+  return { listings: json.listings || [], errors: json.errors || [], notices: json.notices || [], mock: !!json.mock, rateLimited: !!json.rateLimited, rateLimitInfo: json.rateLimitInfo || null, quota: json.quota || null, keyQuotas: json.keyQuotas || [], calls: json.calls || 0, apiInfo: json.apiInfo || null, formatSuspect: !!json.formatSuspect, fingerprints: json.fingerprints || {}, unchanged: json.unchanged || [], queries: json.queries || 0, nationalInfo: json.nationalInfo || null, localProfiles: Array.isArray(json.localProfiles) ? json.localProfiles : (profiles || []).map(function (p) { return p.id; }) };
 }
 
 // Live-market comp broadening for the Price Check tool: fire a one-off
