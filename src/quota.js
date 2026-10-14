@@ -39,6 +39,11 @@ export function dedupeKeyEntries(entries) {
   return out;
 }
 
+// The free plan's monthly allowance. One of your keys that's never been used (so
+// MarketCheck hasn't reported its counter yet) is presumed to have this much until
+// its first call says otherwise — reading it any sooner would cost a call.
+export const FREE_PLAN_CALLS = 500;
+
 export function keyIdOf(key) { return String(key || "").slice(-4); }
 
 // Merge snapshots reported by the server ([{ id, remaining, limit, reset, exhausted }])
@@ -108,12 +113,15 @@ export function keyRows(userKeys) {
   return rows;
 }
 
-// -> { rows, totalRemaining, totalLimit, fraction, unknown, activeId, nextReset }
+// -> { rows, totalRemaining, totalLimit, fraction, unknown, presumed, activeId, nextReset }
+// `presumed` = your keys with no report yet, counted at FREE_PLAN_CALLS; `unknown` =
+// rows we can't estimate at all (only the shared server key, whose plan we don't know).
 export function summarize(userKeys, store, nowMs) {
   const snaps = (store && store.snaps) || {};
   const now = nowMs != null ? nowMs : Date.now();
   const rows = keyRows(userKeys).map(function (row) {
-    const e = effective(snaps[row.id], now);
+    let e = effective(snaps[row.id], now);
+    if (!e.known && !row.shared) e = { known: true, assumed: false, presumed: true, remaining: FREE_PLAN_CALLS, limit: FREE_PLAN_CALLS, reset: null, at: null };
     return Object.assign({}, row, e);
   });
   let totalRemaining = 0, totalLimit = 0, unknown = 0, activeId = null, nextReset = null;
@@ -130,7 +138,8 @@ export function summarize(userKeys, store, nowMs) {
   // Fraction only over keys whose limit we know, so an unmeasured key can't skew it.
   let fr = 0, fl = 0;
   rows.forEach(function (r) { if (r.known && r.limit) { fr += r.remaining; fl += r.limit; } });
-  return { rows: rows, totalRemaining: totalRemaining, totalLimit: totalLimit, fraction: fl > 0 ? fr / fl : null, unknown: unknown, activeId: activeId, nextReset: nextReset };
+  const presumed = rows.filter(function (r) { return r.presumed; }).length;
+  return { rows: rows, totalRemaining: totalRemaining, totalLimit: totalLimit, fraction: fl > 0 ? fr / fl : null, unknown: unknown, presumed: presumed, activeId: activeId, nextReset: nextReset };
 }
 
 // Ids of the keys whose stored snapshot says this month's quota is used up (and

@@ -33,10 +33,10 @@ describe("QuotaGauge", () => {
     expect(b.getAttribute("aria-label")).toMatch(/65% used, 350 calls left/);
     cleanup();
   });
-  it("says 'not measured' before anything is known, and opens on click", () => {
+  it("counts never-used keys at 500 each, and opens on click", () => {
     const onClick = vi.fn();
     render(<QuotaGauge summary={sumOf(data(null))} onClick={onClick} />);
-    expect(screen.getByRole("button").getAttribute("aria-label")).toMatch(/not measured/);
+    expect(screen.getByRole("button").getAttribute("aria-label")).toMatch(/0% used, 1,000 calls left/);
     fireEvent.click(screen.getByRole("button"));
     expect(onClick).toHaveBeenCalled();
     cleanup();
@@ -84,9 +84,11 @@ describe("QuotaModal", () => {
     expect(t).not.toMatch(/Refresh/);
     cleanup();
   });
-  it("before any measurement it says so and still shows the cost table", () => {
+  it("before any measurement it presumes the free plan per key and says so", () => {
     const { container } = open(data(null));
-    expect(container.textContent).toMatch(/Not measured yet — it fills in after your next sync/);
+    expect(container.textContent).toMatch(/1,000 of 1,000 calls left/);
+    expect(container.textContent).toMatch(/Includes 2 unused keys counted at 500 \(the free plan\)/);
+    expect(container.textContent).toMatch(/not used yet — assumed 500, confirmed on first use/);
     expect(container.textContent).toMatch(/What each call costs/);
     cleanup();
   });

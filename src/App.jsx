@@ -11,7 +11,7 @@ import { localPriceCheck } from "./priceCheck";
 import { sortRows, nextSort, sortIndicator } from "./tableSort";
 import { homeMiles } from "./geo";
 import { parseMarkdown, clampMemo, MEMO_MAX } from "./markdown";
-import { summarize, ingestSnaps, recordSyncCalls, syncCost, syncsLeft, gaugeTone, dedupeKeyEntries, spentKeyIds, planSig } from "./quota";
+import { summarize, ingestSnaps, recordSyncCalls, syncCost, syncsLeft, gaugeTone, dedupeKeyEntries, spentKeyIds, planSig, FREE_PLAN_CALLS } from "./quota";
 import { loadLocations, searchLocations, addHub as addHubTo, normalizeHubs, hubFromZip, hubParts, hubKey, hubOverlaps } from "./locations";
 
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
@@ -1496,6 +1496,7 @@ export function QuotaModal({ data, summary, onClose }) {
             <div style={{ fontSize: 13, color: TONE_COLOR[tone], marginTop: 2 }}>
               {summary.fraction == null ? "Not measured yet — it fills in after your next sync"
                 : n(summary.totalRemaining) + " of " + n(summary.totalLimit) + " calls left" + (summary.unknown ? " (+ " + summary.unknown + " unmeasured key" + (summary.unknown > 1 ? "s" : "") + ")" : "")}
+              {summary.presumed ? <div style={{ fontSize: 11, color: "#8a8a96" }}>Includes {summary.presumed} unused key{summary.presumed === 1 ? "" : "s"} counted at {n(FREE_PLAN_CALLS)} (the free plan) until {summary.presumed === 1 ? "its" : "their"} first call reports the real number.</div> : null}
             </div>
             <div style={{ fontSize: 11, color: "#6b6b76", marginTop: 2 }}>
               {keyCount} key{keyCount === 1 ? "" : "s"}, used in order — the next one takes over when one runs out.{summary.nextReset ? " Next reset " + fmtResetTs(new Date(summary.nextReset).toISOString()) + "." : ""}
@@ -1521,7 +1522,7 @@ export function QuotaModal({ data, summary, onClose }) {
                         {r.limit ? (<div style={{ height: 4, background: "#2a2d38", borderRadius: 2, marginTop: 4, width: 110 }}><div style={{ height: 4, borderRadius: 2, width: Math.round(pct * 110), background: TONE_COLOR[gaugeTone(pct)] }} /></div>) : null}
                       </div>) : <span style={{ color: "#6b6b76" }}>—</span>}
                     </td>
-                    <td style={Object.assign({}, td, { whiteSpace: "nowrap" })}>{r.assumed ? <span style={{ color: "#6b6b76", whiteSpace: "normal" }}>renewed — confirmed on next use</span> : (r.reset ? fmtResetTs(r.reset) : "—")}</td>
+                    <td style={Object.assign({}, td, { whiteSpace: "nowrap" })}>{r.presumed ? <span style={{ color: "#6b6b76", whiteSpace: "normal" }}>not used yet — assumed {n(FREE_PLAN_CALLS)}, confirmed on first use</span> : r.assumed ? <span style={{ color: "#6b6b76", whiteSpace: "normal" }}>renewed — confirmed on next use</span> : (r.reset ? fmtResetTs(r.reset) : "—")}</td>
                     <td style={td}><span style={{ color: stateColor[r.state] }}>{r.state}</span>{r.known && r.at && !r.assumed ? <div style={{ color: "#555", fontSize: 10 }}>as of {fmtResetTs(r.at)}</div> : null}</td>
                   </tr>
                 );
