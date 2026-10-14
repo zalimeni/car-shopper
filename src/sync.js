@@ -129,7 +129,7 @@ export async function fetchPriceComps(query, hubs, marketcheckKeys) {
 
 // Debug helper: POST /api/marketcheck?raw=1 and return the raw MarketCheck
 // response + normalized sample. Wired to window.__rawSync for console use.
-export async function fetchRawSample(profiles, hubs) {
+export async function fetchRawSample(profiles, hubs, vin) {
   const { data: sess } = await supabase.auth.getSession();
   const token = sess && sess.session ? sess.session.access_token : "";
   const res = await fetch("/api/marketcheck?raw=1", {
@@ -141,6 +141,7 @@ export async function fetchRawSample(profiles, hubs) {
     body: JSON.stringify({
       profiles: (profiles || []).map(function (p) { return { id: p.id, name: p.name, params: p.params }; }),
       hubs: hubs || [],
+      vin: vin || undefined,
     }),
   });
   return res.json();
