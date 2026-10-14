@@ -8,7 +8,8 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 vi.mock("../src/supabaseClient", () => ({ supabase: { auth: { getSession: async () => ({ data: {} }) } } }));
 vi.mock("../src/storage", () => ({ default: { get: async () => null, set: async () => {} } }));
 vi.mock("../src/Auth", () => ({ signOut: () => {} }));
-vi.mock("../src/sync", () => ({ fetchListings: async () => ({}), fetchPriceComps: async () => ({ listings: [] }), fetchRawSample: async () => ({}), reconcile: () => ({}) }));
+const fpc = vi.hoisted(() => ({ fn: null }));
+vi.mock("../src/sync", () => ({ fetchListings: async () => ({}), fetchPriceComps: (...a) => (fpc.fn ? fpc.fn(...a) : Promise.resolve({ listings: [] })), fetchRawSample: async () => ({}), reconcile: () => ({}) }));
 vi.mock("../src/score", () => ({ getKeyStatus: async () => ({}), saveKey: async () => ({}), removeKey: async () => ({}), scoreSet: async () => [], getScorePrompt: async () => ({}), generateBaseline: async () => ({}), SCORE_MODEL_OPTIONS: [], DEFAULT_SCORE_MODEL: "x" }));
 vi.mock("../src/admin", () => ({ getMe: async () => ({}), listAllowed: async () => [], addAllowed: async () => {}, removeAllowed: async () => {} }));
 vi.mock("../src/snapshots", () => ({ listSnapshots: async () => [], restoreSnapshot: async () => {} }));
@@ -51,6 +52,19 @@ describe("PriceCheckTab renders + runs without crashing", () => {
     fireEvent.click(screen.getByText("RAV4")); // profile prefill chip
     fireEvent.click(screen.getByText("Check price"));
     expect(container.textContent).toMatch(/\d+ comps?/);
+    cleanup();
+  });
+
+  it("hands a live search's per-key quota to the gauge (free — the search ran anyway)", async () => {
+    const report = [{ id: "1111", remaining: 412, limit: 500, reset: "2026-11-01T00:00:00Z", exhausted: false }];
+    fpc.fn = async () => ({ listings: [], keyQuotas: report, calls: 4 });
+    const onQuota = vi.fn();
+    render(<PriceCheckTab data={data} candidates={[]} onQuota={onQuota} />);
+    fireEvent.click(screen.getByText("RAV4"));
+    fireEvent.click(screen.getByText("Check price"));
+    fireEvent.click(screen.getByRole("button", { name: /Check the live market/ }));
+    await vi.waitFor(() => expect(onQuota).toHaveBeenCalledWith(report));
+    fpc.fn = null;
     cleanup();
   });
 });
