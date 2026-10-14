@@ -56,7 +56,15 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
   let quota = null; // lowest remaining across hubs
   let rest = profiles || [];
   let steps = [{ hubs: hubList, national: true }];
-  let total = 1;
+  let localDone = 0, covered = null; // per-location requests finished; profiles nationwide covered
+  const allCount = (profiles || []).length;
+  const goLocal = function () { steps = steps.concat(hubList.map(function (h) { return { hubs: [h] }; })); };
+  // Progress: the nationwide request first ("national", all locations at once), then
+  // one count per location — only if some profiles still need per-location search.
+  const progress = function (phase) {
+    report({ phase: phase, done: phase === "national" ? 0 : localDone, total: hubList.length, listings: Object.values(seen), covered: covered, profiles: allCount });
+  };
+  progress("national");
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i];
     const hub = step.hubs[0];
@@ -66,7 +74,8 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
         const left = {};
         (r.localProfiles || []).forEach(function (id) { left[id] = true; });
         rest = rest.filter(function (p) { return left[p.id]; });
-        if (rest.length) { steps = steps.concat(hubList.map(function (h) { return { hubs: [h] }; })); total = 1 + hubList.length; }
+        covered = allCount - rest.length;
+        if (rest.length) goLocal();
       }
       (r.listings || []).forEach(function (l) {
         if (!l.vin) return;
@@ -88,12 +97,20 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
       if (r.rateLimited) { rateLimited = true; if (r.rateLimitInfo) rateLimitInfo = r.rateLimitInfo; }
       if (r.quota && r.quota.remaining != null && (quota == null || r.quota.remaining < quota.remaining)) quota = r.quota;
     } catch (e) {
-      errors.push((step.national ? "nationwide search" : (hub.n || hub.z || "location")) + ": " + (e && e.message ? e.message : "sync failed"));
+      const why = e && e.message ? e.message : "sync failed";
       if (e && e.rateLimited) rateLimited = true;
-      // The nationwide request failed outright: fall back to every location.
-      if (step.national && !rateLimited) { steps = steps.concat(hubList.map(function (h) { return { hubs: [h] }; })); total = 1 + hubList.length; }
+      if (step.national && !rateLimited) {
+        // The nationwide request failed outright (e.g. Safari's "Load failed" on a
+        // slow response): every location is searched instead, so nothing is lost.
+        notices.push("Nationwide search failed (" + why + "); searched each location instead.");
+        covered = 0;
+        goLocal();
+      } else {
+        errors.push((step.national ? "nationwide search" : (hub.n || hub.z || "location")) + ": " + why);
+      }
     }
-    report({ done: i + 1, total: total, listings: Object.values(seen) });
+    if (!step.national) localDone++;
+    progress(step.national ? (steps.length > 1 ? "local" : "done") : "local");
     // Quota hit: further locations will fail too, so stop rather than burn more.
     if (rateLimited) break;
   }

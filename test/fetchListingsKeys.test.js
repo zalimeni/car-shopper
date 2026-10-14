@@ -56,7 +56,27 @@ describe("fetchListings: nationwide first", () => {
     global.fetch = vi.fn(async (url, init) => { const b = JSON.parse(init.body); bodies.push(b); return b.national ? { ok: false, status: 504, json: async () => ({}) } : { ok: true, status: 200, json: async () => ({ listings: [] }) }; });
     const r = await fetchListings([{ id: "a" }], [{ z: "1" }, { z: "2" }], {}, {});
     expect(bodies.length).toBe(3);
-    expect(r.errors[0]).toMatch(/nationwide search: Sync failed \(HTTP 504\)/);
+    expect(r.errors).toEqual([]); // recovered — every location was searched
+    expect(r.notices[0]).toMatch(/Nationwide search failed \(Sync failed \(HTTP 504\)\); searched each location instead/);
+  });
+  it("a network-level failure ('Load failed') falls back the same way", async () => {
+    const bodies = [];
+    global.fetch = vi.fn(async (url, init) => { const b = JSON.parse(init.body); bodies.push(b); if (b.national) throw new TypeError("Load failed"); return { ok: true, status: 200, json: async () => ({ listings: [] }) }; });
+    const r = await fetchListings([{ id: "a" }], [{ z: "1" }, { z: "2" }], {}, {});
+    expect(bodies.length).toBe(3);
+    expect(r.errors).toEqual([]);
+  });
+  it("reports progress as nationwide first, then per location only for what's left", async () => {
+    const seen = [];
+    global.fetch = vi.fn(async (url, init) => { const b = JSON.parse(init.body); return { ok: true, status: 200, json: async () => ({ listings: [], localProfiles: b.national ? ["b"] : [] }) }; });
+    await fetchListings([{ id: "a" }, { id: "b" }], [{ z: "1" }, { z: "2" }], {}, {}, (i) => seen.push([i.phase, i.done, i.total, i.covered]));
+    expect(seen).toEqual([["national", 0, 2, null], ["local", 0, 2, 1], ["local", 1, 2, 1], ["local", 2, 2, 1]]);
+  });
+  it("when nationwide covers everything, progress ends there", async () => {
+    const seen = [];
+    global.fetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ listings: [], localProfiles: [] }) }));
+    await fetchListings([{ id: "a" }], [{ z: "1" }, { z: "2" }], {}, {}, (i) => seen.push(i.phase));
+    expect(seen).toEqual(["national", "done"]);
   });
 });
 

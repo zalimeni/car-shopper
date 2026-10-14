@@ -73,3 +73,15 @@ describe("LocationPicker flags overlapping search areas", () => {
     cleanup();
   });
 });
+
+describe("syncProgressText", async () => {
+  const { syncProgressText } = await import("../src/App.jsx");
+  it("labels the nationwide request as one search across all locations", () => {
+    expect(syncProgressText({ phase: "national", done: 0, total: 16, listings: [] })).toBe("Searching nationwide across 16 locations…");
+    expect(syncProgressText({ phase: "done", total: 16, listings: [1, 2] })).toBe("Searched nationwide across 16 locations · 2 found");
+  });
+  it("counts only real per-location requests, and says what nationwide covered", () => {
+    expect(syncProgressText({ phase: "local", done: 3, total: 16, listings: [1], covered: 2, profiles: 3 })).toBe("Searching… 3/16 locations · 1 found (nationwide covered 2 of 3 profiles)");
+    expect(syncProgressText({ phase: "local", done: 3, total: 16, listings: [], covered: 0, profiles: 3 })).toBe("Searching… 3/16 locations · 0 found");
+  });
+});
