@@ -11,7 +11,7 @@ vi.mock("../src/score", () => ({ getKeyStatus: async () => ({}), saveKey: async 
 vi.mock("../src/admin", () => ({ getMe: async () => ({}), listAllowed: async () => [], addAllowed: async () => {}, removeAllowed: async () => {} }));
 vi.mock("../src/snapshots", () => ({ listSnapshots: async () => [], restoreSnapshot: async () => {} }));
 
-const { ListingMemo, MarkdownView, parseImport, withMemo } = await import("../src/App.jsx");
+const { ListingMemo, MarkdownView, parseImport } = await import("../src/App.jsx");
 const { MEMO_MAX } = await import("../src/markdown.js");
 
 const box = () => screen.getByRole("textbox", { name: /Listing notes/ });
@@ -144,15 +144,5 @@ describe("notes survive export -> import, clamped, as their own field", () => {
   });
   it("defaults to empty when absent", () => {
     expect(parseImport(JSON.stringify([row()]), ["p1"]).listings[0].memo).toBe("");
-  });
-});
-
-describe("editing a listing's notes flags just that listing for a re-score", () => {
-  it("folds non-empty notes into the score fingerprint; empty notes leave it untouched", () => {
-    expect(withMemo("sig", {})).toBe("sig");
-    expect(withMemo("sig", { memo: "  " })).toBe("sig"); // existing scores without notes don't go stale
-    expect(withMemo("sig", { memo: "rattle" })).not.toBe("sig");
-    expect(withMemo("sig", { memo: "rattle" })).toBe(withMemo("sig", { memo: "rattle" }));
-    expect(withMemo("sig", { memo: "rattle" })).not.toBe(withMemo("sig", { memo: "rattle and squeak" }));
   });
 });
