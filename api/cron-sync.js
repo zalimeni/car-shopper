@@ -103,6 +103,8 @@ export default async function handler(req, res) {
         profiles.map(function (p) { return { id: p.id, name: p.name, params: p.params }; }),
         hubs,
         { dealerType: dealerType, budgetMs: budgetMs, keys: keys,
+          // Nationwide first; whatever it can't cover runs per location in this same call.
+          national: true,
           fingerprints: searchFpMap(state.settings && state.settings.mcSearches),
           spentKeys: spentKeyIds((state.settings && state.settings.marketcheckKeys) || [], state.settings && state.settings.mcQuota), keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? apiKey : null); }) }
       );

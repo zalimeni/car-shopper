@@ -17,6 +17,7 @@
 
 import { authorize } from "./_auth.js";
 import { mapPowertrain, parseYears, groupProfiles, mergedProfile, attributeRow } from "../src/queryPlan.js";
+import { haversineMi } from "../src/geo.js";
 
 export { mapPowertrain, parseYears };
 
@@ -327,8 +328,8 @@ export default async function handler(req, res) {
     return;
   }
 
-  const r = await searchListings(apiKey, profiles, hubs, { dealerType: dealerType, keys: keys, fingerprints: body.fingerprints, spentKeys: body.spentKeys, keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? envKey : null); }) });
-  res.status(200).json({ listings: r.listings, errors: r.errors, notices: r.notices, rateLimited: !!r.rateLimited, rateLimitInfo: r.rateLimitInfo || null, quota: r.quota || null, keysUsed: r.keysUsed, keyQuotas: r.keyQuotas || [], calls: r.calls || 0, apiInfo: r.apiInfo, formatSuspect: !!r.formatSuspect, fingerprints: r.fingerprints, unchanged: r.unchanged, queries: r.queries });
+  const r = await searchListings(apiKey, profiles, hubs, { dealerType: dealerType, keys: keys, fingerprints: body.fingerprints, spentKeys: body.spentKeys, national: body.national === "only" ? "only" : !!body.national, keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? envKey : null); }) });
+  res.status(200).json({ listings: r.listings, errors: r.errors, notices: r.notices, rateLimited: !!r.rateLimited, rateLimitInfo: r.rateLimitInfo || null, quota: r.quota || null, keysUsed: r.keysUsed, keyQuotas: r.keyQuotas || [], calls: r.calls || 0, apiInfo: r.apiInfo, formatSuspect: !!r.formatSuspect, fingerprints: r.fingerprints, unchanged: r.unchanged, queries: r.queries, localProfiles: r.localProfiles });
 }
 
 // Core active-inventory search for a set of profiles × hubs — shared by the
@@ -357,6 +358,9 @@ export function searchKey(profile, hub, carType, dealerType) {
   q.delete("api_key"); q.delete("start");
   const parts = [];
   q.forEach(function (v, k) { parts.push(k + "=" + v); });
+  // A nationwide search keeps only the cars near your locations, so which
+  // locations (and radii) is part of what it returns.
+  if (hub && hub.national) parts.push("hubs=" + (hub.sig || ""));
   return "q" + fnv(parts.sort().join("&") + "|" + API_VERSION);
 }
 export function pageFingerprint(numFound, rows) {
@@ -374,6 +378,30 @@ export function firstLiveKey(ids, spent) {
   (Array.isArray(spent) ? spent : []).forEach(function (id) { if (id) set[id] = true; });
   for (let i = 0; i < ids.length; i++) if (!set[ids[i]]) return i;
   return Math.max(0, ids.length - 1);
+}
+
+// ── Nationwide search ──
+// Per-location searches cost at least one call per location. When a search's
+// whole nationwide result fits in the pagination ceiling it's cheaper to page it
+// once with no location and keep the cars within a location's radius by dealer
+// coordinates: at most 10 pages for any number of locations. Only possible when
+// every location has coordinates.
+export function hubsSig(hubs) {
+  return (hubs || []).map(function (h) { return [h.lat, h.lon, h.r || RADIUS_MI].join(":"); }).sort().join(";");
+}
+export function geoHubs(hubs) {
+  return (hubs || []).length > 0 && hubs.every(function (h) { return isFinite(parseFloat(h && h.lat)) && isFinite(parseFloat(h && h.lon)); });
+}
+// Nearest location whose radius covers the dealer -> whole miles, or null (outside
+// every location, or the row has no dealer coordinates).
+export function nearestHubMi(lat, lon, hubs) {
+  if (lat == null || lon == null) return null;
+  let best = null;
+  (hubs || []).forEach(function (h) {
+    const d = haversineMi(parseFloat(h.lat), parseFloat(h.lon), lat, lon);
+    if (d <= (Number(h.r) || RADIUS_MI) && (best == null || d < best)) best = d;
+  });
+  return best == null ? null : Math.round(best);
 }
 
 export async function searchListings(apiKey, profiles, hubs, opts) {
@@ -426,8 +454,9 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
   // unchanged-split | error | stop.
   async function runQuery(group, hub, carType, onRow) {
     const pr = mergedProfile(group);
-    const label = (pr.name || pr.id || "?") + " @ " + (hub.n || hub.z || "?") + " [" + carType + "]";
-    const cap = Math.min(PAGE_LIMIT, MAX_ROWS * group.length);
+    const label = (pr.name || pr.id || "?") + " @ " + (hub.national ? "nationwide" : (hub.n || hub.z || "?")) + " [" + carType + "]";
+    // Nationwide pages the whole result (that's the point); per location it's capped.
+    const cap = hub.national ? PAGE_LIMIT : Math.min(PAGE_LIMIT, MAX_ROWS * group.length);
     const key = searchKey(pr, hub, carType, dealerType);
     const res = function (s, extra) { return Object.assign({ s: s, key: key }, extra || {}); };
     let fp = null;
@@ -491,8 +520,16 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
         const rows = Array.isArray(json.listings) ? json.listings : [];
         rows.forEach(function (row) { rowsSeen++; if (!row || !row.vin || !row.build || !row.build.make || !row.build.model) malformed++; });
         rows.forEach(function (row) { onRow(row, key); });
-        const tooBig = group.length > 1 && numFound != null && numFound > cap;
-        if (start === 0) {
+        if (hub.national && start === 0) {
+          // Worth it only when it all fits AND costs no more than the per-location
+          // floor (one call per location, plus this page we've already paid for).
+          const big = numFound == null || numFound > PAGE_LIMIT || Math.ceil(numFound / ROWS) > hubs.length + 1;
+          fp = pageFingerprint(numFound, rows);
+          if (!big && prior[key] && prior[key] === fp) return res("unchanged", { fp: fp });
+          if (big) return res(group.length > 1 ? "split" : "local", { fp: fp });
+        }
+        const tooBig = !hub.national && group.length > 1 && numFound != null && numFound > cap;
+        if (start === 0 && !hub.national) {
           fp = pageFingerprint(numFound, rows);
           // Same page 1 as last time -> the whole result set is unchanged: stop here.
           if (prior[key] && prior[key] === fp) return res(tooBig ? "unchanged-split" : "unchanged", { fp: fp });
@@ -510,11 +547,17 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
     return res("done", { fp: fp });
   }
 
-  function keep(row, group, key) {
+  function keep(row, group, key, national) {
     const p = attributeRow(row, group);
     if (!p) return null; // matched only the merged union of filters, not any one profile
     const norm = normalize(row, p.id);
     if (!norm || !norm.vin) return null;
+    if (national) {
+      // Nationwide rows: keep only cars within one of your locations' radius.
+      const mi = nearestHubMi(norm.dLat, norm.dLon, hubs);
+      if (mi == null) return null;
+      norm.distMi = mi;
+    }
     // Backstop the dealer_type filter in case the API returns extras.
     if (dealerType === "franchise" && norm.dealerType !== "franchise") return null;
     const prev = seen[norm.vin];
@@ -524,43 +567,71 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
     return norm;
   }
 
-  outer:
-  for (const group of groupProfiles(profiles)) {
-    for (const hub of hubs) {
+  // One search (and any per-profile splits of it). Profiles a nationwide search
+  // can't cover go to `local`. Returns false when the run must stop.
+  async function runPlan(group, hub, carType, local) {
+    const queue = [{ g: group, parent: null }];
+    while (queue.length) {
+      const item = queue.shift();
+      const g = item.g;
+      const out = await runQuery(g, hub, carType, function (row, key) { keep(row, g, key, !!hub.national); });
+      const parent = item.parent;
+      if (out.s === "local") g.forEach(function (p) { local[p.id] = p; });
+      if (out.s === "done" || out.s === "unchanged") fingerprints[out.key] = out.fp;
+      if (out.s === "unchanged") unchanged.push(out.key);
+      if (out.s === "unchanged-split") {
+        // The whole merged set is unchanged, so its per-profile searches are too.
+        fingerprints[out.key] = out.fp;
+        unchanged.push(out.key);
+        g.forEach(function (p) {
+          const k = searchKey(mergedProfile([p]), hub, carType, dealerType);
+          unchanged.push(k);
+          if (prior[k]) fingerprints[k] = prior[k];
+        });
+      }
+      // A split's own fingerprint only counts once every per-profile search finished.
+      if (out.s === "split") {
+        splits++;
+        const rec = { key: out.key, fp: out.fp, left: g.length, failed: false };
+        g.forEach(function (p) { queue.push({ g: [p], parent: rec }); });
+      }
+      if (parent) {
+        if (out.s !== "done" && out.s !== "unchanged") parent.failed = true;
+        if (--parent.left === 0 && !parent.failed) fingerprints[parent.key] = parent.fp;
+      }
+      if (out.s === "stop") return false;
+    }
+    return !timeUp;
+  }
+
+  // Nationwide first (when asked and possible), then per location for whatever it
+  // couldn't cover. opts.national === "only" stops after the nationwide pass and
+  // reports the rest in `localProfiles`, so the browser can run them one location
+  // per request (each its own function invocation, clear of the timeout).
+  let local = {};
+  let national = 0;
+  let go = true;
+  if (opts.national && hubs.length > 1 && geoHubs(hubs)) {
+    const nat = { national: true, sig: hubsSig(hubs) };
+    for (const group of groupProfiles(profiles)) {
       for (const carType of CAR_TYPES) {
-        const onRow = function (row, key) { keep(row, group, key); };
-        const queue = [{ g: group, parent: null }];
-        while (queue.length) {
-          const item = queue.shift();
-          const g = item.g;
-          const out = await runQuery(g, hub, carType, onRow);
-          const parent = item.parent;
-          if (out.s === "done" || out.s === "unchanged") fingerprints[out.key] = out.fp;
-          if (out.s === "unchanged") unchanged.push(out.key);
-          if (out.s === "unchanged-split") {
-            // The whole merged set is unchanged, so its per-profile searches are too.
-            fingerprints[out.key] = out.fp;
-            unchanged.push(out.key);
-            g.forEach(function (p) {
-              const k = searchKey(mergedProfile([p]), hub, carType, dealerType);
-              unchanged.push(k);
-              if (prior[k]) fingerprints[k] = prior[k];
-            });
-          }
-          // A split's own fingerprint only counts once every per-profile search finished.
-          if (out.s === "split") {
-            splits++;
-            const rec = { key: out.key, fp: out.fp, left: g.length, failed: false };
-            g.forEach(function (p) { queue.push({ g: [p], parent: rec }); });
-          }
-          if (parent) {
-            if (out.s !== "done" && out.s !== "unchanged") parent.failed = true;
-            if (--parent.left === 0 && !parent.failed) fingerprints[parent.key] = parent.fp;
-          }
-          if (out.s === "stop") break outer;
+        national++;
+        if (!(go = await runPlan(group, nat, carType, local))) break;
+      }
+      if (!go) break;
+    }
+  } else {
+    (profiles || []).forEach(function (p) { if (p) local[p.id] = p; });
+  }
+  const localList = (profiles || []).filter(function (p) { return p && local[p.id]; });
+  if (go && opts.national !== "only") {
+    outer:
+    for (const group of groupProfiles(localList)) {
+      for (const hub of hubs) {
+        for (const carType of CAR_TYPES) {
+          if (!(await runPlan(group, hub, carType, {}))) break outer;
         }
       }
-      if (timeUp) break outer;
     }
   }
 
@@ -575,7 +646,9 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
     listings: Object.values(seen).map(function (l) { return Object.assign(l, { mcQ: Object.keys(tags[l.vin] || {}) }); }), errors: errors, notices: notices,
     fingerprints: fingerprints, unchanged: unchanged, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota,
     keysUsed: keysUsed, keyQuotas: Object.keys(snaps).map(function (i) { return snaps[i]; }), calls: meter.calls,
-    queries: queries, splits: splits,
+    queries: queries, splits: splits, national: national,
+    // Profiles still needing per-location searches (only reported for national "only").
+    localProfiles: opts.national === "only" ? localList.map(function (p) { return p.id; }) : [],
   };
 }
 
@@ -627,13 +700,17 @@ export function buildUrl(apiKey, profile, hub, start, carType, dealerType) {
   if (p.maxMiles) q.set("miles_range", "0-" + Math.round(p.maxMiles));
   // Prefer lat/long (independent of MarketCheck's ZIP index — some valid ZIPs
   // like 02101 are "not found"); fall back to zip.
-  if (hub.lat != null && hub.lon != null) {
-    q.set("latitude", String(hub.lat));
-    q.set("longitude", String(hub.lon));
-  } else if (hub.z) {
-    q.set("zip", hub.z);
+  // A nationwide search (hub.national) sends no location at all — verified live:
+  // the free plan answers it, with dealer coordinates on every row but no `dist`.
+  if (!hub.national) {
+    if (hub.lat != null && hub.lon != null) {
+      q.set("latitude", String(hub.lat));
+      q.set("longitude", String(hub.lon));
+    } else if (hub.z) {
+      q.set("zip", hub.z);
+    }
+    q.set("radius", String(hub.r || RADIUS_MI));
   }
-  q.set("radius", String(hub.r || RADIUS_MI));
   q.set("rows", String(ROWS));
   q.set("start", String(start || 0));
   // Most recently (re)crawled first. Any change to a result set then shows on

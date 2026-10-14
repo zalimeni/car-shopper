@@ -5,9 +5,9 @@
 // Every MarketCheck request counts against the account's monthly quota, whatever
 // it returns. So instead of one query per profile, profiles are MERGED: make /
 // model / year accept comma-separated lists, so one query per location can cover
-// several profiles, with results sorted back to their profile locally. Profiles
-// can only share a query when their powertrain filter matches (we don't rely on
-// powertrain_type taking a list).
+// several profiles, with results sorted back to their profile locally. That
+// includes powertrain_type (verified live: "HEV,PHEV" returns both), so every
+// active profile shares one query; each row's own powertrain is checked locally.
 
 // Friendly powertrain words -> MarketCheck's powertrain_type codes. Unknowns pass through.
 export function mapPowertrain(v) {
@@ -15,6 +15,8 @@ export function mapPowertrain(v) {
   if (k === "hybrid" || k === "hev") return "HEV";
   if (k === "phev" || k === "plug-in hybrid" || k === "plugin hybrid" || k === "plug in hybrid") return "PHEV";
   if (k === "gas" || k === "gasoline" || k === "combustion") return "Combustion";
+  if (k === "electric" || k === "ev" || k === "bev") return "BEV";
+  if (k === "mild hybrid" || k === "mhev") return "MHEV";
   return v;
 }
 
@@ -36,18 +38,12 @@ export function parseYears(s) {
   return Array.from(new Set(out)).sort().join(",");
 }
 
-function ptKey(p) { const v = mapPowertrain(p && p.params && p.params.powertrain); return v ? String(v).toLowerCase() : ""; }
-
-// Profiles -> arrays of profiles that can share one query (same powertrain filter),
-// in first-seen order.
+// Profiles -> arrays of profiles that share one query. Every filter takes a list,
+// so that's all of them together (a group too big to page completely is split back
+// into single profiles by the server). Kept as a list of groups so callers needn't care.
 export function groupProfiles(profiles) {
-  const order = [], byKey = {};
-  (profiles || []).forEach(function (p) {
-    const k = ptKey(p);
-    if (!byKey[k]) { byKey[k] = []; order.push(k); }
-    byKey[k].push(p);
-  });
-  return order.map(function (k) { return byKey[k]; });
+  const list = (profiles || []).filter(Boolean);
+  return list.length ? [list] : [];
 }
 
 function present(v) { return v != null && String(v).trim() !== ""; }
@@ -76,7 +72,7 @@ export function mergedProfile(group) {
   }
   if (all("maxPrice")) params.maxPrice = Math.max.apply(null, ps.map(function (x) { return Number(x.maxPrice) || 0; }));
   if (all("maxMiles")) params.maxMiles = Math.max.apply(null, ps.map(function (x) { return Number(x.maxMiles) || 0; }));
-  if (present(ps[0].powertrain)) params.powertrain = ps[0].powertrain;
+  if (all("powertrain")) params.powertrain = uniq(ps.map(function (x) { return mapPowertrain(x.powertrain); })).join(",");
   return { id: group.map(function (p) { return p.id; }).join("+"), name: group.map(function (p) { return p.name || p.id; }).join(" + "), params: params };
 }
 
@@ -94,6 +90,7 @@ export function matchesProfile(row, profile, loose) {
     if (!a) return false;
     if (a !== m && !(loose && (a.indexOf(m) > -1 || m.indexOf(a) > -1))) return false;
   }
+  if (present(x.powertrain) && present(b.powertrain_type) && squash(b.powertrain_type) !== squash(mapPowertrain(x.powertrain))) return false;
   const yrs = parseYears(x.years);
   if (yrs && yrs.split(",").indexOf(String(b.year)) === -1) return false;
   const price = Number(row && row.price) || 0;

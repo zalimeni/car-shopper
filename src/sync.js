@@ -24,7 +24,7 @@ export { reconcile } from "./reconcile.js";
 export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
   const hubList = Array.isArray(hubs) ? hubs : [];
   const report = typeof onProgress === "function" ? onProgress : function () {};
-  // Split the search PER HUB, one request each, so a big multi-location sync
+  // Per-location searches run one request per hub, so a big multi-location sync
   // (profiles × hubs × car_types × pages) doesn't pile into a single serverless
   // invocation and blow Vercel's function timeout (the HTTP 504). A slow/failed
   // hub is isolated: its error is recorded and the rest still return. `report`
@@ -35,6 +35,10 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
     report({ done: 1, total: 1, listings: r.listings || [] });
     return r;
   }
+  // Nationwide first: one search for every profile across all locations, kept to
+  // their radii by dealer coordinates — 1–10 calls instead of one+ per location.
+  // Whatever it can't cover (too many matches nationally, or a location without
+  // coordinates) comes back as `localProfiles` and runs per location below.
   const seen = {}; // vin -> listing, keeping the lowest price across hubs
   const errors = [];
   const notices = []; // key failover etc. — reported once, not as errors
@@ -50,10 +54,20 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
   let rateLimited = false;
   let rateLimitInfo = null;
   let quota = null; // lowest remaining across hubs
-  for (let i = 0; i < hubList.length; i++) {
-    const hub = hubList[i];
+  let rest = profiles || [];
+  let steps = [{ hubs: hubList, national: true }];
+  let total = 1;
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    const hub = step.hubs[0];
     try {
-      const r = await fetchChunk(profiles, [hub], opts, Object.assign({}, filters, { spentKeys: spent }));
+      const r = await fetchChunk(rest, step.hubs, opts, Object.assign({}, filters, { spentKeys: spent, national: step.national ? "only" : undefined }));
+      if (step.national) {
+        const left = {};
+        (r.localProfiles || []).forEach(function (id) { left[id] = true; });
+        rest = rest.filter(function (p) { return left[p.id]; });
+        if (rest.length) { steps = steps.concat(hubList.map(function (h) { return { hubs: [h] }; })); total = 1 + hubList.length; }
+      }
       (r.listings || []).forEach(function (l) {
         if (!l.vin) return;
         const prev = seen[l.vin];
@@ -74,10 +88,12 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
       if (r.rateLimited) { rateLimited = true; if (r.rateLimitInfo) rateLimitInfo = r.rateLimitInfo; }
       if (r.quota && r.quota.remaining != null && (quota == null || r.quota.remaining < quota.remaining)) quota = r.quota;
     } catch (e) {
-      errors.push((hub.n || hub.z || "location") + ": " + (e && e.message ? e.message : "sync failed"));
+      errors.push((step.national ? "nationwide search" : (hub.n || hub.z || "location")) + ": " + (e && e.message ? e.message : "sync failed"));
       if (e && e.rateLimited) rateLimited = true;
+      // The nationwide request failed outright: fall back to every location.
+      if (step.national && !rateLimited) { steps = steps.concat(hubList.map(function (h) { return { hubs: [h] }; })); total = 1 + hubList.length; }
     }
-    report({ done: i + 1, total: hubList.length, listings: Object.values(seen) });
+    report({ done: i + 1, total: total, listings: Object.values(seen) });
     // Quota hit: further locations will fail too, so stop rather than burn more.
     if (rateLimited) break;
   }
@@ -103,6 +119,7 @@ async function fetchChunk(profiles, hubs, opts, filters) {
       franchiseOnly: !!(filters && filters.franchiseOnly),
       marketcheckKeys: (filters && Array.isArray(filters.marketcheckKeys)) ? filters.marketcheckKeys : [],
       fingerprints: (filters && filters.fingerprints) || {},
+      national: (filters && filters.national) || undefined,
       spentKeys: (filters && Array.isArray(filters.spentKeys)) ? filters.spentKeys : [],
     }),
   });
@@ -120,7 +137,7 @@ async function fetchChunk(profiles, hubs, opts, filters) {
     throw err;
   }
   const json = await res.json();
-  return { listings: json.listings || [], errors: json.errors || [], notices: json.notices || [], mock: !!json.mock, rateLimited: !!json.rateLimited, rateLimitInfo: json.rateLimitInfo || null, quota: json.quota || null, keyQuotas: json.keyQuotas || [], calls: json.calls || 0, apiInfo: json.apiInfo || null, formatSuspect: !!json.formatSuspect, fingerprints: json.fingerprints || {}, unchanged: json.unchanged || [], queries: json.queries || 0 };
+  return { listings: json.listings || [], errors: json.errors || [], notices: json.notices || [], mock: !!json.mock, rateLimited: !!json.rateLimited, rateLimitInfo: json.rateLimitInfo || null, quota: json.quota || null, keyQuotas: json.keyQuotas || [], calls: json.calls || 0, apiInfo: json.apiInfo || null, formatSuspect: !!json.formatSuspect, fingerprints: json.fingerprints || {}, unchanged: json.unchanged || [], queries: json.queries || 0, localProfiles: Array.isArray(json.localProfiles) ? json.localProfiles : (profiles || []).map(function (p) { return p.id; }) };
 }
 
 // Live-market comp broadening for the Price Check tool: fire a one-off

@@ -21,16 +21,42 @@ describe("fetchListings carries spent keys across its per-location requests", ()
     });
     const hubs = [{ n: "A", z: "1" }, { n: "B", z: "2" }, { n: "C", z: "3" }];
     const r = await fetchListings([{ id: "p" }], hubs, {}, { marketcheckKeys: ["xxxx1111", "yyyy2222"], spentKeys: [] });
-    expect(bodies.map((b) => b.spentKeys)).toEqual([[], ["1111"], ["1111"]]);
+    // The nationwide attempt first (all hubs), then each location.
+    expect(bodies.map((b) => [b.national || null, b.hubs.length])).toEqual([["only", 3], [null, 1], [null, 1], [null, 1]]);
+    expect(bodies.map((b) => b.spentKeys)).toEqual([[], ["1111"], ["1111"], ["1111"]]);
     expect(r.notices).toEqual(["Key #1 is out of monthly quota; continuing on key #2."]);
     expect(r.errors).toEqual([]);
-    expect(r.calls).toBe(4);
+    expect(r.calls).toBe(5);
   });
   it("starts from the spent keys the stored quota already knows", async () => {
     const bodies = [];
     global.fetch = vi.fn(async (url, init) => { bodies.push(JSON.parse(init.body)); return { ok: true, status: 200, json: async () => ({ listings: [] }) }; });
     await fetchListings([{ id: "p" }], [{ z: "1" }, { z: "2" }], {}, { spentKeys: ["1111"] });
-    expect(bodies.map((b) => b.spentKeys)).toEqual([["1111"], ["1111"]]);
+    expect(bodies.map((b) => b.spentKeys)).toEqual([["1111"], ["1111"], ["1111"]]);
+  });
+});
+
+describe("fetchListings: nationwide first", () => {
+  it("stops after the nationwide request when it covered every profile", async () => {
+    const bodies = [];
+    global.fetch = vi.fn(async (url, init) => { bodies.push(JSON.parse(init.body)); return { ok: true, status: 200, json: async () => ({ listings: [{ vin: "V1", price: 1 }], localProfiles: [], calls: 3 }) }; });
+    const r = await fetchListings([{ id: "a" }, { id: "b" }], [{ z: "1" }, { z: "2" }], {}, {});
+    expect(bodies.length).toBe(1);
+    expect(r.calls).toBe(3);
+    expect(r.listings.map((l) => l.vin)).toEqual(["V1"]);
+  });
+  it("runs only the uncovered profiles per location", async () => {
+    const bodies = [];
+    global.fetch = vi.fn(async (url, init) => { const b = JSON.parse(init.body); bodies.push(b); return { ok: true, status: 200, json: async () => ({ listings: [], localProfiles: b.national ? ["b"] : [] }) }; });
+    await fetchListings([{ id: "a" }, { id: "b" }], [{ z: "1" }, { z: "2" }], {}, {});
+    expect(bodies.map((b) => b.profiles.map((p) => p.id))).toEqual([["a", "b"], ["b"], ["b"]]);
+  });
+  it("falls back to every location if the nationwide request itself fails", async () => {
+    const bodies = [];
+    global.fetch = vi.fn(async (url, init) => { const b = JSON.parse(init.body); bodies.push(b); return b.national ? { ok: false, status: 504, json: async () => ({}) } : { ok: true, status: 200, json: async () => ({ listings: [] }) }; });
+    const r = await fetchListings([{ id: "a" }], [{ z: "1" }, { z: "2" }], {}, {});
+    expect(bodies.length).toBe(3);
+    expect(r.errors[0]).toMatch(/nationwide search: Sync failed \(HTTP 504\)/);
   });
 });
 

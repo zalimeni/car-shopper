@@ -48,8 +48,22 @@ a thin proxy that holds only the MarketCheck key.
 ```
 App opens (user authenticated)  ──or── "Sync now" button
    └─> GET /api/marketcheck       (Vercel serverless function, Node)
-         Group ACTIVE profiles that share a powertrain filter (src/queryPlan.js);
-         for each group × each hub (Boston 02101, Durham 27701 @ radius):
+         Merge ALL active profiles into one query (src/queryPlan.js) — make/model/
+         year AND powertrain_type take comma-separated lists (verified live:
+         powertrain_type=HEV,PHEV returns both); each row's own powertrain is
+         checked against its profile locally.
+         NATIONWIDE FIRST (2+ hubs, all with coordinates): the same query with no
+         location at all (verified live on the free plan: no `dist`, but dealer
+         lat/lon on every row). If num_found fits the 500-row ceiling and costs
+         no more pages than hubs+1, page it once and keep only the cars within
+         some hub's radius (haversine on dealer coordinates; distMi = nearest
+         hub). 1–10 calls for any number of hubs. Too big: split per profile
+         nationally; a profile still too big falls back to per-hub below. Its
+         search key includes the hub set, so editing locations starts it fresh.
+         The browser sends this as one request (national:"only"), then one
+         request per hub for the leftovers (`localProfiles`); cron does both in
+         one call.
+         Then, for the leftovers × each hub (Boston 02101, Durham 27701 @ radius):
            # radius = MARKETCHECK_RADIUS, default 100mi (free-tier cap); raise on a paid plan
            ONE query MarketCheck /v2/search/car/active, car_type=used (paginate)
              # make/model/year as comma-separated unions, widest price/miles caps;
@@ -62,6 +76,10 @@ App opens (user authenticated)  ──or── "Sync now" button
              # last sync's for that search, the set is unchanged: stop after page 1.
              # Cars carry the searches that returned them (mcQ), so reconcile keeps
              # an unchanged search's cars as-is (seen today) instead of "not seen".
+         Keys: requests carry spentKeys (from the stored quota and from earlier
+         requests of this sync), so the server starts on the first key with
+         calls left instead of every per-hub request re-paying to find key #1
+         spent. A failover is a one-time notice, not a query error.
          → return normalized listings (§5)        [holds MARKETCHECK_API_KEY only]
    └─> Browser (authed) reconciles vs. stored listings (§6)
    └─> Browser writes the updated app_state blob via the user's session (RLS)

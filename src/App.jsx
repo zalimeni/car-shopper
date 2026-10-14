@@ -11,7 +11,7 @@ import { localPriceCheck } from "./priceCheck";
 import { sortRows, nextSort, sortIndicator } from "./tableSort";
 import { homeMiles } from "./geo";
 import { parseMarkdown, clampMemo, MEMO_MAX } from "./markdown";
-import { summarize, ingestSnaps, recordSyncCalls, syncCost, syncsLeft, gaugeTone, dedupeKeyEntries, spentKeyIds } from "./quota";
+import { summarize, ingestSnaps, recordSyncCalls, syncCost, syncsLeft, gaugeTone, dedupeKeyEntries, spentKeyIds, planSig } from "./quota";
 import { loadLocations, searchLocations, addHub as addHubTo, normalizeHubs, hubFromZip, hubParts, hubKey, hubOverlaps } from "./locations";
 
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
@@ -858,9 +858,12 @@ export default function App() {
       if (!res.mock) {
         var nowIso = new Date().toISOString();
         var mq1 = ingestSnaps(getSettings(base).mcQuota, res.keyQuotas, nowIso);
-        if (!res.rateLimited && !(res.errors && res.errors.length) && res.calls > 0) {
+        // A query error still paid for its call, so the count stands; only a run cut
+        // short (rate limit, or stopped before the timeout) under-counts.
+        var cutShort = res.rateLimited || (res.errors || []).some(function (m) { return /Stopped early/.test(String(m)); });
+        if (!cutShort && res.calls > 0) {
           mq1 = recordSyncCalls(mq1, res.calls, nowIso);
-          mq1.lastSync = Object.assign({}, mq1.lastSync, { searches: res.queries || 0, unchanged: (res.unchanged || []).length });
+          mq1.lastSync = Object.assign({}, mq1.lastSync, { searches: res.queries || 0, unchanged: (res.unchanged || []).length, plan: planSig(active, getSettings(data).hubs || []) });
         }
         syncPatch.settings = Object.assign({}, base.settings || {}, { mcQuota: mq1, mcSearches: mergeSearchFps(getSettings(base).mcSearches, res.fingerprints, nowIso) }, res.apiInfo ? { mcApi: Object.assign({}, res.apiInfo, { at: nowIso }) } : {});
       }
@@ -1351,7 +1354,7 @@ export function syncWarning(data, nowMs) {
   if (!(ageH >= 0) || ageH >= RESYNC_WARN_HOURS) return null;
   var s = getSettings(data);
   var active = (data.profiles || []).filter(function (p) { return p.active; });
-  var cost = syncCost(active, (s.hubs || []).length, s.mcQuota && s.mcQuota.lastSync);
+  var cost = syncCost(active, s.hubs || [], s.mcQuota && s.mcQuota.lastSync);
   var sum = summarize(s.marketcheckKeys || [], s.mcQuota, now);
   var newest = (data.listings || []).reduce(function (m, l) { return l.mcSeen && l.mcSeen > m ? l.mcSeen : m; }, "");
   var ago = ageH < 1 ? Math.max(1, Math.round(ageH * 60)) + " min" : Math.round(ageH) + " hour" + (Math.round(ageH) === 1 ? "" : "s");
@@ -1440,7 +1443,7 @@ export function QuotaModal({ data, summary, onClose }) {
   var s = getSettings(data);
   var activeList = (data.profiles || []).filter(function (p) { return p.active; });
   var active = activeList.length;
-  var cost = syncCost(activeList, (s.hubs || []).length, s.mcQuota && s.mcQuota.lastSync);
+  var cost = syncCost(activeList, s.hubs || [], s.mcQuota && s.mcQuota.lastSync);
   var perSync = cost.measured || cost.min; // what the daily scheduled sync would spend each run
   var left = syncsLeft(summary.totalRemaining, cost);
   var n = function (v) { return Number(v).toLocaleString(); };
@@ -1502,8 +1505,12 @@ export function QuotaModal({ data, summary, onClose }) {
           <p style={S.help}>Add at least one active profile and one search location to estimate sync cost.</p>
         ) : (
           <div style={{ fontSize: 13, color: "#c8c8d0", lineHeight: 1.6 }}>
-            <div>Your <strong>{active}</strong> active profile{active === 1 ? "" : "s"} {cost.groups < active ? <span>merge into <strong>{cost.groups}</strong> search{cost.groups === 1 ? "" : "es"} (same powertrain filter)</span> : <span>need <strong>{cost.groups}</strong> search{cost.groups === 1 ? "" : "es"}</span>} × <strong>{cost.hubs}</strong> location{cost.hubs === 1 ? "" : "s"}, so one sync costs <strong>{range(cost.min, cost.max)}</strong> calls — the minimum when every search fits in one 50-car page, more for searches with more matches.</div>
-            {cost.measured ? <div>Your last full sync actually used <strong>{n(cost.measured)}</strong>{s.mcQuota && s.mcQuota.lastSync && s.mcQuota.lastSync.unchanged ? <span> — {s.mcQuota.lastSync.unchanged} of {s.mcQuota.lastSync.searches} searches were unchanged and stopped after one page</span> : null}.</div> : <div style={{ color: "#6b6b76" }}>No complete sync recorded yet to measure the real cost.</div>}
+            {cost.national ? (
+              <div>Your <strong>{active}</strong> active profile{active === 1 ? "" : "s"} share one search, run <strong>nationwide</strong> and kept to your <strong>{cost.hubs}</strong> locations' radii: as little as <strong>{n(cost.min)}</strong> call when it fits in one 50-car page, up to 10 when it pages. If too many cars match nationally it costs one extra call, then searches each location as before: up to <strong>{n(cost.max)}</strong>.</div>
+            ) : (
+              <div>Your <strong>{active}</strong> active profile{active === 1 ? "" : "s"} share one search × <strong>{cost.hubs}</strong> location{cost.hubs === 1 ? "" : "s"}, so one sync costs <strong>{range(cost.min, cost.max)}</strong> calls — the minimum when every search fits in one 50-car page, more for searches with more matches.{cost.hubs > 1 ? " (A cheaper nationwide search needs every location to have coordinates — re-add ZIP-only ones from the location picker.)" : ""}</div>
+            )}
+            {cost.measured ? <div>Your last full sync actually used <strong>{n(cost.measured)}</strong>{s.mcQuota && s.mcQuota.lastSync && s.mcQuota.lastSync.unchanged ? <span> — {s.mcQuota.lastSync.unchanged} of {s.mcQuota.lastSync.searches} searches were unchanged and stopped after one page</span> : null}.</div> : <div style={{ color: "#6b6b76" }}>No sync of your current profiles and locations recorded yet to measure the real cost.</div>}
             {left ? (
               <div style={{ marginTop: 6 }}>
                 {summary.fraction == null && !summary.totalRemaining ? "Quota not measured yet." : (<span>
