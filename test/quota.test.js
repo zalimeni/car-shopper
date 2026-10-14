@@ -117,8 +117,8 @@ describe("syncCost / syncsLeft", () => {
 });
 
 describe("gaugeTone", () => {
-  it("is green, amber, red by share left, and grey when unknown", () => {
-    expect([gaugeTone(0.9), gaugeTone(0.4), gaugeTone(0.2), gaugeTone(0.15), gaugeTone(0.05), gaugeTone(0), gaugeTone(null)]).toEqual(["good", "good", "warn", "warn", "bad", "bad", "none"]);
+  it("is neutral, then amber, then red as the share USED grows; grey when unknown", () => {
+    expect([gaugeTone(0), gaugeTone(0.5), gaugeTone(0.74), gaugeTone(0.75), gaugeTone(0.89), gaugeTone(0.9), gaugeTone(1), gaugeTone(null)]).toEqual(["ok", "ok", "ok", "warn", "warn", "bad", "bad", "none"]);
   });
 });
 

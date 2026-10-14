@@ -1425,17 +1425,19 @@ function ApiVersionLine({ api }) {
   );
 }
 
-// Claude-style usage ring: how much of the monthly MarketCheck capacity (all keys
-// together) is left. Grey dashed until a sync or refresh has measured anything.
-var TONE_COLOR = { good: "#3fae74", warn: "#e8c96a", bad: "#e07a7a", none: "#555" };
-function QuotaRing({ fraction, size, stroke, children }) {
+// Claude-style usage ring: fills up (clockwise from the top) with the share of the
+// monthly MarketCheck capacity (all keys together) already USED, turning amber then
+// red as it nears full. Grey dashed until a sync has measured anything.
+var TONE_COLOR = { ok: "#7aa2f7", warn: "#e8c96a", bad: "#e07a7a", none: "#555" };
+function usedOf(summary) { return summary.fraction == null ? null : Math.max(0, Math.min(1, 1 - summary.fraction)); }
+function QuotaRing({ used, size, stroke, children }) {
   var r = (size - stroke) / 2, c = 2 * Math.PI * r;
-  var f = fraction == null ? 0 : Math.max(0, Math.min(1, fraction));
-  var color = TONE_COLOR[gaugeTone(fraction)];
+  var f = used == null ? 0 : Math.max(0, Math.min(1, used));
+  var color = TONE_COLOR[gaugeTone(used)];
   return (
     <svg width={size} height={size} viewBox={"0 0 " + size + " " + size} style={{ flex: "none" }} aria-hidden="true">
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#2a2d38" strokeWidth={stroke} strokeDasharray={fraction == null ? "2 3" : undefined} />
-      {fraction != null && f > 0 && (
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#2a2d38" strokeWidth={stroke} strokeDasharray={used == null ? "2 3" : undefined} />
+      {used != null && f > 0 && (
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round"
           strokeDasharray={(c * f) + " " + c} transform={"rotate(-90 " + size / 2 + " " + size / 2 + ")"} />
       )}
@@ -1444,14 +1446,14 @@ function QuotaRing({ fraction, size, stroke, children }) {
   );
 }
 export function QuotaGauge({ summary, onClick }) {
-  var f = summary.fraction;
-  var label = f == null ? "MarketCheck quota: not measured yet — click for details"
-    : "MarketCheck quota: " + Number(summary.totalRemaining).toLocaleString() + " calls left (" + Math.round(f * 100) + "%) — click for details";
+  var u = usedOf(summary);
+  var label = u == null ? "MarketCheck quota: not measured yet — click for details"
+    : "MarketCheck quota: " + Math.round(u * 100) + "% used, " + Number(summary.totalRemaining).toLocaleString() + " calls left — click for details";
   return (
     <button onClick={onClick} title={label} aria-label={label}
       style={{ background: "none", border: "none", padding: 2, cursor: "pointer", display: "flex", alignItems: "center", lineHeight: 0 }}>
-      <QuotaRing fraction={f} size={24} stroke={3}>
-        {f == null && <text x="12" y="16" textAnchor="middle" fontSize="11" fill="#777">?</text>}
+      <QuotaRing used={u} size={24} stroke={3}>
+        {u == null && <text x="12" y="16" textAnchor="middle" fontSize="11" fill="#777">?</text>}
       </QuotaRing>
     </button>
   );
@@ -1474,7 +1476,8 @@ export function QuotaModal({ data, summary, onClose }) {
   var left = syncsLeft(summary.totalRemaining, cost);
   var n = function (v) { return Number(v).toLocaleString(); };
   var range = function (a, b) { return a === b ? n(a) : n(a) + "–" + n(b); };
-  var tone = gaugeTone(summary.fraction);
+  var used = usedOf(summary);
+  var tone = gaugeTone(used);
   var th = { textAlign: "left", padding: "4px 8px", color: "#6b6b76", fontWeight: 500, borderBottom: "1px solid #2a2d38", whiteSpace: "nowrap", fontSize: 11 };
   var td = { padding: "6px 8px", borderBottom: "1px solid #1e2028", color: "#c8c8d0", fontSize: 12, verticalAlign: "top" };
   var stateColor = { "in use": "#3fae74", standby: "#8a8a96", spent: "#e07a7a", unmeasured: "#e8c96a" };
@@ -1484,8 +1487,9 @@ export function QuotaModal({ data, summary, onClose }) {
       <div role="dialog" aria-modal="true" aria-label="MarketCheck quota" onMouseDown={function (e) { e.stopPropagation(); }}
         style={Object.assign({}, S.card, { width: "100%", maxWidth: 600, margin: 0, background: "#161820", boxShadow: "0 16px 48px rgba(0,0,0,0.6)" })}>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <QuotaRing fraction={summary.fraction} size={72} stroke={7}>
-            <text x="36" y="41" textAnchor="middle" fontSize="16" fontWeight="600" fill="#e4e4e7">{summary.fraction == null ? "?" : Math.round(summary.fraction * 100) + "%"}</text>
+          <QuotaRing used={used} size={72} stroke={7}>
+            <text x="36" y={used == null ? 41 : 38} textAnchor="middle" fontSize="16" fontWeight="600" fill="#e4e4e7">{used == null ? "?" : Math.round(used * 100) + "%"}</text>
+            {used != null && <text x="36" y="51" textAnchor="middle" fontSize="9" fill="#8a8a96">used</text>}
           </QuotaRing>
           <div style={{ flex: 1, minWidth: 0 }}>
             <h3 style={{ fontSize: 16, fontWeight: 600, margin: 0, color: "#f0f0f3" }}>MarketCheck quota</h3>
@@ -1506,7 +1510,7 @@ export function QuotaModal({ data, summary, onClose }) {
             <thead><tr>{["#", "Key", "Calls left", "Resets", "Status"].map(function (h) { return (<th key={h} style={th}>{h}</th>); })}</tr></thead>
             <tbody>
               {summary.rows.map(function (r, i) {
-                var pct = r.known && r.limit ? Math.max(0, Math.min(1, r.remaining / r.limit)) : 0;
+                var pct = r.known && r.limit ? Math.max(0, Math.min(1, 1 - r.remaining / r.limit)) : 0; // share used
                 return (
                   <tr key={r.id}>
                     <td style={td}>{i + 1}</td>
@@ -1532,9 +1536,9 @@ export function QuotaModal({ data, summary, onClose }) {
         ) : (
           <div style={{ fontSize: 13, color: "#c8c8d0", lineHeight: 1.6 }}>
             {cost.national ? (
-              <div>Your <strong>{active}</strong> active profile{active === 1 ? "" : "s"} share one search, run <strong>nationwide</strong> and kept to your <strong>{cost.hubs}</strong> locations' radii: as little as <strong>{n(cost.min)}</strong> call when it fits in one 50-car page, up to 10 when it pages. If too many cars match nationally it costs one extra call, then searches each location as before: up to <strong>{n(cost.max)}</strong>.</div>
+              <div>Your <strong>{active}</strong> active profile{active === 1 ? " runs as" : "s share"} one search, run <strong>nationwide</strong> and kept to your <strong>{cost.hubs}</strong> locations' radii: as little as <strong>{n(cost.min)}</strong> call when it fits in one 50-car page, up to 10 when it pages. If too many cars match nationally it costs one extra call, then searches each location as before: up to <strong>{n(cost.max)}</strong>.</div>
             ) : (
-              <div>Your <strong>{active}</strong> active profile{active === 1 ? "" : "s"} share one search × <strong>{cost.hubs}</strong> location{cost.hubs === 1 ? "" : "s"}, so one sync costs <strong>{range(cost.min, cost.max)}</strong> calls — the minimum when every search fits in one 50-car page, more for searches with more matches.{cost.hubs > 1 ? " (A cheaper nationwide search needs every location to have coordinates — saving Settings fills them in from their ZIPs.)" : ""}</div>
+              <div>Your <strong>{active}</strong> active profile{active === 1 ? " runs as" : "s share"} one search × <strong>{cost.hubs}</strong> location{cost.hubs === 1 ? "" : "s"}, so one sync costs <strong>{range(cost.min, cost.max)}</strong> calls — the minimum when every search fits in one 50-car page, more for searches with more matches.{cost.hubs > 1 ? " (A cheaper nationwide search needs every location to have coordinates — saving Settings fills them in from their ZIPs.)" : ""}</div>
             )}
             {cost.measured ? <div>Your last full sync actually used <strong>{n(cost.measured)}</strong>{s.mcQuota && s.mcQuota.lastSync && s.mcQuota.lastSync.unchanged ? <span> — {s.mcQuota.lastSync.unchanged} of {s.mcQuota.lastSync.searches} searches were unchanged and stopped after one page</span> : null}.</div> : <div style={{ color: "#6b6b76" }}>No sync of your current profiles and locations recorded yet to measure the real cost.</div>}
             {left ? (
