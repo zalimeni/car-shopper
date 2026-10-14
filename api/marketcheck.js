@@ -44,7 +44,9 @@ async function fetchWithRetry(url, opts, maxRetries, meter) {
   while (true) {
     if (meter) meter.calls++; // every request actually sent, retries included
     const r = await fetch(url, opts);
-    if (r.status !== 429 || attempt >= limit) return r;
+    // A 429 that says the MONTH is spent won't clear by waiting — return at once.
+    // One that's just the per-second throttle does, so back off and retry.
+    if (r.status !== 429 || attempt >= limit || await isSpent(r)) return r;
     const ra = parseFloat(r.headers.get("retry-after") || "");
     const waitMs = ra > 0 ? Math.min(ra * 1000, 5000) : Math.min(500 * Math.pow(2, attempt), 4000);
     await sleep(waitMs);
@@ -68,13 +70,37 @@ export function readQuota(r, bodyText) {
   const limit = num(h("quota-limit"));
   const reset = h("quota-reset-time") || null;
   const quotaWords = /quota|monthly/i.test(String(bodyText || ""));
-  const spent = (r.status === 429 || r.status === 402 || r.status === 503) && (remaining === 0 || (remaining == null && quotaWords));
+  // Retry-After of an hour or more can only mean "next month" — the per-second
+  // throttle clears in seconds. 402 (payment required) is always a spent plan.
+  const retryAfter = num(h("retry-after"));
+  const longWait = retryAfter != null && retryAfter >= 3600;
+  const spent = r.status === 402 || ((r.status === 429 || r.status === 503) && (remaining === 0 || longWait || (remaining == null && quotaWords)));
   if (remaining == null && limit == null && !reset && !spent) return null;
   return { remaining: spent ? 0 : remaining, limit: limit, reset: reset, exhausted: !!spent };
 }
 
-// Quota / rate-limit statuses that mean "this key is spent — try the next one".
-function isQuotaStatus(status) { return status === 429 || status === 503 || status === 402; }
+// Is this response a spent MONTHLY quota, as opposed to a momentary throttle?
+// Looks at the headers and, when it can without consuming the body, the message.
+async function isSpent(r) {
+  if (r.status === 402) return true;
+  if (r.status !== 429 && r.status !== 503) return false;
+  let text = "";
+  try { text = r.clone ? await r.clone().text() : ""; } catch (e) { /* headers alone then */ }
+  const q = readQuota(r, text);
+  return !!(q && q.exhausted);
+}
+
+// The keys a request may use, in order. The caller's own list is the whole story:
+// when it has anything in it the shared server key (MARKETCHECK_API_KEY) is
+// ignored entirely — not appended, not counted, not a fallback even once every
+// configured key is spent. It is used only when the list is empty.
+// -> { keys, shared } (shared = we're running on the server key)
+// Duplicates are NOT handled here: Settings de-duplicates when keys are saved.
+export function resolveKeys(rawKeys, envKey) {
+  const list = (Array.isArray(rawKeys) ? rawKeys : []).map(function (k) { return String(k || "").trim(); }).filter(Boolean);
+  if (list.length) return { keys: list, shared: false };
+  return { keys: envKey ? [envKey] : [], shared: !!envKey };
+}
 
 // The ordered key list as a cursor, so a run that rolls over to key #2 keeps
 // using it for its remaining calls instead of re-hitting the spent one.
@@ -89,15 +115,14 @@ function keyRing(keys) {
 }
 
 // fetchWithRetry, but on a quota/rate-limit response move to the next key in the
-// ring and repeat the same request. Only the last key's failure is returned.
-// While another key is in reserve there's no point backing off on a 429, so the
-// retry/backoff only applies to the final key.
+// ring and repeat the same request — but only when the key's MONTHLY quota is
+// spent. A momentary throttle is retried on the same key (fetchWithRetry), since
+// the next key would just be spending someone else's quota to dodge a pause.
 async function fetchAcrossKeys(ring, makeUrl, opts) {
   while (true) {
     const url = makeUrl(ring.key());
-    const hasSpare = ring.i + 1 < ring.keys.length;
-    const r = await fetchWithRetry(url, opts, hasSpare ? 0 : undefined);
-    if (isQuotaStatus(r.status) && ring.next()) continue;
+    const r = await fetchWithRetry(url, opts);
+    if ((await isSpent(r)) && ring.next()) continue;
     return { r: r, url: url };
   }
 }
@@ -129,15 +154,12 @@ export default async function handler(req, res) {
     return;
   }
 
-  // Ordered list of keys to try: the caller's own MarketCheck keys first (in
-  // priority order), then the shared server key as a final fallback. Search
-  // falls through to the next key when one hits its quota/rate limit.
+  // The caller's own MarketCheck keys, in priority order — or, only if they have
+  // none, the shared server key. Search moves to the next key only when one's
+  // monthly quota is spent (resolveKeys / isSpent).
   const envKey = process.env.MARKETCHECK_API_KEY;
-  const userKeys = Array.isArray(body.marketcheckKeys)
-    ? body.marketcheckKeys.map(function (k) { return String(k || "").trim(); }).filter(Boolean)
-    : [];
-  const keys = userKeys.slice();
-  if (envKey && keys.indexOf(envKey) === -1) keys.push(envKey);
+  const resolved = resolveKeys(body.marketcheckKeys, envKey);
+  const keys = resolved.keys;
   if (!keys.length) {
     res.status(500).json({ error: "No MarketCheck API key — add one in Settings, or set MARKETCHECK_API_KEY on the server" });
     return;
@@ -255,7 +277,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  const r = await searchListings(apiKey, profiles, hubs, { dealerType: dealerType, keys: keys, keyIds: keys.map(function (k) { return keyId(k, envKey); }) });
+  const r = await searchListings(apiKey, profiles, hubs, { dealerType: dealerType, keys: keys, keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? envKey : null); }) });
   res.status(200).json({ listings: r.listings, errors: r.errors, rateLimited: !!r.rateLimited, rateLimitInfo: r.rateLimitInfo || null, quota: r.quota || null, keysUsed: r.keysUsed, keyQuotas: r.keyQuotas || [], calls: r.calls || 0 });
 }
 
@@ -314,14 +336,17 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
               let body = "";
               try { body = (await r.text()).slice(0, 300); } catch (e) { /* ignore */ }
               note(keyIdx, r, body);
-              // Rate limit / quota exhausted. Fall over to the next key if we have
-              // one and retry this same page; only give up once all keys are spent.
+              // Rate limit / quota. Move to the next key ONLY when this one's monthly
+              // quota is spent (retry the same page on it); a momentary throttle was
+              // already retried with backoff on THIS key, so reaching here means it
+              // persisted — stop rather than spend another key's quota to dodge it.
               if (r.status === 429 || r.status === 503 || r.status === 402) {
-                if (keyIdx + 1 < keys.length) {
-                  const spent = keyIdx + 1; // 1-based index of the key that reached its limit
+                const monthlySpent = r.status === 402 || !!(snaps[keyIdx] && snaps[keyIdx].exhausted);
+                if (monthlySpent && keyIdx + 1 < keys.length) {
+                  const spent = keyIdx + 1; // 1-based index of the key whose quota is used up
                   keyIdx++;
                   keysUsed = Math.max(keysUsed, keyIdx + 1);
-                  errors.push(label + ": key #" + spent + " reached its request limit; continuing on key #" + (keyIdx + 1) + ".");
+                  errors.push(label + ": key #" + spent + " is out of monthly quota; continuing on key #" + (keyIdx + 1) + ".");
                   continue; // retry same page with the next key (no start advance)
                 }
                 rateLimited = true;
@@ -336,7 +361,9 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
                   rateRemaining: num(r.headers.get("ratelimit-remaining")),
                   quotaRemaining: num(r.headers.get("quota-remaining")),
                 };
-                errors.push("MarketCheck rate limit / free-tier quota reached (HTTP " + r.status + ") on all " + keys.length + " key" + (keys.length === 1 ? "" : "s") + " — results are incomplete; wait a bit and sync again." + (body ? " [" + body.slice(0, 120) + "]" : ""));
+                errors.push(monthlySpent
+                  ? "MarketCheck monthly quota is used up on " + (keys.length === 1 ? "your key" : "all " + keys.length + " keys") + " (HTTP " + r.status + ") — results are incomplete; it resets with the month." + (body ? " [" + body.slice(0, 120) + "]" : "")
+                  : "MarketCheck is rate-limiting requests (HTTP " + r.status + ") — results are incomplete; wait a bit and sync again." + (body ? " [" + body.slice(0, 120) + "]" : ""));
                 break;
               }
               // Auto-debug: 4xx bodies name the offending param. Echo it (+ the

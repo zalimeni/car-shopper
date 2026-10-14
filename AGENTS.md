@@ -152,7 +152,7 @@ Defined/documented in `.env.example`. Summary:
 | Var | Where | Purpose |
 |---|---|---|
 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | client (bundled) | Supabase connection. Public by design (RLS protects data). |
-| `MARKETCHECK_API_KEY` | server only | MarketCheck data key. **Never** `VITE_`-prefixed. (Optional: `MARKETCHECK_HOST`, `MARKETCHECK_RADIUS` default 100, `MARKETCHECK_THROTTLE_MS`.) |
+| `MARKETCHECK_API_KEY` | server only | Shared MarketCheck key — used only for accounts with no keys of their own in Settings; ignored entirely once a user has any (never a fallback). **Never** `VITE_`-prefixed. (Optional: `MARKETCHECK_HOST`, `MARKETCHECK_RADIUS` default 100, `MARKETCHECK_THROTTLE_MS`.) |
 | `SUPABASE_SECRET_KEY` | server only | Supabase Secret key (`sb_secret_…`); service-role access to the `user_anthropic_keys` vault. |
 | `KEY_ENCRYPTION_SECRET` | server only | ≥16 chars; AES-256-GCM key for the stored Anthropic keys. Rotating invalidates them. |
 | `SCORING_MODEL` | server (optional) | Override default scoring model (`claude-sonnet-5-5`); must be allowlisted in `_scoring.js`. |
@@ -190,7 +190,7 @@ per environment (Preview vs Production) — set keys in the env you're testing.
    vs `normalizedSample` to spot field-name mismatches — fix only
    `normalize()`/`buildUrl()`.
 3. Common causes:
-   - `MARKETCHECK_API_KEY is not configured` → key missing for that Vercel env.
+   - `No MarketCheck API key` → the account has no keys in Settings **and** `MARKETCHECK_API_KEY` is unset for that Vercel env.
    - HTTP 401/403 → bad key or the plan lacks the active-search endpoint.
    - HTTP 4xx on every query → wrong host/param (it's `api.marketcheck.com`,
      `year` as an exact-year CSV, `price_range`/`miles_range`, `zip`+`radius`).

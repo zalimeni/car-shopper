@@ -11,7 +11,7 @@
 // server key) — user-initiated, so quota burn stays in their control.
 
 import { authorize } from "./_auth.js";
-import { searchListings, keyId } from "./marketcheck.js";
+import { searchListings, keyId, resolveKeys } from "./marketcheck.js";
 
 // How far above the subject's mileage to fetch (client bands around it after).
 const MILES_HEADROOM = 30000;
@@ -31,13 +31,10 @@ export default async function handler(req, res) {
   const hubs = Array.isArray(body.hubs) ? body.hubs : [];
   if (!hubs.length) { res.status(400).json({ error: "no_location", message: "Add a search location in Settings to check the live market" }); return; }
 
-  // Caller's own MarketCheck keys first (quota fallback), then the shared key.
+  // The caller's own keys (in order), or the shared server key only if they have none.
   const envKey = process.env.MARKETCHECK_API_KEY;
-  const userKeys = Array.isArray(body.marketcheckKeys)
-    ? body.marketcheckKeys.map(function (k) { return String(k || "").trim(); }).filter(Boolean)
-    : [];
-  const keys = userKeys.slice();
-  if (envKey && keys.indexOf(envKey) === -1) keys.push(envKey);
+  const resolved = resolveKeys(body.marketcheckKeys, envKey);
+  const keys = resolved.keys;
   if (!keys.length) { res.status(500).json({ error: "No MarketCheck API key — add one in Settings, or set MARKETCHECK_API_KEY on the server" }); return; }
 
   // Synthetic profile: same make/model, year widened ±1, mileage capped a bit
@@ -50,7 +47,7 @@ export default async function handler(req, res) {
   const profile = { id: "pricecheck", name: "price check", params: params };
 
   try {
-    const r = await searchListings(keys[0], [profile], hubs, { keys: keys, budgetMs: 45000, keyIds: keys.map(function (k) { return keyId(k, envKey); }) });
+    const r = await searchListings(keys[0], [profile], hubs, { keys: keys, budgetMs: 45000, keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? envKey : null); }) });
     res.status(200).json({
       listings: r.listings,
       errors: r.errors,

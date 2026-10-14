@@ -6,14 +6,32 @@
 // them at the cost of one call per key. We keep the latest snapshot per key in
 // settings.mcQuota so it syncs across devices; nothing here polls.
 //
-// Keys are used strictly in order (user keys top-to-bottom, then the shared server
-// key), spilling to the next only when one is spent — so total remaining capacity
-// is simply the sum across keys, and "where we are" is the first key with calls left.
+// Keys are used strictly in order (your keys top-to-bottom), spilling to the next
+// only when one's monthly quota is spent — so total remaining capacity is simply
+// the sum across keys, and "where we are" is the first key with calls left. The
+// shared server key is used only when you have no keys of your own.
 
 // Mirrors api/marketcheck.js: 2 car types (used + certified) per profile x location,
 // each paged 50 rows at a time up to MARKETCHECK_MAX_ROWS (default 200 -> 4 pages).
 export const CAR_TYPES = 2;
 export const MAX_PAGES = 4;
+
+// Settings' save step: trim, drop blanks, and drop repeats of the same key (first
+// wins, but it adopts a later copy's label if it had none). This is the ONLY place
+// duplicates are handled — everything else assumes the saved list is already clean.
+export function dedupeKeyEntries(entries) {
+  const out = [];
+  const at = {};
+  (entries || []).forEach(function (e) {
+    const key = String((e && e.key) || "").trim();
+    if (!key) return;
+    const label = String((e && e.label) || "").trim();
+    if (at[key] != null) { if (!out[at[key]].label && label) out[at[key]].label = label; return; }
+    at[key] = out.length;
+    out.push({ key: key, label: label });
+  });
+  return out;
+}
 
 export function keyIdOf(key) { return String(key || "").slice(-4); }
 
@@ -70,14 +88,17 @@ function effective(snap, nowMs) {
 }
 
 // The keys in the order they're used. `userKeys` = [{ key, label }] from settings.
-// The shared server key is listed when we've heard from it, or when there's nothing else.
-export function keyRows(userKeys, snaps) {
-  const rows = (userKeys || []).filter(function (k) { return k && (k.key || typeof k === "string"); }).map(function (k, i) {
-    const key = typeof k === "string" ? k : k.key;
+// If there's a configured list at all the shared server key is ignored entirely — never a row, never in the totals,
+// even if an old snapshot for it is lying around; it appears only when the list is empty.
+export function keyRows(userKeys) {
+  const rows = [];
+  (userKeys || []).forEach(function (k) {
+    const key = typeof k === "string" ? k : (k && k.key) || "";
+    if (!key) return;
     const id = keyIdOf(key);
-    return { id: id, shared: false, label: (typeof k === "object" && k.label) || "Key " + (i + 1), tail: "…" + id };
+    rows.push({ id: id, shared: false, label: (typeof k === "object" && k.label) || "Key " + (rows.length + 1), tail: "…" + id });
   });
-  if ((snaps && snaps.shared) || !rows.length) rows.push({ id: "shared", shared: true, label: "Shared app key", tail: "" });
+  if (!rows.length) rows.push({ id: "shared", shared: true, label: "Shared app key", tail: "" });
   return rows;
 }
 
@@ -85,7 +106,7 @@ export function keyRows(userKeys, snaps) {
 export function summarize(userKeys, store, nowMs) {
   const snaps = (store && store.snaps) || {};
   const now = nowMs != null ? nowMs : Date.now();
-  const rows = keyRows(userKeys, snaps).map(function (row) {
+  const rows = keyRows(userKeys).map(function (row) {
     const e = effective(snaps[row.id], now);
     return Object.assign({}, row, e);
   });

@@ -77,7 +77,7 @@ the client). See `.env.example`.
 | Variable | Scope | Required for | Notes |
 |---|---|---|---|
 | `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` | client | auth + storage | Defaults baked into `src/supabaseClient.js`; override to point at another project. |
-| `MARKETCHECK_API_KEY` | server | dealer sync | From marketcheck.com/apis. Optional: `MARKETCHECK_HOST`, `MARKETCHECK_RADIUS` (mi, free tier ≤100), `MARKETCHECK_THROTTLE_MS`. |
+| `MARKETCHECK_API_KEY` | server | dealer sync | Shared key, used only by accounts with no MarketCheck keys of their own (never a fallback for those that have some). From marketcheck.com/apis. Optional: `MARKETCHECK_HOST`, `MARKETCHECK_RADIUS` (mi, free tier ≤100), `MARKETCHECK_THROTTLE_MS`. |
 | `SUPABASE_SECRET_KEY` | server | AI key vault | Supabase **Secret key** (`sb_secret_…`) — bypasses RLS to read/write the server-only key vault. |
 | `KEY_ENCRYPTION_SECRET` | server | AI key vault | ≥16 chars; AES-256-GCM key for encrypting each user's Anthropic key at rest. Rotating it invalidates stored keys (users re-enter). |
 | `SCORING_MODEL` | server | — | Overrides the default scoring model (`claude-sonnet-5-5`); must be one of the allowlisted models. |

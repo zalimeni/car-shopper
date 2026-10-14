@@ -23,7 +23,7 @@
 
 import { safeEqual, DEFAULT_ALLOW } from "./_auth.js";
 import { adminClient, anonClient } from "./_supabaseAdmin.js";
-import { searchListings } from "./marketcheck.js";
+import { searchListings, resolveKeys, keyId } from "./marketcheck.js";
 import { reconcile } from "../src/reconcile.js";
 
 const PENDING_MAX = 100; // cap parked candidates so the blob stays bounded
@@ -92,17 +92,16 @@ export default async function handler(req, res) {
       const budgetMs = deadline - Date.now() - 2000;
       if (budgetMs < 5000) { out.skipped = "out of time this run"; continue; }
       const dealerType = state.settings && state.settings.franchiseOnly ? "franchise" : null;
-      // The user's own MarketCheck keys first (quota fallback), then the shared key.
-      const userKeys = ((state.settings && state.settings.marketcheckKeys) || [])
-        .map(function (k) { return (k && k.key ? k.key : k) || ""; }).map(function (k) { return String(k).trim(); }).filter(Boolean);
-      const keys = userKeys.slice();
-      if (apiKey && keys.indexOf(apiKey) === -1) keys.push(apiKey);
+      // The user's own keys, in order — or the shared key only if they have none.
+      const resolved = resolveKeys(((state.settings && state.settings.marketcheckKeys) || [])
+        .map(function (k) { return (k && k.key ? k.key : k) || ""; }), apiKey);
+      const keys = resolved.keys;
       if (!keys.length) { out.skipped = "no MarketCheck key (add one in Settings, or set MARKETCHECK_API_KEY)"; continue; }
       const r = await searchListings(
         keys[0],
         profiles.map(function (p) { return { id: p.id, name: p.name, params: p.params }; }),
         hubs,
-        { dealerType: dealerType, budgetMs: budgetMs, keys: keys }
+        { dealerType: dealerType, budgetMs: budgetMs, keys: keys, keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? apiKey : null); }) }
       );
 
       const rec = reconcile(state.listings || [], r.listings, todayStr);
