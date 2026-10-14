@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import storage from "./storage";
 import { signOut } from "./Auth";
-import { fetchListings, fetchPriceComps, fetchRawSample, fetchQuota, reconcile } from "./sync";
+import { fetchListings, fetchPriceComps, fetchRawSample, reconcile } from "./sync";
 import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBaseline, generatePriceAssessment, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
 import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
 import { listSnapshots, restoreSnapshot } from "./snapshots";
@@ -931,24 +931,14 @@ export default function App() {
 
   // ── MarketCheck quota gauge ──
   var [quotaOpen, setQuotaOpen] = useState(false);
-  var [quotaBusy, setQuotaBusy] = useState(false);
-  var [quotaErr, setQuotaErr] = useState("");
   var quotaSummary = summarize(((data && getSettings(data).marketcheckKeys) || []), data && getSettings(data).mcQuota);
-  // Reads every key's quota — one MarketCheck call per key, so only on request.
-  var refreshQuota = useCallback(async function () {
-    if (!data || quotaBusy) return;
-    setQuotaBusy(true); setQuotaErr("");
-    try {
-      var r = await fetchQuota(mcKeys(data));
-      var cur = dataRef.current || data;
-      var nowIso = new Date().toISOString();
-      var reports = r.keys.filter(function (k) { return k.remaining != null || k.exhausted || k.limit != null; });
-      var bad = r.keys.filter(function (k) { return k.error; });
-      await save(Object.assign({}, cur, { settings: Object.assign({}, cur.settings || {}, { mcQuota: ingestSnaps(getSettings(cur).mcQuota, reports, nowIso) }) }));
-      if (bad.length) setQuotaErr(bad.map(function (k) { return (k.id === "shared" ? "Shared key" : "Key …" + k.id) + ": " + k.error; }).join(" · "));
-    } catch (e) { setQuotaErr((e && e.message) || "Quota check failed"); }
-    setQuotaBusy(false);
-  }, [data, quotaBusy, save]);
+  // Fold per-key quota that rode back on a response we were making anyway (a live
+  // Price Check search) into the gauge. Never makes a request of its own.
+  var noteQuota = useCallback(function (reports) {
+    if (!data || !reports || !reports.length) return;
+    var cur = dataRef.current || data;
+    save(Object.assign({}, cur, { settings: Object.assign({}, cur.settings || {}, { mcQuota: ingestSnaps(getSettings(cur).mcQuota, reports, new Date().toISOString()) }) }));
+  }, [data, save]);
 
   var viewProfile = useCallback(function (profileId) {
     setFilterProf(profileId);
@@ -1197,8 +1187,7 @@ export default function App() {
       </header>
 
       {quotaOpen && (
-        <QuotaModal data={data} summary={quotaSummary} busy={quotaBusy} err={quotaErr}
-          onRefresh={refreshQuota} onClose={function () { setQuotaOpen(false); }} />
+        <QuotaModal data={data} summary={quotaSummary} onClose={function () { setQuotaOpen(false); }} />
       )}
 
       {conflictMsg && (
@@ -1239,7 +1228,7 @@ export default function App() {
         )}
         {tab === "Help" && <HelpTab />}
         {tab === "Compare" && <CompareTab data={data} />}
-        {tab === "Price" && <PriceCheckTab data={data} candidates={candidates} keyStatus={keyStatus} goSettings={function () { setTab("Settings"); }} />}
+        {tab === "Price" && <PriceCheckTab data={data} candidates={candidates} keyStatus={keyStatus} onQuota={noteQuota} goSettings={function () { setTab("Settings"); }} />}
         {tab === "Settings" && <SettingsTab data={data} save={save} keyStatus={keyStatus} setKeyStatus={setKeyStatus} />}
         {tab === "Admin" && isAdmin && <AdminTab />}
       </main>
@@ -1362,7 +1351,7 @@ export function QuotaGauge({ summary, onClick }) {
 // Breakdown behind the gauge: per-key calls and reset dates, how many syncs the
 // remaining calls cover for the CURRENT profiles/locations, and what each kind of
 // call costs. Keys are used in order, so capacity is just the sum across them.
-export function QuotaModal({ data, summary, busy, err, onRefresh, onClose }) {
+export function QuotaModal({ data, summary, onClose }) {
   useEffect(function () {
     function onKey(e) { if (e.key === "Escape") onClose(); }
     window.addEventListener("keydown", onKey);
@@ -1390,7 +1379,7 @@ export function QuotaModal({ data, summary, busy, err, onRefresh, onClose }) {
           <div style={{ flex: 1, minWidth: 0 }}>
             <h3 style={{ fontSize: 16, fontWeight: 600, margin: 0, color: "#f0f0f3" }}>MarketCheck quota</h3>
             <div style={{ fontSize: 13, color: TONE_COLOR[tone], marginTop: 2 }}>
-              {summary.fraction == null ? "Not measured yet — run a sync or press Refresh"
+              {summary.fraction == null ? "Not measured yet — it fills in after your next sync"
                 : n(summary.totalRemaining) + " of " + n(summary.totalLimit) + " calls left" + (summary.unknown ? " (+ " + summary.unknown + " unmeasured key" + (summary.unknown > 1 ? "s" : "") + ")" : "")}
             </div>
             <div style={{ fontSize: 11, color: "#6b6b76", marginTop: 2 }}>
@@ -1417,7 +1406,7 @@ export function QuotaModal({ data, summary, busy, err, onRefresh, onClose }) {
                         {r.limit ? (<div style={{ height: 4, background: "#2a2d38", borderRadius: 2, marginTop: 4, width: 110 }}><div style={{ height: 4, borderRadius: 2, width: Math.round(pct * 110), background: TONE_COLOR[gaugeTone(pct)] }} /></div>) : null}
                       </div>) : <span style={{ color: "#6b6b76" }}>—</span>}
                     </td>
-                    <td style={Object.assign({}, td, { whiteSpace: "nowrap" })}>{r.assumed ? <span style={{ color: "#6b6b76", whiteSpace: "normal" }}>renewed — refresh to confirm</span> : (r.reset ? fmtResetTs(r.reset) : "—")}</td>
+                    <td style={Object.assign({}, td, { whiteSpace: "nowrap" })}>{r.assumed ? <span style={{ color: "#6b6b76", whiteSpace: "normal" }}>renewed — confirmed on next use</span> : (r.reset ? fmtResetTs(r.reset) : "—")}</td>
                     <td style={td}><span style={{ color: stateColor[r.state] }}>{r.state}</span>{r.known && r.at && !r.assumed ? <div style={{ color: "#555", fontSize: 10 }}>as of {fmtResetTs(r.at)}</div> : null}</td>
                   </tr>
                 );
@@ -1455,17 +1444,12 @@ export function QuotaModal({ data, summary, busy, err, onRefresh, onClose }) {
                 ["Price Check → live market", range(cost.liveSearch.min, cost.liveSearch.max)],
                 ["Debug raw VIN lookup", "1"],
                 ["Debug raw sample (+ up to 4 diagnosis re-runs if empty)", "1–5"],
-                ["Refresh this quota (1 per key)", String(keyCount)],
               ].map(function (row) { return (<tr key={row[0]}><td style={td}>{row[0]}</td><td style={td}>{row[1]}</td></tr>); })}
             </tbody>
           </table>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
-          <button style={Object.assign({}, S.priBtn, busy ? { opacity: 0.6 } : {})} disabled={busy} onClick={onRefresh}>{busy ? "Reading quota…" : "Refresh quota"}</button>
-          <span style={{ fontSize: 11, color: "#6b6b76", flex: 1, minWidth: 180 }}>Reads each key's remaining calls — uses {keyCount} call{keyCount === 1 ? "" : "s"}. Syncs update these numbers for free as they run.</span>
-        </div>
-        {err && <div style={{ fontSize: 12, color: "#e8c96a", marginTop: 8 }}>{err}</div>}
+        <p style={Object.assign({}, S.help, { marginTop: 14 })}>This view never makes API calls. It fills in from what MarketCheck reports on syncs and live Price Check searches you run anyway, so each row is as of that key's last use.</p>
         <p style={Object.assign({}, S.help, { marginTop: 10 })}>Quota is monthly per key. A burst of requests can also be throttled per second without using up the month — that clears in moments and isn't counted as spent.</p>
       </div>
     </div>
@@ -2329,7 +2313,7 @@ function ConfidenceBadge({ c }) {
   );
 }
 
-export function PriceCheckTab({ data, candidates, keyStatus, goSettings }) {
+export function PriceCheckTab({ data, candidates, keyStatus, goSettings, onQuota }) {
   var toneColor = { good: "#2d8659", ok: "#d4a017", high: "#c44" };
   var [q, setQ] = useState({ vin: "", year: "", make: "", model: "", trim: "", mileage: "", askingPrice: "" });
   var [result, setResult] = useState(null);
@@ -2360,6 +2344,7 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings }) {
       var merged = localPriceCheck(data, candidates, result.query, { extra: r.listings });
       setResult(Object.assign({ query: result.query }, merged));
       setAi(null); // comps changed — any prior AI verdict is stale
+      if (onQuota) onQuota(r.keyQuotas); // the search already told us each key's quota — keep the gauge current for free
       setLive({ done: true, added: (r.listings || []).length, rateLimited: !!r.rateLimited, errors: r.errors || [] });
     }).catch(function (e) {
       setLive({ error: e.message || "Live market check failed" });

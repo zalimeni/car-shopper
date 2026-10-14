@@ -379,15 +379,6 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
 }
 
 // ── MarketCheck query construction ──
-// Smallest possible search, for reading a key's quota headers (api/quota.js).
-export function buildProbeUrl(apiKey) {
-  const q = new URLSearchParams();
-  q.set("api_key", apiKey);
-  q.set("car_type", "used");
-  q.set("rows", "1");
-  return HOST + ENDPOINT + "?" + q.toString();
-}
-
 // One VIN, any car_type (a VIN may be listed under more than one).
 export function buildVinUrl(apiKey, vin) {
   const q = new URLSearchParams();

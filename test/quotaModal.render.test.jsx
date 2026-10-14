@@ -6,7 +6,7 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 vi.mock("../src/supabaseClient", () => ({ supabase: { auth: { getSession: async () => ({ data: {} }) } } }));
 vi.mock("../src/storage", () => ({ default: { get: async () => null, set: async () => {} } }));
 vi.mock("../src/Auth", () => ({ signOut: () => {} }));
-vi.mock("../src/sync", () => ({ fetchListings: async () => ({}), fetchPriceComps: async () => ({}), fetchRawSample: async () => ({}), fetchQuota: async () => ({ keys: [] }), reconcile: () => ({}) }));
+vi.mock("../src/sync", () => ({ fetchListings: async () => ({}), fetchPriceComps: async () => ({}), fetchRawSample: async () => ({}), reconcile: () => ({}) }));
 vi.mock("../src/score", () => ({ getKeyStatus: async () => ({}), saveKey: async () => ({}), removeKey: async () => ({}), scoreSet: async () => [], getScorePrompt: async () => ({}), generateBaseline: async () => ({}), generatePriceAssessment: async () => "", SCORE_MODEL_OPTIONS: [], DEFAULT_SCORE_MODEL: "x" }));
 vi.mock("../src/admin", () => ({ getMe: async () => ({}), listAllowed: async () => [], addAllowed: async () => {}, removeAllowed: async () => {} }));
 vi.mock("../src/snapshots", () => ({ listSnapshots: async () => [], restoreSnapshot: async () => {} }));
@@ -42,7 +42,7 @@ describe("QuotaGauge", () => {
 });
 
 describe("QuotaModal", () => {
-  const open = (d, extra) => render(<QuotaModal data={d} summary={sumOf(d)} busy={false} err="" onRefresh={() => {}} onClose={() => {}} {...(extra || {})} />);
+  const open = (d, extra) => render(<QuotaModal data={d} summary={sumOf(d)} onClose={() => {}} {...(extra || {})} />);
 
   it("shows total capacity, each key in order with its state, and the next reset", () => {
     const { container } = open(data(store));
@@ -63,35 +63,35 @@ describe("QuotaModal", () => {
     expect(text).toMatch(/≈ 25 syncs left at your last sync's cost/); // floor(350/14)
     cleanup();
   });
-  it("lists what each kind of call costs, including the refresh itself", () => {
+  it("lists what each kind of call costs", () => {
     const { container } = open(data(store));
     const t = container.textContent;
     expect(t).toMatch(/Sync of one location6–24/);
     expect(t).toMatch(/Price Check → live market4–16/);
-    expect(t).toMatch(/Refresh this quota \(1 per key\)2/);
+    expect(t).not.toMatch(/Refresh/);
     cleanup();
   });
   it("before any measurement it says so and still shows the cost table", () => {
     const { container } = open(data(null));
-    expect(container.textContent).toMatch(/Not measured yet/);
+    expect(container.textContent).toMatch(/Not measured yet — it fills in after your next sync/);
     expect(container.textContent).toMatch(/What each call costs/);
     cleanup();
   });
-  it("Refresh and Close and Escape work; busy disables Refresh", () => {
-    const onRefresh = vi.fn(), onClose = vi.fn();
-    open(data(store), { onRefresh, onClose });
-    fireEvent.click(screen.getByText("Refresh quota"));
-    expect(onRefresh).toHaveBeenCalled();
-    fireEvent.keyDown(window, { key: "Escape" });
-    expect(onClose).toHaveBeenCalled();
-    cleanup();
-    open(data(store), { busy: true });
-    expect(screen.getByText("Reading quota…").disabled).toBe(true);
+  it("never makes an API call: no fetch on render, and no control that could spend quota", () => {
+    const spy = vi.fn(); const orig = global.fetch; global.fetch = spy;
+    const { container } = open(data(store));
+    expect([...container.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Close"]);
+    expect(spy).not.toHaveBeenCalled();
+    expect(container.textContent).toMatch(/never makes API calls/);
+    global.fetch = orig;
     cleanup();
   });
-  it("shows a key-level error from a refresh", () => {
-    open(data(store), { err: "Key …1111: Key rejected (HTTP 401)" });
-    expect(screen.getByText(/Key rejected/)).toBeTruthy();
+  it("Close and Escape both close it", () => {
+    const onClose = vi.fn();
+    open(data(store), { onClose });
+    fireEvent.click(screen.getByText("Close"));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(2);
     cleanup();
   });
 });

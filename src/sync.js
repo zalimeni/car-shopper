@@ -99,21 +99,6 @@ async function fetchChunk(profiles, hubs, opts, filters) {
   return { listings: json.listings || [], errors: json.errors || [], mock: !!json.mock, rateLimited: !!json.rateLimited, rateLimitInfo: json.rateLimitInfo || null, quota: json.quota || null, keyQuotas: json.keyQuotas || [], calls: json.calls || 0 };
 }
 
-// Read each key's monthly quota. Costs one MarketCheck call per key, so this only
-// runs when the user asks (the quota modal's Refresh button).
-export async function fetchQuota(marketcheckKeys) {
-  const { data: sess } = await supabase.auth.getSession();
-  const token = sess && sess.session ? sess.session.access_token : "";
-  const res = await fetch("/api/quota", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: token ? "Bearer " + token : "" },
-    body: JSON.stringify({ marketcheckKeys: Array.isArray(marketcheckKeys) ? marketcheckKeys : [] }),
-  });
-  const j = await res.json().catch(function () { return {}; });
-  if (!res.ok) throw new Error((j && j.error) || "Quota check failed (HTTP " + res.status + ")");
-  return { keys: j.keys || [], calls: j.calls || 0 };
-}
-
 // Live-market comp broadening for the Price Check tool: fire a one-off
 // MarketCheck search for a specific vehicle and return normalized listings to
 // fold into the local comp pool. Separate from fetchListings (which reconciles
@@ -144,7 +129,7 @@ export async function fetchPriceComps(query, hubs, marketcheckKeys) {
     if (j && j.error) err.code = j.error;
     throw err;
   }
-  return { listings: j.listings || [], errors: j.errors || [], rateLimited: !!j.rateLimited, rateLimitInfo: j.rateLimitInfo || null, quota: j.quota || null };
+  return { listings: j.listings || [], errors: j.errors || [], rateLimited: !!j.rateLimited, rateLimitInfo: j.rateLimitInfo || null, quota: j.quota || null, keyQuotas: j.keyQuotas || [], calls: j.calls || 0 };
 }
 
 // Debug helper: POST /api/marketcheck?raw=1 and return the raw MarketCheck
