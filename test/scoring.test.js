@@ -29,18 +29,18 @@ const CRIT = [
 
 describe("resolveScoreModel", () => {
   it("accepts an allowlisted model", () => {
-    expect(resolveScoreModel("claude-opus-4-8")).toBe("claude-opus-4-8");
-    expect(resolveScoreModel("claude-haiku-4-5")).toBe("claude-haiku-4-5");
+    expect(resolveScoreModel("claude-opus-5-5")).toBe("claude-opus-5-5");
+    expect(resolveScoreModel("claude-haiku-5-5")).toBe("claude-haiku-5-5");
   });
   it("falls back to the Sonnet default for anything not allowlisted", () => {
-    expect(resolveScoreModel("gpt-4")).toBe("claude-sonnet-5");
-    expect(resolveScoreModel("")).toBe("claude-sonnet-5");
-    expect(resolveScoreModel(undefined)).toBe("claude-sonnet-5");
-    expect(resolveScoreModel("claude-sonnet-4-6")).toBe("claude-sonnet-5"); // retired option -> default
-    expect(resolveScoreModel("constructor")).toBe("claude-sonnet-5"); // not a real entry despite being on Object.prototype
+    expect(resolveScoreModel("gpt-4")).toBe("claude-sonnet-5-5");
+    expect(resolveScoreModel("")).toBe("claude-sonnet-5-5");
+    expect(resolveScoreModel(undefined)).toBe("claude-sonnet-5-5");
+    expect(resolveScoreModel("claude-sonnet-4-6")).toBe("claude-sonnet-5-5"); // retired option -> default
+    expect(resolveScoreModel("constructor")).toBe("claude-sonnet-5-5"); // not a real entry despite being on Object.prototype
   });
-  it("default is Sonnet 5 and is itself allowlisted", () => {
-    expect(SCORE_MODELS["claude-sonnet-5"]).toBeTruthy();
+  it("default is Sonnet 5.5 and is itself allowlisted", () => {
+    expect(SCORE_MODELS["claude-sonnet-5-5"]).toBeTruthy();
   });
 });
 

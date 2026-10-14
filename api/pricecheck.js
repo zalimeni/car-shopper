@@ -12,8 +12,10 @@ import { authorize } from "./_auth.js";
 import { decrypt, cryptoReady } from "./_crypto.js";
 import { getKeyRow, setKeyValid } from "./_supabaseAdmin.js";
 
-// Fixed fast model (thinking disabled) — a one-shot verdict, like /api/baseline.
-const MODEL = "claude-sonnet-4-6";
+// Fixed fast model with up-front thinking off — a one-shot verdict, like
+// /api/baseline. Sonnet 5.5 rejects thinking:{type:"disabled"}; "between_tools"
+// is its lowest setting.
+const MODEL = "claude-sonnet-5-5";
 
 const SYSTEM =
   "You are a sharp, concise used-car pricing analyst helping a private buyer decide whether an asking price is fair. " +
@@ -46,7 +48,7 @@ export default async function handler(req, res) {
     const resp = await client.messages.stream({
       model: MODEL,
       max_tokens: 1024,
-      thinking: { type: "disabled" },
+      thinking: { type: "between_tools" },
       system: SYSTEM,
       messages: [{ role: "user", content: buildPrompt(q, Array.isArray(body.comps) ? body.comps : [], body.stats || null, body.confidence || null) }],
     }).finalMessage();

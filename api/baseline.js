@@ -14,11 +14,12 @@ import { getKeyRow, setKeyValid } from "./_supabaseAdmin.js";
 import { BASELINE_SYSTEM, buildBaselineSchema, buildBaselinePrompt } from "./_scoring.js";
 
 // Baseline generation uses a fixed fast model rather than the user's scoring
-// model: Sonnet 4.6 is capable enough for a one-shot pricing estimate (which the
-// user edits) but, unlike the Claude 5 scoring default, is NOT always-on
-// thinking — with thinking disabled it finishes well under the 60s function
-// wall, avoiding the 504s that a thinking model caused here.
-const BASELINE_MODEL = "claude-sonnet-4-6";
+// model: Sonnet 5.5 is capable enough for a one-shot pricing estimate (which the
+// user edits). It thinks by default and REJECTS thinking:{type:"disabled"} (400),
+// so we send thinking:{type:"between_tools"} — its lowest setting, no up-front
+// reasoning — which keeps the call well under the 60s function wall and avoids
+// the 504s a thinking model caused here.
+const BASELINE_MODEL = "claude-sonnet-5-5";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") { res.status(405).json({ error: "Use POST" }); return; }
@@ -46,13 +47,13 @@ export default async function handler(req, res) {
 
   try {
     // Streamed so a slow response can't trip an HTTP read timeout;
-    // .finalMessage() assembles it. thinking:disabled keeps Sonnet 4.6 from
-    // burning tokens/time on reasoning — a one-shot pricing estimate doesn't
+    // .finalMessage() assembles it. thinking:between_tools keeps Sonnet 5.5 from
+    // burning tokens/time on up-front reasoning — a one-shot pricing estimate doesn't
     // need it, and it's what keeps the call under the 60s function wall.
     const resp = await client.messages.stream({
       model: BASELINE_MODEL,
       max_tokens: 8000,
-      thinking: { type: "disabled" },
+      thinking: { type: "between_tools" },
       system: BASELINE_SYSTEM,
       messages: [{ role: "user", content: buildBaselinePrompt(profile, listings) }],
       output_config: { format: { type: "json_schema", schema: buildBaselineSchema() } },

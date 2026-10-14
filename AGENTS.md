@@ -152,7 +152,7 @@ Defined/documented in `.env.example`. Summary:
 | `MARKETCHECK_API_KEY` | server only | MarketCheck data key. **Never** `VITE_`-prefixed. (Optional: `MARKETCHECK_HOST`, `MARKETCHECK_RADIUS` default 100, `MARKETCHECK_THROTTLE_MS`.) |
 | `SUPABASE_SECRET_KEY` | server only | Supabase Secret key (`sb_secret_…`); service-role access to the `user_anthropic_keys` vault. |
 | `KEY_ENCRYPTION_SECRET` | server only | ≥16 chars; AES-256-GCM key for the stored Anthropic keys. Rotating invalidates them. |
-| `SCORING_MODEL` | server (optional) | Override default scoring model (`claude-sonnet-4-6`); must be allowlisted in `_scoring.js`. |
+| `SCORING_MODEL` | server (optional) | Override default scoring model (`claude-sonnet-5-5`); must be allowlisted in `_scoring.js`. |
 | `ALLOWED_EMAILS` | server (optional) | Comma-separated allowlist; union with the `allowed_emails` DB table. |
 | `DEBUG_TOKEN` | server (optional) | ≥24-char bearer bypass for headless `/api` debugging (no DB access). |
 | `CRON_SECRET` | server (optional) | ≥16 chars; authorizes the daily `/api/cron-sync` (Vercel Cron Bearer token). Unset = scheduled sync off. |

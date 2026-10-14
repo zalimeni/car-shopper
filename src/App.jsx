@@ -691,8 +691,8 @@ export default function App() {
     });
   }, [persist]);
 
-  // Fall back to the default if the saved model is unknown/retired (e.g. an old
-  // Sonnet 4.6 selection) so the picker and requests stay valid.
+  // Fall back to the default if the saved model is unknown/retired (e.g. a model
+  // we've since removed) so the picker and requests stay valid.
   var scoreModel = (data && data.scoreModel && SCORE_MODEL_OPTIONS.some(function (o) { return o.id === data.scoreModel; })) ? data.scoreModel : DEFAULT_SCORE_MODEL;
   var setScoreModel = useCallback(function (m) {
     setData(function (prev) {
@@ -2509,7 +2509,7 @@ function HelpTab() {
       <div style={S.card}>
         <h3 style={S.cardH}>AI scoring (optional)</h3>
         <p style={li}>Add your <span style={b}>Anthropic API key</span> in the <span style={b}>Settings</span> tab to have each listing scored 1–10 per criterion with a short rationale and an overall summary.</p>
-        <p style={li}><span style={b}>Model</span> — pick Sonnet 5 (default, balanced), Opus 4.8 (most nuanced), or Haiku 4.5 (fastest/cheapest). <span style={b}>Auto-score on sync</span> scores only unscored candidates and listings whose price materially changed (never untouched or skipped ones), and is <span style={b}>skipped when there are more than 20 to score</span> — use Score all / per-card then, to avoid burning credits.</p>
+        <p style={li}><span style={b}>Model</span> — pick Sonnet 5.5 (default, balanced), Opus 5.5 (most nuanced), or Haiku 5.5 (fastest/cheapest). <span style={b}>Auto-score on sync</span> scores only unscored candidates and listings whose price materially changed (never untouched or skipped ones), and is <span style={b}>skipped when there are more than 20 to score</span> — use Score all / per-card then, to avoid burning credits.</p>
         <p style={li}>Score (or Re-score) any single card with its ✨ button, or use <span style={b}>Score all</span> on the candidate queue. After you edit criteria, per-criterion guidance, or the scoring prompt, cards scored under the old settings show <span style={b}>⟳ Re-score (changed)</span>; <span style={b}>✨ Re-score filtered</span> (in the filter bar) re-applies to every candidate + watchlist listing matching the current filters at once.</p>
         <p style={note}>Scoring runs in batches and fills in results as each batch finishes, so partial progress is kept. If a large run is interrupted (e.g. the tab is backgrounded), the finished ones stay scored and the rest are picked up on the next sync/score. The key is validated, stored encrypted server-side, and never shown again — it's only used to score your own listings under your own account. Note: the API is pay-as-you-go and needs credits in the Anthropic Console; a Claude Pro/Max subscription does not include API access.</p>
       </div>

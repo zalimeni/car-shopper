@@ -11,15 +11,15 @@
 // one of these, overrides the default; the per-request model (from the UI) wins
 // over both when it's in this list.
 export const SCORE_MODELS = {
-  "claude-sonnet-5": "Sonnet 5 — balanced (recommended)",
-  "claude-opus-4-8": "Opus 4.8 — most nuanced",
-  "claude-haiku-4-5": "Haiku 4.5 — fastest / cheapest",
+  "claude-sonnet-5-5": "Sonnet 5.5 — balanced (recommended)",
+  "claude-opus-5-5": "Opus 5.5 — most nuanced",
+  "claude-haiku-5-5": "Haiku 5.5 — fastest / cheapest",
 };
 
 export const DEFAULT_SCORE_MODEL =
   process.env.SCORING_MODEL && Object.prototype.hasOwnProperty.call(SCORE_MODELS, process.env.SCORING_MODEL)
     ? process.env.SCORING_MODEL
-    : "claude-sonnet-5";
+    : "claude-sonnet-5-5";
 
 export function resolveScoreModel(requested) {
   if (requested && Object.prototype.hasOwnProperty.call(SCORE_MODELS, requested)) return requested;
