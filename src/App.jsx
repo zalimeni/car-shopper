@@ -8,6 +8,7 @@ import { listSnapshots, restoreSnapshot } from "./snapshots";
 import { buildPriceHistoryCsv } from "./priceExport";
 import { localPriceCheck } from "./priceCheck";
 import { sortRows, nextSort, sortIndicator } from "./tableSort";
+import { homeMiles } from "./geo";
 import { loadLocations, searchLocations, addHub as addHubTo, normalizeHubs, hubFromZip, hubParts, hubKey } from "./locations";
 
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
@@ -15,6 +16,7 @@ var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning
 var STORAGE_KEY = "car-search-data";
 var VERSION = 7;
 var STALE_DAYS = 5;
+var STALE_MC_DAYS = 3; // flag a listing MarketCheck itself last confirmed this many days ago
 // A synced listing unseen in results for this long is almost certainly sold —
 // offered for one-click archiving (manual by design; MarketCheck sometimes has
 // data gaps, so nothing is archived without the user's click).
@@ -314,6 +316,10 @@ function parseImport(text, profileIds) {
         carfax_clean_title: typeof obj.carfax_clean_title === "boolean" ? obj.carfax_clean_title : null,
         dom: obj.dom != null && !isNaN(Number(obj.dom)) ? Number(obj.dom) : null,
         distMi: obj.distMi != null && !isNaN(Number(obj.distMi)) ? Number(obj.distMi) : null,
+        fees: obj.fees > 0 ? Number(obj.fees) : null,
+        dLat: obj.dLat != null && !isNaN(Number(obj.dLat)) ? Number(obj.dLat) : null,
+        dLon: obj.dLon != null && !isNaN(Number(obj.dLon)) ? Number(obj.dLon) : null,
+        mcSeen: typeof obj.mcSeen === "string" ? obj.mcSeen.slice(0, 10) : null,
         priceHistory: Array.isArray(obj.priceHistory) ? obj.priceHistory : undefined,
         source: obj.source ? String(obj.source) : undefined,
         addedDate: obj.addedDate ? String(obj.addedDate) : undefined,
@@ -1490,7 +1496,7 @@ function SettingsCard({ data, save }) {
     // Home base is stored as its own {n,z} (not a pointer into hubs) so renaming
     // or removing a search location can't silently orphan it.
     var hb = cleanHubs.find(function (h) { return h.z === homeZ; });
-    save(Object.assign({}, data, { settings: Object.assign({}, s, { budget: parseInt(budget) || 0, tagline: tagline.trim(), franchiseOnly: franchiseOnly, hubs: cleanHubs, marketcheckKeys: cleanMck, homeBase: hb ? { n: hb.n, z: hb.z } : null }) }));
+    save(Object.assign({}, data, { settings: Object.assign({}, s, { budget: parseInt(budget) || 0, tagline: tagline.trim(), franchiseOnly: franchiseOnly, hubs: cleanHubs, marketcheckKeys: cleanMck, homeBase: hb ? { n: hb.n, z: hb.z, lat: hb.lat, lon: hb.lon } : null }) }));
     setOpen(false);
   }
 
@@ -2355,13 +2361,14 @@ function CompareTab({ data }) {
   });
 
   // Primary-attribute columns. `best` marks which direction "wins" (highlight).
+  var homeBase = getSettings(data).homeBase || null;
   var specs = [
     { label: "Price", get: function (l) { return l.price; }, fmt: function (v) { return "$" + v.toLocaleString(); }, best: "min" },
     { label: "Mileage", get: function (l) { return l.mileage; }, fmt: function (v) { return v.toLocaleString() + " mi"; }, best: "min" },
     { label: "Year", get: function (l) { return l.year; }, fmt: function (v) { return String(v); }, best: "max" },
     { label: "Dealer", get: function (l) { return l.dealer ? l.dealer + " (" + (l.dealerType || "?") + ")" : ""; }, fmt: function (v) { return v; } },
     { label: "Location", get: function (l) { return [l.location, l.state].filter(Boolean).join(", ") + (isSalt(l.state) ? " 🧂" : ""); }, fmt: function (v) { return v; } },
-    { label: "Distance", get: function (l) { return l.distMi; }, fmt: function (v) { return v + " mi"; }, best: "min" },
+    { label: homeBase ? "Miles from home" : "Distance", get: function (l) { var m = homeMiles(l, homeBase); return m != null ? m : l.distMi; }, fmt: function (v) { return v + " mi"; }, best: "min" },
     { label: "Color", get: function (l) { return l.color; }, fmt: function (v) { return v; } },
     { label: "Days on market", get: function (l) { return l.dom; }, fmt: function (v) { return String(v); } },
   ];
@@ -3212,6 +3219,27 @@ function UpdateCard({ listing, data, onReviewed, onReject }) {
   );
 }
 
+// Miles badge: true straight-line distance from the home base when we have the
+// dealer's coordinates; otherwise the old radius-from-search-area figure, marked
+// as such so it isn't read as distance from home.
+function DistBadge({ l, data }) {
+  var hm = homeMiles(l, getSettings(data).homeBase);
+  if (hm != null) return (<span title="Straight-line miles from your home base (driving is typically 20–30% longer)">📍 {hm} mi from home</span>);
+  if (l.distMi == null) return null;
+  return (<span title="Distance from the search location this turned up in — not from your home base">📍 ~{l.distMi} mi from search area</span>);
+}
+
+// How long ago MarketCheck itself last saw this car. Our own "last seen" is the
+// day WE synced, so a stale crawl looks fresh without this.
+function FreshBadge({ l }) {
+  if (!l.mcSeen) return null;
+  var days = Math.floor((new Date(today() + "T00:00:00Z") - new Date(l.mcSeen + "T00:00:00Z")) / 86400000);
+  var stale = days >= STALE_MC_DAYS;
+  return (<span style={stale ? { color: "#e8c96a" } : { color: "#6b6b76" }}
+    title={stale ? "MarketCheck hasn't re-confirmed this listing in " + days + " days — the dealer's price may have changed. Check the dealer's site." : "When MarketCheck last confirmed this listing"}>
+    {stale ? "⚠ " : ""}MC saw {l.mcSeen}</span>);
+}
+
 function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk, scoring, onExcludeTrim, criteriaStale }) {
   var prof = data.profiles.find(function (p) { return p.id === cand.profileId; });
   var scoreColor = cand.compositeScore >= 7 ? "#2d8659" : cand.compositeScore >= 5 ? "#d4a017" : "#c44";
@@ -3233,12 +3261,13 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
         {cand.compositeScore > 0 && <span style={{ fontSize: 18, fontWeight: 700, color: scoreColor }}>{cand.compositeScore}</span>}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, color: "#8a8a96", marginBottom: 6, lineHeight: 1.8 }}>
-        <span>${(cand.price || 0).toLocaleString()}</span>
+        <span>${(cand.price || 0).toLocaleString()}{cand.fees > 0 && <span style={{ color: "#6b6b76", fontSize: 11 }}> +${cand.fees.toLocaleString()} fees</span>}</span>
         <span>{(cand.mileage || 0).toLocaleString()} mi</span>
         {cand.color && <span>{cand.color}</span>}
         {cand.dealer && <span>{cand.dealer} ({cand.dealerType || "?"})</span>}
         {cand.location && <span>{cand.location}, {cand.state} {isSalt(cand.state) ? "🧂" : ""}</span>}
-        {cand.distMi != null && <span title="Distance from the search location this turned up in — not from your home base">📍 ~{cand.distMi} mi</span>}
+        <DistBadge l={cand} data={data} />
+        <FreshBadge l={cand} />
         {cand.dom != null && <span>{cand.dom}d listed</span>}
         {cand.dealRating && <span>Deal: {cand.dealRating}</span>}
         <TitleNote listing={cand} />
@@ -3354,12 +3383,13 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
         {l.compositeScore > 0 && <span style={{ fontSize: 20, fontWeight: 700, color: sc }}>{l.compositeScore}</span>}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, color: "#8a8a96", marginBottom: 6, lineHeight: 1.8 }}>
-        <span>${(l.price || 0).toLocaleString()}</span>
+        <span>${(l.price || 0).toLocaleString()}{l.fees > 0 && <span style={{ color: "#6b6b76", fontSize: 11 }}> +${l.fees.toLocaleString()} fees</span>}</span>
         <span>{(l.mileage || 0).toLocaleString()} mi</span>
         {l.color && <span>{l.color}</span>}
         <span>{l.dealer} ({l.dealerType})</span>
         <span>{l.location}, {l.state} {salt ? "🧂" : ""}</span>
-        {l.distMi != null && <span title="Distance from the search location this turned up in — not from your home base">📍 ~{l.distMi} mi</span>}
+        <DistBadge l={l} data={data} />
+        <FreshBadge l={l} />
         {l.dom != null && <span>{l.dom}d listed</span>}
         {l.dealRating && <span>Deal: {l.dealRating}</span>}
         {l.vin && <span style={{ fontFamily: "monospace", fontSize: 11 }}>VIN: …{l.vin.slice(-6)}</span>}

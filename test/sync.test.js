@@ -127,3 +127,42 @@ describe("reconcile", () => {
     expect(r.summary.notSeen).toBe(0);
   });
 });
+
+describe("reconcile: fees, coordinates and MarketCheck freshness", () => {
+  const T = "2026-10-14";
+  const stored = (over) => Object.assign({ id: "t1", vin: "KM8JCCD14RU211946", vehicle: "Hyundai Tucson", year: 2024, price: 26683, status: "watch", source: "marketcheck",
+    profileId: "p", addedDate: "2026-09-29", lastChecked: "2026-10-01", lastSeen: "2026-10-01", notes: "",
+    priceHistory: [{ date: "2026-09-29", price: 27183 }, { date: "2026-10-01", price: 26683 }] }, over || {});
+  const fetched = (over) => Object.assign({ vin: "KM8JCCD14RU211946", price: 25988, fees: 695, dLat: 34.77, dLon: -87.67, mcSeen: "2026-10-12", dom: 109 }, over || {});
+
+  it("quietly re-bases a legacy fee-inclusive price: no phantom drop, no review flag, history fixed", () => {
+    const r = reconcile([stored()], [fetched()], T);
+    const l = r.listings[0];
+    expect(l.price).toBe(25988);
+    expect(l.fees).toBe(695);
+    expect(l.reviewPending).toBeFalsy();
+    expect(l.notes).toBe("");
+    expect(l.lastChange).toBeUndefined();
+    expect(l.priceHistory.map((p) => p.price)).toEqual([26488, 25988]);
+    expect(r.summary.priceUpdates).toBe(0);
+  });
+  it("still reports a genuine price change after the re-base", () => {
+    const r = reconcile([stored({ price: 25988, fees: 695 })], [fetched({ price: 24688 })], T);
+    expect(r.listings[0].price).toBe(24688);
+    expect(r.listings[0].reviewPending).toBe(true);
+    expect(r.summary.priceUpdates).toBe(1);
+  });
+  it("does not treat an unrelated change as a re-base", () => {
+    const r = reconcile([stored()], [fetched({ price: 25000 })], T);
+    expect(r.summary.priceUpdates).toBe(1);
+    expect(r.listings[0].price).toBe(25000);
+  });
+  it("refreshes coordinates and MarketCheck's last-seen on every sighting", () => {
+    const r = reconcile([stored({ price: 25988, fees: 695 })], [fetched()], T);
+    expect(r.listings[0]).toMatchObject({ dLat: 34.77, dLon: -87.67, mcSeen: "2026-10-12", lastSeen: T });
+  });
+  it("hands new candidates the new fields", () => {
+    const r = reconcile([], [fetched()], T);
+    expect(r.candidates[0]).toMatchObject({ fees: 695, dLat: 34.77, mcSeen: "2026-10-12" });
+  });
+});

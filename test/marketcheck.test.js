@@ -101,6 +101,7 @@ describe("normalize", () => {
       year: 2021,
       trim: "Hybrid LE AWD",
       price: 23997,
+      fees: null,
       mileage: 84755,
       dealer: "Courtesy Mitsubishi",
       dealerType: "franchise",
@@ -112,6 +113,9 @@ describe("normalize", () => {
       photo: "",
       dom: 18,
       distMi: 36, // MarketCheck `dist` 35.74, rounded
+      dLat: null, // this older fixture's dealer has no coordinates
+      dLon: null,
+      mcSeen: null,
       carfax_1_owner: true,
       carfax_clean_title: false,
       price_change_percent: 0,
@@ -222,5 +226,38 @@ describe("VIN price lookup (debug)", () => {
       last_seen_at_date: "2026-10-12", scraped_at_date: "2026-09-30", source: "kiaoftheshoals.com", dealer: { name: "Kia of the Shoals" } });
     expect(f).toMatchObject({ price: 26683, msrp: 31000, ref_price: 25995, price_change_percent: 2.6, last_seen_at_date: "2026-10-12", first_seen_at_date: "2026-09-30", dealer: "Kia of the Shoals" });
     expect(priceFacts({}).ref_price).toBeNull();
+  });
+});
+
+describe("fees, dealer coordinates and MarketCheck freshness (real Tucson record)", () => {
+  // Trimmed from a live record for a 2024 Hyundai Tucson Hybrid at Kia of The Shoals.
+  const row = {
+    vin: "KM8JCCD14RU211946", price: 26683, msrp: 26683, miles: 54603, fees: 695, price_includes_fees: true,
+    last_seen_at_date: "2026-10-12T04:52:51.000Z", dom: 109,
+    dealer: { name: "Kia of The Shoals", dealer_type: "franchise", city: "Sheffield", state: "AL", zip: "35660", latitude: "34.772847", longitude: "-87.669898" },
+    build: { make: "Hyundai", model: "Tucson", year: 2024, trim: "SEL Convenience" },
+  };
+  it("stores the price BEFORE fees when the feed's price includes them, and keeps the fee", () => {
+    const n = normalize(row, "p");
+    expect(n.price).toBe(25988);
+    expect(n.fees).toBe(695);
+  });
+  it("leaves the price alone when the feed's price excludes fees", () => {
+    expect(normalize(Object.assign({}, row, { price_includes_fees: false }), "p").price).toBe(26683);
+    expect(normalize(Object.assign({}, row, { price_includes_fees: false }), "p").fees).toBe(695);
+  });
+  it("never produces a zero/negative price from a fee that swallows it", () => {
+    expect(normalize(Object.assign({}, row, { price: 500, fees: 695 }), "p").price).toBe(500);
+    expect(normalize(Object.assign({}, row, { price: 0 }), "p").price).toBe(0);
+  });
+  it("captures dealer coordinates as numbers and MarketCheck's last-seen as a date", () => {
+    const n = normalize(row, "p");
+    expect(n.dLat).toBeCloseTo(34.772847, 6);
+    expect(n.dLon).toBeCloseTo(-87.669898, 6);
+    expect(n.mcSeen).toBe("2026-10-12");
+  });
+  it("is null-safe when the record has none of those", () => {
+    const n = normalize({ vin: "X", price: 100, build: {} }, "p");
+    expect([n.fees, n.dLat, n.dLon, n.mcSeen]).toEqual([null, null, null, null]);
   });
 });
