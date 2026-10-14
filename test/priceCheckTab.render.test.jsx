@@ -57,13 +57,14 @@ describe("PriceCheckTab renders + runs without crashing", () => {
 
   it("hands a live search's per-key quota to the gauge (free — the search ran anyway)", async () => {
     const report = [{ id: "1111", remaining: 412, limit: 500, reset: "2026-11-01T00:00:00Z", exhausted: false }];
-    fpc.fn = async () => ({ listings: [], keyQuotas: report, calls: 4 });
+    const api = { served: "v4.8.0", pinned: "v4.8.0", sunset: "Sun, 28 Feb 2027 23:59:59 GMT" };
+    fpc.fn = async () => ({ listings: [], keyQuotas: report, calls: 4, apiInfo: api });
     const onQuota = vi.fn();
     render(<PriceCheckTab data={data} candidates={[]} onQuota={onQuota} />);
     fireEvent.click(screen.getByText("RAV4"));
     fireEvent.click(screen.getByText("Check price"));
     fireEvent.click(screen.getByRole("button", { name: /Check the live market/ }));
-    await vi.waitFor(() => expect(onQuota).toHaveBeenCalledWith(report));
+    await vi.waitFor(() => expect(onQuota).toHaveBeenCalledWith(report, api));
     fpc.fn = null;
     cleanup();
   });

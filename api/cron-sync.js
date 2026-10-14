@@ -122,6 +122,8 @@ export default async function handler(req, res) {
         listings: rec.listings,
         pendingCandidates: newPending,
       });
+      // Same API-version bookkeeping as the in-app sync (drift banner).
+      if (r.apiInfo) nextData.settings = Object.assign({}, state.settings || {}, { mcApi: Object.assign({}, r.apiInfo, { at: new Date().toISOString() }) });
       // Don't advance lastSynced on an incomplete (rate-limited) run — leave it
       // at the last good sync so the "Last synced" display isn't misleading.
       if (!r.rateLimited) nextData.lastSynced = new Date().toISOString();

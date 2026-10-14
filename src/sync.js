@@ -31,6 +31,8 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
   const errors = [];
   let keyQuotas = []; // per-key monthly quota as reported by MarketCheck
   let calls = 0;      // HTTP requests this sync actually spent
+  let apiInfo = null; // MarketCheck API version / deprecation headers (latest seen)
+  let formatSuspect = false;
   let mock = false;
   let rateLimited = false;
   let rateLimitInfo = null;
@@ -48,6 +50,8 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
       (r.errors || []).forEach(function (m) { errors.push(m); });
       keyQuotas = mergeReports(keyQuotas, r.keyQuotas);
       calls += r.calls || 0;
+      if (r.apiInfo) apiInfo = r.apiInfo;
+      if (r.formatSuspect) formatSuspect = true;
       if (r.mock) mock = true;
       if (r.rateLimited) { rateLimited = true; if (r.rateLimitInfo) rateLimitInfo = r.rateLimitInfo; }
       if (r.quota && r.quota.remaining != null && (quota == null || r.quota.remaining < quota.remaining)) quota = r.quota;
@@ -59,7 +63,7 @@ export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
     // Quota hit: further locations will fail too, so stop rather than burn more.
     if (rateLimited) break;
   }
-  return { listings: Object.values(seen), errors: errors, mock: mock, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota, keyQuotas: keyQuotas, calls: calls };
+  return { listings: Object.values(seen), errors: errors, mock: mock, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota, keyQuotas: keyQuotas, calls: calls, apiInfo: apiInfo, formatSuspect: formatSuspect };
 }
 
 // One /api/marketcheck request for the given hubs (usually a single hub).
@@ -96,7 +100,7 @@ async function fetchChunk(profiles, hubs, opts, filters) {
     throw err;
   }
   const json = await res.json();
-  return { listings: json.listings || [], errors: json.errors || [], mock: !!json.mock, rateLimited: !!json.rateLimited, rateLimitInfo: json.rateLimitInfo || null, quota: json.quota || null, keyQuotas: json.keyQuotas || [], calls: json.calls || 0 };
+  return { listings: json.listings || [], errors: json.errors || [], mock: !!json.mock, rateLimited: !!json.rateLimited, rateLimitInfo: json.rateLimitInfo || null, quota: json.quota || null, keyQuotas: json.keyQuotas || [], calls: json.calls || 0, apiInfo: json.apiInfo || null, formatSuspect: !!json.formatSuspect };
 }
 
 // Live-market comp broadening for the Price Check tool: fire a one-off
@@ -129,7 +133,7 @@ export async function fetchPriceComps(query, hubs, marketcheckKeys) {
     if (j && j.error) err.code = j.error;
     throw err;
   }
-  return { listings: j.listings || [], errors: j.errors || [], rateLimited: !!j.rateLimited, rateLimitInfo: j.rateLimitInfo || null, quota: j.quota || null, keyQuotas: j.keyQuotas || [], calls: j.calls || 0 };
+  return { listings: j.listings || [], errors: j.errors || [], rateLimited: !!j.rateLimited, rateLimitInfo: j.rateLimitInfo || null, quota: j.quota || null, keyQuotas: j.keyQuotas || [], calls: j.calls || 0, apiInfo: j.apiInfo || null, formatSuspect: !!j.formatSuspect };
 }
 
 // Debug helper: POST /api/marketcheck?raw=1 and return the raw MarketCheck
