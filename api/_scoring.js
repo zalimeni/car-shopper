@@ -126,7 +126,7 @@ function listingFacts(l, homeBase) {
   const hm = homeMiles(l, homeBase);
   add("Straight-line distance from the buyer's HOME BASE", hm != null ? hm + " mi (driving is typically 20-30% longer)" : null);
   add("Color", l.color);
-  add("Days on market", l.dom);
+  add("Days listed at this dealer (current listing)", l.dom);
   // Recent asking-price trajectory — a strong deal/negotiation signal.
   if (Array.isArray(l.priceHistory) && l.priceHistory.length >= 2) {
     const pts = l.priceHistory.slice(-5).map(function (h) {

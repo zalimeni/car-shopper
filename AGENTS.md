@@ -111,6 +111,10 @@ See `docs/listing-pipeline.md` for the full design. In short:
   `served-by-version` / `deprecation` / `sunset` headers are stored in
   `settings.mcApi`; the app shows a banner within 60 days of sunset, if a different
   major version answers, or if the pin is rejected (sync then retries unpinned).
+  Searches are sorted by `last_seen` desc; an unchanged page-1 fingerprint
+  (`pageFingerprint`, stored in `settings.mcSearches`) stops a search after one
+  page, and `reconcile(..., { unchangedKeys })` keeps that search's cars (tagged via
+  `mcQ`) untouched instead of flagging them not seen.
   A sync where most rows lack VIN/make/model is flagged as a format change rather
   than silently dropping listings. To move versions: update `normalize()` /
   `buildUrl()` + the fixture, then bump `API_VERSION`.

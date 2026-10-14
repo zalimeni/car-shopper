@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import storage from "./storage";
 import { signOut } from "./Auth";
 import { fetchListings, fetchPriceComps, fetchRawSample, reconcile } from "./sync";
+import { searchFpMap, mergeSearchFps } from "./reconcile";
 import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBaseline, generatePriceAssessment, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
 import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
 import { listSnapshots, restoreSnapshot } from "./snapshots";
@@ -92,6 +93,7 @@ var DEFAULT_SETTINGS = {
   homeBase: null, // { n, z } — picked from hubs in Settings
   mcQuota: null, // latest MarketCheck quota snapshot per key + last sync cost (see src/quota.js)
   mcApi: null, // MarketCheck API version + deprecation/sunset headers from the last response (drift banner)
+  mcSearches: null, // { searchKey: { fp, at } } page-1 fingerprints — lets an unchanged search stop after page 1
 };
 function getSettings(data) { return Object.assign({}, DEFAULT_SETTINGS, (data && data.settings) || {}); }
 // Ordered list of the user's MarketCheck key strings (empty -> server uses its shared key).
@@ -814,12 +816,12 @@ export default function App() {
           return prev.concat(dec.filter(function (c) { return !c.vin || !seen[c.vin]; }));
         });
       }
-      var res = await fetchListings(active, getSettings(data).hubs, opts, { franchiseOnly: !!getSettings(data).franchiseOnly, marketcheckKeys: mcKeys(data) }, onSyncProgress);
+      var res = await fetchListings(active, getSettings(data).hubs, opts, { franchiseOnly: !!getSettings(data).franchiseOnly, marketcheckKeys: mcKeys(data), fingerprints: searchFpMap(getSettings(data).mcSearches) }, onSyncProgress);
       // Reconcile + save against the LATEST state, not the `data` snapshot from
       // when the sync started — the fetches take a while and the UI stays live,
       // so approvals/edits/scores landed mid-sync must survive the final save.
       var base = dataRef.current || data;
-      var rec = reconcile(base.listings, res.listings, today());
+      var rec = reconcile(base.listings, res.listings, today(), { unchangedKeys: res.unchanged });
       var decorated = rec.candidates.map(function (c) {
         return Object.assign({}, c, { compositeScore: calcScore(c.scores, base.criteria), _candidate: true });
       });
@@ -851,8 +853,11 @@ export default function App() {
       if (!res.mock) {
         var nowIso = new Date().toISOString();
         var mq1 = ingestSnaps(getSettings(base).mcQuota, res.keyQuotas, nowIso);
-        if (!res.rateLimited && !(res.errors && res.errors.length) && res.calls > 0) mq1 = recordSyncCalls(mq1, res.calls, nowIso);
-        syncPatch.settings = Object.assign({}, base.settings || {}, { mcQuota: mq1 }, res.apiInfo ? { mcApi: Object.assign({}, res.apiInfo, { at: nowIso }) } : {});
+        if (!res.rateLimited && !(res.errors && res.errors.length) && res.calls > 0) {
+          mq1 = recordSyncCalls(mq1, res.calls, nowIso);
+          mq1.lastSync = Object.assign({}, mq1.lastSync, { searches: res.queries || 0, unchanged: (res.unchanged || []).length });
+        }
+        syncPatch.settings = Object.assign({}, base.settings || {}, { mcQuota: mq1, mcSearches: mergeSearchFps(getSettings(base).mcSearches, res.fingerprints, nowIso) }, res.apiInfo ? { mcApi: Object.assign({}, res.apiInfo, { at: nowIso }) } : {});
       }
       await save(Object.assign({}, base, syncPatch));
       // Report the count actually added to the queue (reconcile's newCount also
@@ -863,7 +868,7 @@ export default function App() {
       // run those listings were just never checked, so don't report them as gone.
       var summaryOut = Object.assign({}, rec.summary, { newCount: added.length });
       if (res.rateLimited) summaryOut.notSeen = 0;
-      setSyncMsg({ ok: true, summary: summaryOut, skippedSeen: skippedSeen, errors: res.errors, mock: res.mock, rateLimited: res.rateLimited, rateLimitInfo: res.rateLimitInfo, quota: res.quota });
+      setSyncMsg({ ok: true, summary: summaryOut, skippedSeen: skippedSeen, unchanged: (res.unchanged || []).length, searches: res.queries || 0, errors: res.errors, mock: res.mock, rateLimited: res.rateLimited, rateLimitInfo: res.rateLimitInfo, quota: res.quota });
       setSyncing(false);
       // Auto-score only NEW candidates (never skipped, never already-queued, not
       // already scored, and passing their profile's trim filter — no point
@@ -1493,7 +1498,7 @@ export function QuotaModal({ data, summary, onClose }) {
         ) : (
           <div style={{ fontSize: 13, color: "#c8c8d0", lineHeight: 1.6 }}>
             <div>Your <strong>{active}</strong> active profile{active === 1 ? "" : "s"} {cost.groups < active ? <span>merge into <strong>{cost.groups}</strong> search{cost.groups === 1 ? "" : "es"} (same powertrain filter)</span> : <span>need <strong>{cost.groups}</strong> search{cost.groups === 1 ? "" : "es"}</span>} × <strong>{cost.hubs}</strong> location{cost.hubs === 1 ? "" : "s"}, so one sync costs <strong>{range(cost.min, cost.max)}</strong> calls — the minimum when every search fits in one 50-car page, more for searches with more matches.</div>
-            {cost.measured ? <div>Your last full sync actually used <strong>{n(cost.measured)}</strong>.</div> : <div style={{ color: "#6b6b76" }}>No complete sync recorded yet to measure the real cost.</div>}
+            {cost.measured ? <div>Your last full sync actually used <strong>{n(cost.measured)}</strong>{s.mcQuota && s.mcQuota.lastSync && s.mcQuota.lastSync.unchanged ? <span> — {s.mcQuota.lastSync.unchanged} of {s.mcQuota.lastSync.searches} searches were unchanged and stopped after one page</span> : null}.</div> : <div style={{ color: "#6b6b76" }}>No complete sync recorded yet to measure the real cost.</div>}
             {left ? (
               <div style={{ marginTop: 6 }}>
                 {summary.fraction == null && !summary.totalRemaining ? "Quota not measured yet." : (<span>
@@ -2639,7 +2644,7 @@ function CompareTab({ data }) {
     { label: "Location", get: function (l) { return [l.location, l.state].filter(Boolean).join(", ") + (isSalt(l.state) ? " 🧂" : ""); }, fmt: function (v) { return v; } },
     { label: homeBase ? "Miles from home" : "Distance", get: function (l) { var m = homeMiles(l, homeBase); return m != null ? m : l.distMi; }, fmt: function (v) { return v + " mi"; }, best: "min" },
     { label: "Color", get: function (l) { return l.color; }, fmt: function (v) { return v; } },
-    { label: "Days on market", get: function (l) { return l.dom; }, fmt: function (v) { return String(v); } },
+    { label: "Days listed (this dealer)", get: function (l) { return l.dom; }, fmt: function (v) { return String(v); }, best: "min" },
   ];
 
   function bestVal(get, dir) {
@@ -3301,7 +3306,9 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
     if (s.refreshed) parts.push(s.refreshed + " already watched");
     if (syncMsg.skippedSeen) parts.push(syncMsg.skippedSeen + " skipped (hidden)");
     if (s.notSeen) parts.push(s.notSeen + " not seen");
+    if (s.kept) parts.push(s.kept + " unchanged");
     var detail = parts.length ? parts.join(" · ") : "no changes";
+    if (syncMsg.unchanged) detail += " · " + syncMsg.unchanged + " of " + syncMsg.searches + " search" + (syncMsg.searches === 1 ? "" : "es") + " unchanged since last sync, so their remaining pages were skipped";
     text = (syncMsg.mock ? "Mock sync" : "Synced") + " — " + detail + " (from " + (s.fetched || 0) + " found)";
     if (syncMsg.errors && syncMsg.errors.length) {
       text += " · " + syncMsg.errors.length + " query error(s): " + String(syncMsg.errors[0]).slice(0, 240);
@@ -3654,7 +3661,7 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
         {cand.location && <span>{cand.location}, {cand.state} {isSalt(cand.state) ? "🧂" : ""}</span>}
         <DistBadge l={cand} data={data} />
         <FreshBadge l={cand} />
-        {cand.dom != null && <span>{cand.dom}d listed</span>}
+        {cand.dom != null && <span title="Days listed at this dealer (current listing)">{cand.dom}d listed</span>}
         {cand.dealRating && <span>Deal: {cand.dealRating}</span>}
         <TitleNote listing={cand} />
       </div>
@@ -3776,7 +3783,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
         <span>{l.location}, {l.state} {salt ? "🧂" : ""}</span>
         <DistBadge l={l} data={data} />
         <FreshBadge l={l} />
-        {l.dom != null && <span>{l.dom}d listed</span>}
+        {l.dom != null && <span title="Days listed at this dealer (current listing)">{l.dom}d listed</span>}
         {l.dealRating && <span>Deal: {l.dealRating}</span>}
         {l.vin && <span style={{ fontFamily: "monospace", fontSize: 11 }}>VIN: …{l.vin.slice(-6)}</span>}
         <TitleNote listing={l} />

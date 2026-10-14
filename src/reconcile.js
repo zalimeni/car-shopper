@@ -9,7 +9,15 @@
 // Cap the per-listing price history so the single-blob state stays bounded.
 var PRICE_HISTORY_MAX = 40;
 
-export function reconcile(existing, fetched, todayStr) {
+// opts.unchangedKeys: searches whose page 1 matched last sync's fingerprint, so
+// their remaining pages were deliberately skipped. A stored listing that one of
+// those searches returned last time is still listed — it's left exactly as is
+// (no price/note/flag changes), just marked seen today — instead of being counted
+// as missing because it wasn't in this sync's results.
+export function reconcile(existing, fetched, todayStr, opts) {
+  const unchanged = {};
+  ((opts && opts.unchangedKeys) || []).forEach(function (k) { unchanged[k] = true; });
+  const inUnchanged = function (l) { return Array.isArray(l.mcQ) && l.mcQ.some(function (k) { return unchanged[k]; }); };
   const byVin = {};
   (fetched || []).forEach(function (f) {
     const k = vinKey(f.vin);
@@ -20,7 +28,7 @@ export function reconcile(existing, fetched, todayStr) {
   });
 
   const matched = {};
-  const summary = { fetched: (fetched || []).length, priceUpdates: 0, refreshed: 0, newCount: 0, notSeen: 0 };
+  const summary = { fetched: (fetched || []).length, priceUpdates: 0, refreshed: 0, newCount: 0, notSeen: 0, kept: 0 };
 
   const listings = (existing || []).map(function (l) {
     // Match on a normalized VIN (case/whitespace-insensitive) so a stored
@@ -28,6 +36,11 @@ export function reconcile(existing, fetched, todayStr) {
     const k = vinKey(l.vin);
     const f = k ? byVin[k] : null;
     if (!f) {
+      // Skipped on purpose (its search was unchanged): still listed, untouched.
+      if (inUnchanged(l)) {
+        summary.kept++;
+        return Object.assign({}, l, { lastSeen: todayStr, lastChecked: todayStr });
+      }
       // A previously-synced listing that's missing this run — flag only.
       if (l.source === "marketcheck" && l.status === "watch" && l.lastSeen && l.lastSeen !== todayStr) {
         summary.notSeen++;
@@ -42,6 +55,12 @@ export function reconcile(existing, fetched, todayStr) {
     if (f.fees != null) next.fees = f.fees;
     if (f.dLat != null && f.dLon != null) { next.dLat = f.dLat; next.dLon = f.dLon; }
     if (f.mcSeen) next.mcSeen = f.mcSeen;
+    // Which searches return this car: this sync's, plus any unchanged (skipped)
+    // search that returned it before — it's still in that one too.
+    if (Array.isArray(f.mcQ)) {
+      const keep = (Array.isArray(l.mcQ) ? l.mcQ : []).filter(function (k) { return unchanged[k] && f.mcQ.indexOf(k) === -1; });
+      next.mcQ = f.mcQ.concat(keep);
+    }
     // One-time basis correction: listings synced before we stored prices
     // pre-fee carry the fee inside `price`. When the new price differs by exactly
     // that fee it isn't a price move — fix the stored price (and its history)
@@ -111,4 +130,26 @@ function appendNote(existing, note) {
   if (!e) return note;
   if (e.indexOf(note) > -1) return e; // idempotent across re-syncs in one day
   return e + " · " + note;
+}
+
+// ── Search fingerprints (stored in settings.mcSearches as { key: { fp, at } }) ──
+const SEARCH_FP_MAX_AGE_DAYS = 30; // drop searches not run for a month (edited profiles etc.)
+
+// -> { key: fp } to send with a sync.
+export function searchFpMap(store) {
+  const out = {};
+  Object.keys(store || {}).forEach(function (k) { if (store[k] && store[k].fp) out[k] = store[k].fp; });
+  return out;
+}
+
+// Fold this sync's fingerprints into the store, dropping stale entries.
+export function mergeSearchFps(store, fps, nowIso) {
+  const out = {};
+  const cutoff = Date.parse(nowIso) - SEARCH_FP_MAX_AGE_DAYS * 86400000;
+  Object.keys(store || {}).forEach(function (k) {
+    const v = store[k];
+    if (v && v.fp && !(Date.parse(v.at) < cutoff)) out[k] = v;
+  });
+  Object.keys(fps || {}).forEach(function (k) { if (fps[k]) out[k] = { fp: fps[k], at: nowIso }; });
+  return out;
 }

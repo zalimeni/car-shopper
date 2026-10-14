@@ -24,7 +24,7 @@
 import { safeEqual, DEFAULT_ALLOW } from "./_auth.js";
 import { adminClient, anonClient } from "./_supabaseAdmin.js";
 import { searchListings, resolveKeys, keyId } from "./marketcheck.js";
-import { reconcile } from "../src/reconcile.js";
+import { reconcile, searchFpMap, mergeSearchFps } from "../src/reconcile.js";
 
 const PENDING_MAX = 100; // cap parked candidates so the blob stays bounded
 
@@ -101,10 +101,11 @@ export default async function handler(req, res) {
         keys[0],
         profiles.map(function (p) { return { id: p.id, name: p.name, params: p.params }; }),
         hubs,
-        { dealerType: dealerType, budgetMs: budgetMs, keys: keys, keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? apiKey : null); }) }
+        { dealerType: dealerType, budgetMs: budgetMs, keys: keys,
+          fingerprints: searchFpMap(state.settings && state.settings.mcSearches), keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? apiKey : null); }) }
       );
 
-      const rec = reconcile(state.listings || [], r.listings, todayStr);
+      const rec = reconcile(state.listings || [], r.listings, todayStr, { unchangedKeys: r.unchanged });
 
       // Park genuinely-new candidates: drop VINs the user skipped and VINs
       // already parked by a previous cron run. (The client also dedups against
@@ -123,7 +124,9 @@ export default async function handler(req, res) {
         pendingCandidates: newPending,
       });
       // Same API-version bookkeeping as the in-app sync (drift banner).
-      if (r.apiInfo) nextData.settings = Object.assign({}, state.settings || {}, { mcApi: Object.assign({}, r.apiInfo, { at: new Date().toISOString() }) });
+      const nowIso = new Date().toISOString();
+      nextData.settings = Object.assign({}, state.settings || {}, { mcSearches: mergeSearchFps(state.settings && state.settings.mcSearches, r.fingerprints, nowIso) },
+        r.apiInfo ? { mcApi: Object.assign({}, r.apiInfo, { at: nowIso }) } : {});
       // Don't advance lastSynced on an incomplete (rate-limited) run — leave it
       // at the last good sync so the "Last synced" display isn't misleading.
       if (!r.rateLimited) nextData.lastSynced = new Date().toISOString();

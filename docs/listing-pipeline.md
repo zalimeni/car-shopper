@@ -57,6 +57,11 @@ App opens (user authenticated)  ──or── "Sync now" button
              # car_type=used already includes certified (no separate certified query).
              # A merged group pages up to 200 rows per profile, never past the
              # account's 500-row pagination ceiling; bigger groups split per profile.
+             # Sorted by last_seen desc. If page 1's fingerprint (num_found + each
+             # car's VIN/price/miles/last_seen, VIN-ordered, no day counters) matches
+             # last sync's for that search, the set is unchanged: stop after page 1.
+             # Cars carry the searches that returned them (mcQ), so reconcile keeps
+             # an unchanged search's cars as-is (seen today) instead of "not seen".
          → return normalized listings (§5)        [holds MARKETCHECK_API_KEY only]
    └─> Browser (authed) reconciles vs. stored listings (§6)
    └─> Browser writes the updated app_state blob via the user's session (RLS)

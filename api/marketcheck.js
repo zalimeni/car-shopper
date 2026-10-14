@@ -72,9 +72,11 @@ export function readApiInfo(r) {
 }
 
 // Fetch that retries on HTTP 429 with backoff (honoring Retry-After), sending the
-// pinned API version. If MarketCheck rejects the pin itself (a 400 that names the
-// version) it retries once unpinned, so a bad pin can't take sync down — and says
-// so via meter.pinRejected, which the UI surfaces.
+// pinned API version. If MarketCheck rejects the pin itself it retries once
+// unpinned, so a bad pin can't take sync down — and says so via meter.pinRejected,
+// which the UI surfaces. Verified live (Oct 2026): an unknown x-version answers
+// HTTP 404 {"message":"release not found"} — so a 400 or 404 whose body names the
+// release/version counts as a rejected pin.
 async function fetchWithRetry(url, opts, maxRetries, meter) {
   const limit = maxRetries != null ? maxRetries : MAX_RETRIES;
   let attempt = 0;
@@ -82,10 +84,10 @@ async function fetchWithRetry(url, opts, maxRetries, meter) {
   while (true) {
     if (meter) meter.calls++; // every request actually sent, retries included
     const r = await fetch(url, withVersion(opts, pin));
-    if (pin && r.status === 400) {
+    if (pin && (r.status === 400 || r.status === 404)) {
       let text = "";
       try { text = r.clone ? await r.clone().text() : ""; } catch (e) { /* ignore */ }
-      if (/version/i.test(text)) { pin = false; if (meter) meter.pinRejected = true; continue; }
+      if (/release|version/i.test(text)) { pin = false; if (meter) meter.pinRejected = true; continue; }
     }
     if (meter) { const a = readApiInfo(r); if (a) meter.api = a; }
     // A 429 that says the MONTH is spent won't clear by waiting — return at once.
@@ -325,13 +327,46 @@ export default async function handler(req, res) {
     return;
   }
 
-  const r = await searchListings(apiKey, profiles, hubs, { dealerType: dealerType, keys: keys, keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? envKey : null); }) });
-  res.status(200).json({ listings: r.listings, errors: r.errors, rateLimited: !!r.rateLimited, rateLimitInfo: r.rateLimitInfo || null, quota: r.quota || null, keysUsed: r.keysUsed, keyQuotas: r.keyQuotas || [], calls: r.calls || 0, apiInfo: r.apiInfo, formatSuspect: !!r.formatSuspect });
+  const r = await searchListings(apiKey, profiles, hubs, { dealerType: dealerType, keys: keys, fingerprints: body.fingerprints, keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? envKey : null); }) });
+  res.status(200).json({ listings: r.listings, errors: r.errors, rateLimited: !!r.rateLimited, rateLimitInfo: r.rateLimitInfo || null, quota: r.quota || null, keysUsed: r.keysUsed, keyQuotas: r.keyQuotas || [], calls: r.calls || 0, apiInfo: r.apiInfo, formatSuspect: !!r.formatSuspect, fingerprints: r.fingerprints, unchanged: r.unchanged, queries: r.queries });
 }
 
 // Core active-inventory search for a set of profiles × hubs — shared by the
 // HTTP handler above and the scheduled background sync (api/cron-sync.js).
 // opts: { dealerType, budgetMs }. Returns { listings: [<normalized>], errors }.
+// ── Unchanged-search short-circuit ──
+// Every call is billed (a 304 too), so page 1 is always fetched. But with results
+// sorted by last_seen desc, an identical page 1 (num_found + its cars) means the
+// whole result set is unchanged, so pages 2+ can be skipped. We fingerprint page 1
+// ourselves rather than use the ETag, to leave out fields that drift without any
+// real change (days-on-market counters, etc.); rows are ordered by VIN first, so a
+// reshuffle of tied timestamps can't look like a change.
+function fnv(s) {
+  let h1 = 0x811c9dc5, h2 = 0xc2b2ae35;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+    h2 = Math.imul(h2 ^ c, 0x85ebca6b) >>> 0;
+  }
+  return h1.toString(36) + h2.toString(36);
+}
+// Stable id for one search (everything but the key and page offset, plus the
+// pinned API version), so editing a profile or location starts a fresh one.
+export function searchKey(profile, hub, carType, dealerType) {
+  const q = new URLSearchParams(buildUrl("", profile, hub, 0, carType, dealerType).split("?")[1]);
+  q.delete("api_key"); q.delete("start");
+  const parts = [];
+  q.forEach(function (v, k) { parts.push(k + "=" + v); });
+  return "q" + fnv(parts.sort().join("&") + "|" + API_VERSION);
+}
+export function pageFingerprint(numFound, rows) {
+  const items = (rows || []).map(function (r) {
+    r = r || {};
+    return [r.vin || "", r.price != null ? r.price : "", r.miles != null ? r.miles : "", r.last_seen_at != null ? r.last_seen_at : ""].join(":");
+  }).sort();
+  return fnv(String(numFound) + "|" + items.join(","));
+}
+
 export async function searchListings(apiKey, profiles, hubs, opts) {
   opts = opts || {};
   const dealerType = opts.dealerType || null;
@@ -347,6 +382,11 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
   const seen = {}; // vin -> normalized listing (dedup across hubs, keep lowest price)
   const errors = [];
   let queries = 0, splits = 0;
+  // Unchanged-search short-circuit: page-1 fingerprints from the last sync, the
+  // ones we record this time, the searches found unchanged, and which searches
+  // returned each car (so reconcile can leave an unchanged search's cars alone).
+  const prior = opts.fingerprints && typeof opts.fingerprints === "object" ? opts.fingerprints : {};
+  const fingerprints = {}, unchanged = [], tags = {};
   // Drift guard: rows missing the fields every listing must have. A burst of these
   // means MarketCheck's response shape changed under us (e.g. a new major version),
   // which would otherwise just drop listings silently.
@@ -369,17 +409,22 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
   // ceil((a+b)/50) <= ceil(a/50) + ceil(b/50) — unless it has to be split: when a
   // merged group matches more than its cap we return "split" and the caller
   // re-runs its profiles one by one (each then capped at MAX_ROWS, as before).
+  // Returns { s, key, fp, numFound } where s is done | split | unchanged |
+  // unchanged-split | error | stop.
   async function runQuery(group, hub, carType, onRow) {
     const pr = mergedProfile(group);
     const label = (pr.name || pr.id || "?") + " @ " + (hub.n || hub.z || "?") + " [" + carType + "]";
     const cap = Math.min(PAGE_LIMIT, MAX_ROWS * group.length);
+    const key = searchKey(pr, hub, carType, dealerType);
+    const res = function (s, extra) { return Object.assign({ s: s, key: key }, extra || {}); };
+    let fp = null;
     queries++;
     let start = 0;
     while (start < cap) {
       if (Date.now() > deadline) {
         errors.push("Stopped early to avoid a timeout — some results may be missing. Use fewer locations, a smaller radius, or narrower filters.");
         timeUp = true;
-        return "stop";
+        return res("stop");
       }
       if (!first) await sleep(THROTTLE_MS); // stay under the burst rate limit
       first = false;
@@ -416,13 +461,13 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
             errors.push(monthlySpent
               ? "MarketCheck monthly quota is used up on " + whose + " (HTTP " + r.status + ") — results are incomplete; it resets with the month." + (body ? " [" + body.slice(0, 120) + "]" : "")
               : "MarketCheck is rate-limiting requests (HTTP " + r.status + ") — results are incomplete; wait a bit and sync again." + (body ? " [" + body.slice(0, 120) + "]" : ""));
-            return "stop";
+            return res("stop");
           }
           // Auto-debug: 4xx bodies name the offending param. Echo it (+ the
           // sent query, key redacted) so the error itself is actionable.
           const sent = url.split("?")[1] ? url.split("?")[1].replace(/api_key=[^&]*&?/, "") : "";
           errors.push(label + ": MarketCheck HTTP " + r.status + (body ? " — " + body : "") + (r.status >= 400 && r.status < 500 ? " [sent: " + sent + "]" : ""));
-          return "error";
+          return res("error");
         }
         note(keyIdx, r, "");
         const qrem = num(r.headers.get("quota-remaining"));
@@ -432,21 +477,27 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
         if (!Array.isArray(json.listings) && json.num_found == null) shapeless = true;
         const rows = Array.isArray(json.listings) ? json.listings : [];
         rows.forEach(function (row) { rowsSeen++; if (!row || !row.vin || !row.build || !row.build.make || !row.build.model) malformed++; });
-        rows.forEach(onRow);
+        rows.forEach(function (row) { onRow(row, key); });
+        const tooBig = group.length > 1 && numFound != null && numFound > cap;
+        if (start === 0) {
+          fp = pageFingerprint(numFound, rows);
+          // Same page 1 as last time -> the whole result set is unchanged: stop here.
+          if (prior[key] && prior[key] === fp) return res(tooBig ? "unchanged-split" : "unchanged", { fp: fp });
+        }
         // A merged query too big to page completely: run its profiles separately
         // (this page's rows are already kept — dedupe handles the overlap).
-        if (start === 0 && group.length > 1 && numFound != null && numFound > cap) return "split";
-        if (rows.length < ROWS || (numFound != null && start + ROWS >= numFound)) return "done";
+        if (start === 0 && tooBig) return res("split", { fp: fp });
+        if (rows.length < ROWS || (numFound != null && start + ROWS >= numFound)) return res("done", { fp: fp });
         start += ROWS;
       } catch (e) {
         errors.push(label + ": " + (e && e.message ? e.message : "fetch failed"));
-        return "error";
+        return res("error");
       }
     }
-    return "done";
+    return res("done", { fp: fp });
   }
 
-  function keep(row, group) {
+  function keep(row, group, key) {
     const p = attributeRow(row, group);
     if (!p) return null; // matched only the merged union of filters, not any one profile
     const norm = normalize(row, p.id);
@@ -456,6 +507,7 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
     const prev = seen[norm.vin];
     // Lowest REAL price wins — a priced row always beats an unpriced one.
     if (!prev || (norm.price && (!prev.price || norm.price < prev.price))) seen[norm.vin] = norm;
+    if (key) (tags[norm.vin] = tags[norm.vin] || {})[key] = true; // which searches returned this car
     return norm;
   }
 
@@ -463,13 +515,36 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
   for (const group of groupProfiles(profiles)) {
     for (const hub of hubs) {
       for (const carType of CAR_TYPES) {
-        const onRow = function (row) { keep(row, group); };
-        const queue = [group];
+        const onRow = function (row, key) { keep(row, group, key); };
+        const queue = [{ g: group, parent: null }];
         while (queue.length) {
-          const g = queue.shift();
+          const item = queue.shift();
+          const g = item.g;
           const out = await runQuery(g, hub, carType, onRow);
-          if (out === "stop") break outer;
-          if (out === "split") { splits++; g.forEach(function (p) { queue.push([p]); }); }
+          const parent = item.parent;
+          if (out.s === "done" || out.s === "unchanged") fingerprints[out.key] = out.fp;
+          if (out.s === "unchanged") unchanged.push(out.key);
+          if (out.s === "unchanged-split") {
+            // The whole merged set is unchanged, so its per-profile searches are too.
+            fingerprints[out.key] = out.fp;
+            unchanged.push(out.key);
+            g.forEach(function (p) {
+              const k = searchKey(mergedProfile([p]), hub, carType, dealerType);
+              unchanged.push(k);
+              if (prior[k]) fingerprints[k] = prior[k];
+            });
+          }
+          // A split's own fingerprint only counts once every per-profile search finished.
+          if (out.s === "split") {
+            splits++;
+            const rec = { key: out.key, fp: out.fp, left: g.length, failed: false };
+            g.forEach(function (p) { queue.push({ g: [p], parent: rec }); });
+          }
+          if (parent) {
+            if (out.s !== "done" && out.s !== "unchanged") parent.failed = true;
+            if (--parent.left === 0 && !parent.failed) fingerprints[parent.key] = parent.fp;
+          }
+          if (out.s === "stop") break outer;
         }
       }
       if (timeUp) break outer;
@@ -484,7 +559,8 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
   return {
     formatSuspect: formatSuspect,
     apiInfo: Object.assign({ pinned: API_VERSION || null, pinRejected: !!meter.pinRejected }, meter.api || {}),
-    listings: Object.values(seen), errors: errors, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota,
+    listings: Object.values(seen).map(function (l) { return Object.assign(l, { mcQ: Object.keys(tags[l.vin] || {}) }); }), errors: errors,
+    fingerprints: fingerprints, unchanged: unchanged, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota,
     keysUsed: keysUsed, keyQuotas: Object.keys(snaps).map(function (i) { return snaps[i]; }), calls: meter.calls,
     queries: queries, splits: splits,
   };
@@ -547,6 +623,11 @@ export function buildUrl(apiKey, profile, hub, start, carType, dealerType) {
   q.set("radius", String(hub.r || RADIUS_MI));
   q.set("rows", String(ROWS));
   q.set("start", String(start || 0));
+  // Most recently (re)crawled first. Any change to a result set then shows on
+  // page 1 — a re-priced or new car jumps to the top, a removed one lowers
+  // num_found — which is what lets an unchanged search stop after one page.
+  q.set("sort_by", "last_seen");
+  q.set("sort_order", "desc");
   return HOST + ENDPOINT + "?" + q.toString();
 }
 
@@ -593,7 +674,10 @@ export function normalize(row, profileId) {
     color: row.exterior_color || "",
     link: safeHttpUrl(row.vdp_url),
     photo: pickPhoto(row),
-    dom: row.dom != null ? Number(row.dom) : null,
+    // Days listed at THIS source, active stretch only (dos_active). MarketCheck's
+    // plain `dom` counts across earlier listings of the same car (a Tucson showed
+    // dom 109 vs dos_active 67 — the latter matched the dealer's own listing date).
+    dom: row.dos_active != null ? Number(row.dos_active) : row.dom_active != null ? Number(row.dom_active) : null,
     // Dealer coordinates -> true miles from the buyer's home base (src/geo.js).
     dLat: coord(dealer.latitude),
     dLon: coord(dealer.longitude),

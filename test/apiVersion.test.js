@@ -35,6 +35,19 @@ describe("API version pinning", () => {
     expect(r.listings.length).toBe(1);
     expect(r.apiInfo.pinRejected).toBe(true);
   });
+  it("handles MarketCheck's real answer to an unknown version: 404 'release not found' (seen live)", async () => {
+    mockFetch((h) => (h["x-version"] ? { status: 404, body: '{"message":"release not found","code":404}' } : { body: { num_found: 1, listings: [row()] } }));
+    const r = await searchListings("K", P, H, {});
+    expect(sent.map((s) => !!s.headers["x-version"])).toEqual([true, false]);
+    expect(r.listings.length).toBe(1);
+    expect(r.apiInfo.pinRejected).toBe(true);
+  });
+  it("does not drop the pin on an unrelated 404", async () => {
+    mockFetch(() => ({ status: 404, body: "not found" }));
+    const r = await searchListings("K", P, H, {});
+    expect(sent.length).toBe(1);
+    expect(r.apiInfo.pinRejected).toBe(false);
+  });
   it("does not drop the pin on an unrelated 400", async () => {
     mockFetch(() => ({ status: 400, body: "bad price_range" }));
     const r = await searchListings("K", P, H, {});
