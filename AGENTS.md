@@ -43,6 +43,8 @@ over architecture.
 | `src/supabaseClient.js` | Supabase client + default URL/anon key. |
 | `src/Auth.jsx` | Magic-link auth gate + the "not authorized" screen. |
 | `src/main.jsx`, `src/index.css` | Entry point + global styles. |
+| `src/locations.js` | Search-location logic: parse/search `public/locations.txt`, dedupe + sort (state, then city) the saved hubs. Pure, tested. |
+| `public/locations.txt` | Flat file (`ST|City|ZIP|lat|lon`, ~41k rows) behind the location picker; lazy-loaded, not bundled. Built by `scripts/build-locations.mjs` from GeoNames (CC BY 4.0). |
 | `api/marketcheck.js` | Serverless proxy to MarketCheck (holds the API key). `buildUrl`/`normalize`. |
 | `api/_auth.js` | Server-side auth + allowlist (`authorize()`). Shared module. |
 | `api/me.js` | Allowlist + Anthropic-key-status check for the UI. |

@@ -8,6 +8,7 @@ import { listSnapshots, restoreSnapshot } from "./snapshots";
 import { buildPriceHistoryCsv } from "./priceExport";
 import { localPriceCheck } from "./priceCheck";
 import { sortRows, nextSort, sortIndicator } from "./tableSort";
+import { loadLocations, searchLocations, addHub as addHubTo, normalizeHubs, hubFromZip, hubParts, hubKey } from "./locations";
 
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
 
@@ -1377,6 +1378,87 @@ function BG({ label, items, budget, tax }) {
   );
 }
 
+// ── Search-location picker ──
+// One box instead of separate name + ZIP fields: type a city or ZIP, pick a
+// suggestion, and it's added (with coordinates) to a list that stays deduped and
+// sorted by state then city. Suggestions come from public/locations.txt, loaded
+// the first time the box is used. If that file can't load, a bare 5-digit ZIP is
+// still accepted so the page never dead-ends.
+export function LocationPicker({ hubs, onChange }) {
+  var [q, setQ] = useState("");
+  var [open, setOpen] = useState(false);
+  var [hi, setHi] = useState(0);
+  var [idx, setIdx] = useState(null);
+  var [loadErr, setLoadErr] = useState(false);
+  var [note, setNote] = useState("");
+
+  function ensureIndex() {
+    if (idx) return;
+    loadLocations().then(function (i) { setIdx(i); setLoadErr(false); }).catch(function () { setLoadErr(true); });
+  }
+  var results = idx ? searchLocations(idx, q) : [];
+
+  function add(hub) {
+    var r = addHubTo(hubs, hub, idx);
+    setNote(r.added ? "" : (hub.n || hub.z) + " is already in your list.");
+    if (r.added) onChange(r.hubs);
+    setQ(""); setOpen(false); setHi(0);
+  }
+  function onKey(e) {
+    if (e.key === "ArrowDown") { e.preventDefault(); setOpen(true); setHi(function (h) { return Math.min(h + 1, Math.max(results.length - 1, 0)); }); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setHi(function (h) { return Math.max(h - 1, 0); }); }
+    else if (e.key === "Escape") { setOpen(false); }
+    else if (e.key === "Enter") {
+      e.preventDefault();
+      if (results[hi]) add(results[hi].hub);
+      else { var z = hubFromZip(q); if (z) add(z); else if (q.trim()) setNote(idx ? "No match — try a city name or a 5-digit ZIP." : "Locations are still loading — try again in a moment."); }
+    }
+  }
+  function remove(h) { var k = hubKey(h); onChange(hubs.filter(function (x) { return hubKey(x) !== k; })); setNote(""); }
+
+  var shown = normalizeHubs(hubs, idx);
+  return (
+    <div>
+      {shown.length === 0 && <p style={Object.assign({}, S.help, { marginTop: 6 })}>No locations yet — add at least one below.</p>}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+        {shown.map(function (h) {
+          var p = hubParts(h, idx);
+          return (
+            <span key={(h.z || "") + "|" + h.n} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#1b1e27", border: "1px solid #2a2d38", borderRadius: 6, padding: "4px 4px 4px 10px", fontSize: 13, color: "#e4e4e7" }}>
+              {p.st ? p.city + ", " + p.st : (h.n || h.z)}{h.z && h.n !== h.z ? <span style={{ color: "#6b6b76", fontSize: 11 }}>{h.z}</span> : null}
+              <button style={Object.assign({}, S.smBtn, { color: "#888", padding: "0 6px" })} title={"Remove " + (h.n || h.z)} onClick={function () { remove(h); }}>×</button>
+            </span>
+          );
+        })}
+      </div>
+      <div style={{ position: "relative", marginTop: 8 }}>
+        <input style={Object.assign({}, S.inp, { width: "100%" })} value={q} placeholder="Add a location — type a city or ZIP"
+          role="combobox" aria-expanded={open && results.length > 0} aria-autocomplete="list" autoComplete="off"
+          onFocus={function () { ensureIndex(); setOpen(true); }}
+          onChange={function (e) { ensureIndex(); setQ(e.target.value); setOpen(true); setHi(0); setNote(""); }}
+          onBlur={function () { setTimeout(function () { setOpen(false); }, 120); }}
+          onKeyDown={onKey} />
+        {open && results.length > 0 && (
+          <div role="listbox" style={{ position: "absolute", left: 0, right: 0, top: "100%", zIndex: 5, marginTop: 2, background: "#161820", border: "1px solid #2a2d38", borderRadius: 8, overflow: "hidden", boxShadow: "0 8px 24px rgba(0,0,0,0.45)" }}>
+            {results.map(function (r, i) {
+              return (
+                <div key={r.key} role="option" aria-selected={i === hi}
+                  onMouseDown={function (e) { e.preventDefault(); add(r.hub); }} onMouseEnter={function () { setHi(i); }}
+                  style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "7px 10px", fontSize: 13, cursor: "pointer", color: "#e4e4e7", background: i === hi ? "#1f2a44" : "transparent" }}>
+                  <span>{r.label}</span><span style={{ color: "#6b6b76", fontSize: 11 }}>{r.sub}</span>
+                </div>
+              );
+            })}
+            <div style={{ padding: "4px 10px", fontSize: 10, color: "#555", borderTop: "1px solid #1e2028" }}>Location data © GeoNames (CC BY 4.0)</div>
+          </div>
+        )}
+      </div>
+      {note && <div style={{ fontSize: 12, color: "#d4a017", marginTop: 6 }}>{note}</div>}
+      {loadErr && <div style={{ fontSize: 12, color: "#d4a017", marginTop: 6 }}>City suggestions couldn't load — you can still enter a 5-digit ZIP and press Enter.</div>}
+    </div>
+  );
+}
+
 // ── Settings (budget, tagline, search locations) ──
 function SettingsCard({ data, save }) {
   var s = getSettings(data);
@@ -1384,7 +1466,7 @@ function SettingsCard({ data, save }) {
   var [budget, setBudget] = useState(String(s.budget || ""));
   var [tagline, setTagline] = useState(s.tagline || "");
   var [franchiseOnly, setFranchiseOnly] = useState(!!s.franchiseOnly);
-  var [hubs, setHubs] = useState((s.hubs || []).map(function (h) { return { n: h.n || "", z: h.z || "", lat: h.lat, lon: h.lon }; }));
+  var [hubs, setHubs] = useState(normalizeHubs(s.hubs));
   var [mck, setMck] = useState((s.marketcheckKeys || []).map(function (k) { return { key: (k && k.key ? k.key : k) || "", label: (k && k.label) || "" }; }));
   var [homeZ, setHomeZ] = useState((s.homeBase && s.homeBase.z) || "");
 
@@ -1398,21 +1480,8 @@ function SettingsCard({ data, save }) {
     });
   }
 
-  function setHub(i, key, val) {
-    setHubs(function (prev) {
-      return prev.map(function (h, j) {
-        if (j !== i) return h;
-        var nh = Object.assign({}, h, { [key]: val });
-        if (key === "z") { nh.lat = undefined; nh.lon = undefined; } // stale coords once zip changes
-        return nh;
-      });
-    });
-  }
-  function addHub() { setHubs(function (prev) { return prev.concat([{ n: "", z: "" }]); }); }
-  function delHub(i) { setHubs(function (prev) { return prev.filter(function (_, j) { return j !== i; }); }); }
   function saveAll() {
-    var cleanHubs = hubs.filter(function (h) { return (h.z || "").trim() || (h.n || "").trim(); })
-      .map(function (h) { var o = { n: (h.n || "").trim(), z: (h.z || "").trim() }; if (h.lat != null) o.lat = h.lat; if (h.lon != null) o.lon = h.lon; return o; });
+    var cleanHubs = normalizeHubs(hubs);
     var cleanMck = mck.filter(function (k) { return (k.key || "").trim(); })
       .map(function (k) { return { key: (k.key || "").trim(), label: (k.label || "").trim() }; });
     // Home base is stored as its own {n,z} (not a pointer into hubs) so renaming
@@ -1437,17 +1506,8 @@ function SettingsCard({ data, save }) {
             <div style={S.field}><label style={S.lbl}>Header tagline</label><input style={S.inp} value={tagline} onChange={function (e) { setTagline(e.target.value); }} /></div>
           </div>
           <div style={{ marginTop: 10 }}>
-            <label style={S.lbl}>Search locations (ZIP is required; name is just a label)</label>
-            {hubs.map(function (h, i) {
-              return (
-                <div key={i} style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                  <input style={Object.assign({}, S.inp, { flex: 1 })} value={h.n} placeholder="Boston MA" onChange={function (e) { setHub(i, "n", e.target.value); }} />
-                  <input style={Object.assign({}, S.inp, { width: 90 })} value={h.z} placeholder="02101" onChange={function (e) { setHub(i, "z", e.target.value); }} />
-                  <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { delHub(i); }}>×</button>
-                </div>
-              );
-            })}
-            <button style={Object.assign({}, S.smBtn, { marginTop: 6 })} onClick={addHub}>+ Add location</button>
+            <label style={S.lbl}>Search locations</label>
+            <LocationPicker hubs={hubs} onChange={setHubs} />
           </div>
           <div style={{ marginTop: 12 }}>
             <label style={S.lbl}>Home base — where the car has to end up</label>
@@ -1869,16 +1929,11 @@ function Wizard({ data, onComplete }) {
   var s = getSettings(data);
   var [step, setStep] = useState(0);
   var [budget, setBudget] = useState(String(s.budget || ""));
-  var [hubs, setHubs] = useState((s.hubs || []).map(function (h) { return { n: h.n || "", z: h.z || "", lat: h.lat, lon: h.lon }; }));
+  var [hubs, setHubs] = useState(normalizeHubs(s.hubs));
   var [keepProfiles, setKeepProfiles] = useState(true);
   var startReqs = (data.globalReqs && data.globalReqs.length) ? data.globalReqs : DEFAULT_REQS;
   var [reqs, setReqs] = useState(startReqs.map(function (r) { return Object.assign({}, r); }));
 
-  function setHub(i, key, val) {
-    setHubs(function (prev) { return prev.map(function (h, j) { if (j !== i) return h; var nh = Object.assign({}, h, { [key]: val }); if (key === "z") { nh.lat = undefined; nh.lon = undefined; } return nh; }); });
-  }
-  function addHub() { setHubs(function (prev) { return prev.concat([{ n: "", z: "" }]); }); }
-  function delHub(i) { setHubs(function (prev) { return prev.filter(function (_, j) { return j !== i; }); }); }
   function toggleReq(id) { setReqs(function (prev) { return prev.map(function (r) { return r.id === id ? Object.assign({}, r, { active: !r.active }) : r; }); }); }
 
   var starterProfiles = data.profiles || [];
@@ -1891,8 +1946,7 @@ function Wizard({ data, onComplete }) {
     var tagline = (n ? n + " car" + (n > 1 ? "s" : "") : "Car search")
       + (hubNames.length ? " · " + hubNames.join(", ") : "")
       + (budgetNum ? " · ≤$" + Math.round(budgetNum / 1000) + "K" : "");
-    var cleanHubs = hubs.filter(function (h) { return (h.z || "").trim() || (h.n || "").trim(); })
-      .map(function (h) { var o = { n: (h.n || "").trim(), z: (h.z || "").trim() }; if (h.lat != null) o.lat = h.lat; if (h.lon != null) o.lon = h.lon; return o; });
+    var cleanHubs = normalizeHubs(hubs);
     onComplete(Object.assign({}, data, {
       settings: Object.assign({}, s, { budget: budgetNum, hubs: cleanHubs, tagline: tagline }),
       profiles: profiles,
@@ -1930,16 +1984,7 @@ function Wizard({ data, onComplete }) {
               </div>
               <div style={{ marginTop: 10 }}>
                 <label style={S.lbl}>Search locations</label>
-                {hubs.map(function (h, i) {
-                  return (
-                    <div key={i} style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                      <input style={Object.assign({}, S.inp, { flex: 1 })} value={h.n} placeholder="City label" onChange={function (e) { setHub(i, "n", e.target.value); }} />
-                      <input style={Object.assign({}, S.inp, { width: 90 })} value={h.z} placeholder="ZIP" onChange={function (e) { setHub(i, "z", e.target.value); }} />
-                      <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { delHub(i); }}>×</button>
-                    </div>
-                  );
-                })}
-                <button style={Object.assign({}, S.smBtn, { marginTop: 6 })} onClick={addHub}>+ Add location</button>
+                <LocationPicker hubs={hubs} onChange={setHubs} />
               </div>
             </div>
           )}
