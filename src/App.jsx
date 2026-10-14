@@ -12,7 +12,7 @@ import { sortRows, nextSort, sortIndicator } from "./tableSort";
 import { homeMiles } from "./geo";
 import { parseMarkdown, clampMemo, MEMO_MAX } from "./markdown";
 import { summarize, ingestSnaps, recordSyncCalls, syncCost, syncsLeft, gaugeTone, dedupeKeyEntries, spentKeyIds, planSig } from "./quota";
-import { loadLocations, withCoords, searchLocations, addHub as addHubTo, normalizeHubs, hubFromZip, hubParts, hubKey, hubOverlaps } from "./locations";
+import { loadLocations, searchLocations, addHub as addHubTo, normalizeHubs, hubFromZip, hubParts, hubKey, hubOverlaps } from "./locations";
 
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
 
@@ -821,14 +821,7 @@ export default function App() {
           return prev.concat(dec.filter(function (c) { return !c.vin || !seen[c.vin]; }));
         });
       }
-      // The nationwide search needs every location's coordinates; fill in any saved
-      // as a bare ZIP from the location list (and keep them, below).
-      var origHubs = getSettings(data).hubs || [];
-      var syncHubs = origHubs;
-      if (syncHubs.length > 1 && syncHubs.some(function (h) { return !(isFinite(parseFloat(h.lat)) && isFinite(parseFloat(h.lon))); })) {
-        try { syncHubs = withCoords(syncHubs, await loadLocations()); } catch (e) { /* sync per location then */ }
-      }
-      var res = await fetchListings(active, syncHubs, opts, { franchiseOnly: !!getSettings(data).franchiseOnly, marketcheckKeys: mcKeys(data), spentKeys: mcSpent(data), fingerprints: searchFpMap(getSettings(data).mcSearches) }, onSyncProgress);
+      var res = await fetchListings(active, getSettings(data).hubs, opts, { franchiseOnly: !!getSettings(data).franchiseOnly, marketcheckKeys: mcKeys(data), spentKeys: mcSpent(data), fingerprints: searchFpMap(getSettings(data).mcSearches) }, onSyncProgress);
       // Reconcile + save against the LATEST state, not the `data` snapshot from
       // when the sync started — the fetches take a while and the UI stays live,
       // so approvals/edits/scores landed mid-sync must survive the final save.
@@ -870,9 +863,9 @@ export default function App() {
         var cutShort = res.rateLimited || (res.errors || []).some(function (m) { return /Stopped early/.test(String(m)); });
         if (!cutShort && res.calls > 0) {
           mq1 = recordSyncCalls(mq1, res.calls, nowIso);
-          mq1.lastSync = Object.assign({}, mq1.lastSync, { searches: res.queries || 0, unchanged: (res.unchanged || []).length, plan: planSig(active, syncHubs) });
+          mq1.lastSync = Object.assign({}, mq1.lastSync, { searches: res.queries || 0, unchanged: (res.unchanged || []).length, plan: planSig(active, getSettings(data).hubs || []) });
         }
-        syncPatch.settings = Object.assign({}, base.settings || {}, syncHubs !== origHubs && getSettings(base).hubs === origHubs ? { hubs: syncHubs } : {}, { mcQuota: mq1, mcSearches: mergeSearchFps(getSettings(base).mcSearches, res.fingerprints, nowIso) }, res.apiInfo ? { mcApi: Object.assign({}, res.apiInfo, { at: nowIso }) } : {});
+        syncPatch.settings = Object.assign({}, base.settings || {}, { mcQuota: mq1, mcSearches: mergeSearchFps(getSettings(base).mcSearches, res.fingerprints, nowIso) }, res.apiInfo ? { mcApi: Object.assign({}, res.apiInfo, { at: nowIso }) } : {});
       }
       await save(Object.assign({}, base, syncPatch));
       // Report the count actually added to the queue (reconcile's newCount also
@@ -1362,7 +1355,7 @@ var RESYNC_WARN_HOURS = 6;
 export function nationalNote(n) {
   if (!n) return "";
   if (n.failed) return "nationwide search failed, so every location was searched";
-  if (n.skipped === "no-coords") return "nationwide search skipped: " + n.missing + " location" + (n.missing === 1 ? " has" : "s have") + " no coordinates (re-add from the location picker)";
+  if (n.skipped === "no-coords") return "nationwide search skipped: " + n.missing + " location" + (n.missing === 1 ? " has" : "s have") + " no coordinates (saving Settings fills them in)";
   if (n.skipped) return "";
   var calls = " (" + n.calls + " call" + (n.calls === 1 ? "" : "s") + ")";
   if (n.covered >= n.profiles) return "nationwide search covered every profile" + calls;
@@ -1541,7 +1534,7 @@ export function QuotaModal({ data, summary, onClose }) {
             {cost.national ? (
               <div>Your <strong>{active}</strong> active profile{active === 1 ? "" : "s"} share one search, run <strong>nationwide</strong> and kept to your <strong>{cost.hubs}</strong> locations' radii: as little as <strong>{n(cost.min)}</strong> call when it fits in one 50-car page, up to 10 when it pages. If too many cars match nationally it costs one extra call, then searches each location as before: up to <strong>{n(cost.max)}</strong>.</div>
             ) : (
-              <div>Your <strong>{active}</strong> active profile{active === 1 ? "" : "s"} share one search × <strong>{cost.hubs}</strong> location{cost.hubs === 1 ? "" : "s"}, so one sync costs <strong>{range(cost.min, cost.max)}</strong> calls — the minimum when every search fits in one 50-car page, more for searches with more matches.{cost.hubs > 1 ? " (A cheaper nationwide search needs every location to have coordinates — re-add ZIP-only ones from the location picker.)" : ""}</div>
+              <div>Your <strong>{active}</strong> active profile{active === 1 ? "" : "s"} share one search × <strong>{cost.hubs}</strong> location{cost.hubs === 1 ? "" : "s"}, so one sync costs <strong>{range(cost.min, cost.max)}</strong> calls — the minimum when every search fits in one 50-car page, more for searches with more matches.{cost.hubs > 1 ? " (A cheaper nationwide search needs every location to have coordinates — saving Settings fills them in from their ZIPs.)" : ""}</div>
             )}
             {cost.measured ? <div>Your last full sync actually used <strong>{n(cost.measured)}</strong>{s.mcQuota && s.mcQuota.lastSync && s.mcQuota.lastSync.unchanged ? <span> — {s.mcQuota.lastSync.unchanged} of {s.mcQuota.lastSync.searches} searches were unchanged and stopped after one page</span> : null}.</div> : <div style={{ color: "#6b6b76" }}>No sync of your current profiles and locations recorded yet to measure the real cost.</div>}
             {left ? (
@@ -1791,8 +1784,14 @@ export function SettingsCard({ data, save }) {
     });
   }
 
+  // Saving settings also fills any location's missing coordinates by ZIP (the
+  // nationwide search needs them), so the location index is loaded first; if it
+  // can't load, the save goes ahead without.
   function saveAll() {
-    var cleanHubs = normalizeHubs(hubs);
+    Promise.resolve().then(loadLocations).catch(function () { return null; }).then(saveWith);
+  }
+  function saveWith(idx) {
+    var cleanHubs = normalizeHubs(hubs, idx);
     var cleanMck = dedupeKeyEntries(mck); // the one place duplicate keys are handled
     // Home base is stored as its own {n,z} (not a pointer into hubs) so renaming
     // or removing a search location can't silently orphan it.
@@ -2249,6 +2248,9 @@ function Wizard({ data, onComplete }) {
   var starterProfiles = data.profiles || [];
 
   function finish() {
+    Promise.resolve().then(loadLocations).catch(function () { return null; }).then(finishWith);
+  }
+  function finishWith(idx) {
     var profiles = keepProfiles ? starterProfiles : [];
     var n = profiles.filter(function (p) { return p.active; }).length || profiles.length;
     var hubNames = hubs.filter(function (h) { return h.z || h.n; }).map(function (h) { return h.n || h.z; });
@@ -2256,7 +2258,7 @@ function Wizard({ data, onComplete }) {
     var tagline = (n ? n + " car" + (n > 1 ? "s" : "") : "Car search")
       + (hubNames.length ? " · " + hubNames.join(", ") : "")
       + (budgetNum ? " · ≤$" + Math.round(budgetNum / 1000) + "K" : "");
-    var cleanHubs = normalizeHubs(hubs);
+    var cleanHubs = normalizeHubs(hubs, idx);
     onComplete(Object.assign({}, data, {
       settings: Object.assign({}, s, { budget: budgetNum, hubs: cleanHubs, tagline: tagline }),
       profiles: profiles,

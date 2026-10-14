@@ -135,19 +135,16 @@ describe("search-area overlap", () => {
   });
 });
 
-describe("withCoords (fill bare-ZIP hubs for the nationwide search)", async () => {
-  const { withCoords } = await import("../src/locations.js");
+describe("normalizeHubs fills missing coordinates by ZIP (on settings save)", () => {
   const index = { byZip: { "27701": { lat: 35.99, lon: -78.9 } } };
-  it("fills missing coordinates by ZIP and leaves the rest alone", () => {
-    const hubs = [{ n: "Durham", z: "27701" }, { n: "Boston", z: "02108", lat: 42.36, lon: -71.06 }, { n: "Nowhere", z: "00000" }];
-    const out = withCoords(hubs, index);
-    expect(out[0]).toEqual({ n: "Durham", z: "27701", lat: 35.99, lon: -78.9 });
-    expect(out[1]).toBe(hubs[1]);
-    expect(out[2]).toBe(hubs[2]);
+  it("fills a bare-ZIP hub from the index and leaves located / unknown ones alone", () => {
+    const out = normalizeHubs([{ n: "Durham NC", z: "27701" }, { n: "Boston MA", z: "02108", lat: 42.36, lon: -71.06 }, { n: "Nowhere", z: "00000" }], index);
+    const by = Object.fromEntries(out.map((h) => [h.z, h]));
+    expect([by["27701"].lat, by["27701"].lon]).toEqual([35.99, -78.9]);
+    expect(by["02108"].lat).toBe(42.36);
+    expect(by["00000"].lat).toBeUndefined();
   });
-  it("returns the same array when nothing changed (or no index)", () => {
-    const hubs = [{ z: "27701", lat: 1, lon: 2 }];
-    expect(withCoords(hubs, index)).toBe(hubs);
-    expect(withCoords(hubs, null)).toBe(hubs);
+  it("without an index nothing is invented", () => {
+    expect(normalizeHubs([{ n: "Durham NC", z: "27701" }])[0].lat).toBeUndefined();
   });
 });

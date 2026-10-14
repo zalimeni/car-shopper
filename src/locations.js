@@ -108,8 +108,9 @@ export function hubParts(h, index) {
 }
 
 // Drop blanks, dedupe by hubKey (first wins, but fill in missing coordinates from
-// a later duplicate), and sort by state then city then ZIP. Entries whose state
-// can't be determined sort last, by label.
+// a later duplicate), fill any still-missing coordinates by ZIP from the location
+// index when given (the nationwide search needs every hub's), and sort by state
+// then city then ZIP. Entries whose state can't be determined sort last, by label.
 export function normalizeHubs(list, index) {
   const seen = {};
   const out = [];
@@ -124,6 +125,11 @@ export function normalizeHubs(list, index) {
     seen[k] = out.length;
     out.push(Object.assign({}, h, { n: String(h.n || "").trim(), z: String(h.z || "").trim() }));
   });
+  out.forEach(function (h) {
+    if (h.lat != null && h.lon != null) return;
+    const r = index && index.byZip && index.byZip[h.z];
+    if (r) { h.lat = r.lat; h.lon = r.lon; }
+  });
   return out.map(function (h) { return { h: h, p: hubParts(h, index) }; }).sort(function (a, b) {
     if (!a.p.st !== !b.p.st) return a.p.st ? -1 : 1;
     return a.p.st.localeCompare(b.p.st) || a.p.city.localeCompare(b.p.city, undefined, { sensitivity: "base" }) || String(a.h.z).localeCompare(String(b.h.z));
@@ -135,23 +141,6 @@ export function addHub(list, hub, index) {
   const k = hubKey(hub);
   if ((list || []).some(function (h) { return hubKey(h) === k; })) return { hubs: normalizeHubs(list, index), added: false };
   return { hubs: normalizeHubs((list || []).concat([hub]), index), added: true };
-}
-
-// Fill in missing coordinates from the ZIP list (hubs saved as a bare ZIP — e.g.
-// added while the location file couldn't load, or before the picker existed).
-// The nationwide search needs every hub's coordinates. Returns the same array
-// when nothing changed.
-export function withCoords(hubs, index) {
-  if (!index || !index.byZip) return hubs;
-  let changed = false;
-  const out = (hubs || []).map(function (h) {
-    if (!h || (isFinite(parseFloat(h.lat)) && isFinite(parseFloat(h.lon)))) return h;
-    const r = index.byZip[String(h.z || "").trim()];
-    if (!r) return h;
-    changed = true;
-    return Object.assign({}, h, { lat: r.lat, lon: r.lon });
-  });
-  return changed ? out : hubs;
 }
 
 // Fallback when the location file can't load: accept a bare 5-digit ZIP.
