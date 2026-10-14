@@ -9,7 +9,7 @@ import { buildPriceHistoryCsv } from "./priceExport";
 import { localPriceCheck } from "./priceCheck";
 import { sortRows, nextSort, sortIndicator } from "./tableSort";
 import { homeMiles } from "./geo";
-import { summarize, ingestSnaps, recordSyncCalls, syncCost, syncsLeft, gaugeTone } from "./quota";
+import { summarize, ingestSnaps, recordSyncCalls, syncCost, syncsLeft, gaugeTone, dedupeKeyEntries } from "./quota";
 import { loadLocations, searchLocations, addHub as addHubTo, normalizeHubs, hubFromZip, hubParts, hubKey } from "./locations";
 
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
@@ -1637,7 +1637,7 @@ export function LocationPicker({ hubs, onChange }) {
 }
 
 // ── Settings (budget, tagline, search locations) ──
-function SettingsCard({ data, save }) {
+export function SettingsCard({ data, save }) {
   var s = getSettings(data);
   var [open, setOpen] = useState(false);
   var [budget, setBudget] = useState(String(s.budget || ""));
@@ -1659,8 +1659,7 @@ function SettingsCard({ data, save }) {
 
   function saveAll() {
     var cleanHubs = normalizeHubs(hubs);
-    var cleanMck = mck.filter(function (k) { return (k.key || "").trim(); })
-      .map(function (k) { return { key: (k.key || "").trim(), label: (k.label || "").trim() }; });
+    var cleanMck = dedupeKeyEntries(mck); // the one place duplicate keys are handled
     // Home base is stored as its own {n,z} (not a pointer into hubs) so renaming
     // or removing a search location can't silently orphan it.
     var hb = cleanHubs.find(function (h) { return h.z === homeZ; });

@@ -90,18 +90,14 @@ async function isSpent(r) {
   return !!(q && q.exhausted);
 }
 
-// The keys a request may use, in order. The caller's own list (de-duplicated) is
-// the whole story: when it has anything in it the shared server key
-// (MARKETCHECK_API_KEY) is ignored entirely — not appended, not counted, not a
-// fallback even once every configured key is spent. It is used only when the
-// list is empty. -> { keys, shared } (shared = we're running on the server key)
+// The keys a request may use, in order. The caller's own list is the whole story:
+// when it has anything in it the shared server key (MARKETCHECK_API_KEY) is
+// ignored entirely — not appended, not counted, not a fallback even once every
+// configured key is spent. It is used only when the list is empty.
+// -> { keys, shared } (shared = we're running on the server key)
+// Duplicates are NOT handled here: Settings de-duplicates when keys are saved.
 export function resolveKeys(rawKeys, envKey) {
-  const seen = {};
-  const list = [];
-  (Array.isArray(rawKeys) ? rawKeys : []).forEach(function (k) {
-    const s = String(k || "").trim();
-    if (s && !seen[s]) { seen[s] = true; list.push(s); }
-  });
+  const list = (Array.isArray(rawKeys) ? rawKeys : []).map(function (k) { return String(k || "").trim(); }).filter(Boolean);
   if (list.length) return { keys: list, shared: false };
   return { keys: envKey ? [envKey] : [], shared: !!envKey };
 }

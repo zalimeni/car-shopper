@@ -16,6 +16,23 @@
 export const CAR_TYPES = 2;
 export const MAX_PAGES = 4;
 
+// Settings' save step: trim, drop blanks, and drop repeats of the same key (first
+// wins, but it adopts a later copy's label if it had none). This is the ONLY place
+// duplicates are handled — everything else assumes the saved list is already clean.
+export function dedupeKeyEntries(entries) {
+  const out = [];
+  const at = {};
+  (entries || []).forEach(function (e) {
+    const key = String((e && e.key) || "").trim();
+    if (!key) return;
+    const label = String((e && e.label) || "").trim();
+    if (at[key] != null) { if (!out[at[key]].label && label) out[at[key]].label = label; return; }
+    at[key] = out.length;
+    out.push({ key: key, label: label });
+  });
+  return out;
+}
+
 export function keyIdOf(key) { return String(key || "").slice(-4); }
 
 // Merge snapshots reported by the server ([{ id, remaining, limit, reset, exhausted }])
@@ -71,16 +88,13 @@ function effective(snap, nowMs) {
 }
 
 // The keys in the order they're used. `userKeys` = [{ key, label }] from settings.
-// A key listed twice counts once (first position). If there's a configured list at
-// all the shared server key is ignored entirely — never a row, never in the totals,
+// If there's a configured list at all the shared server key is ignored entirely — never a row, never in the totals,
 // even if an old snapshot for it is lying around; it appears only when the list is empty.
 export function keyRows(userKeys) {
-  const seen = {};
   const rows = [];
   (userKeys || []).forEach(function (k) {
     const key = typeof k === "string" ? k : (k && k.key) || "";
-    if (!key || seen[key]) return;
-    seen[key] = true;
+    if (!key) return;
     const id = keyIdOf(key);
     rows.push({ id: id, shared: false, label: (typeof k === "object" && k.label) || "Key " + (rows.length + 1), tail: "…" + id });
   });

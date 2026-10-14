@@ -34,8 +34,8 @@ const OK = (price) => ({ status: 200, q: { remaining: 300 }, listings: [rec(pric
 beforeEach(() => { delete process.env.MARKETCHECK_API_KEY; });
 
 describe("resolveKeys: your list is the whole story; the shared key only when you have none", () => {
-  it("uses the configured keys, de-duplicated, in order", () => {
-    expect(resolveKeys([" A ", "B", "A", "", null], "ENV")).toEqual({ keys: ["A", "B"], shared: false });
+  it("uses the configured keys, trimmed and in order, skipping blanks", () => {
+    expect(resolveKeys([" A ", "B", "", null], "ENV")).toEqual({ keys: ["A", "B"], shared: false });
   });
   it("ignores the shared key entirely when a list exists — even a key identical to it is just a configured key", () => {
     expect(resolveKeys(["A"], "ENV")).toEqual({ keys: ["A"], shared: false });
@@ -131,12 +131,6 @@ describe("the shared server key is not a fallback", () => {
     const r = await call({ vin: VIN, marketcheckKeys: ["SAME"] });
     expect(calls).toEqual(["SAME"]);
     expect(r.body.keysAvailable).toBe(1);
-  });
-  it("a key listed twice is used (and counted) once", async () => {
-    mockFetch({ K1: SPENT, K2: OK(1) });
-    const r = await call({ vin: VIN, marketcheckKeys: ["K1", "K1", "K2"] });
-    expect(calls).toEqual(["K1", "K2"]);
-    expect(r.body.keysAvailable).toBe(2);
   });
 });
 

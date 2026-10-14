@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ingestSnaps, recordSyncCalls, mergeReports, summarize, syncCost, syncsLeft, gaugeTone, keyIdOf } from "../src/quota.js";
+import { dedupeKeyEntries, ingestSnaps, recordSyncCalls, mergeReports, summarize, syncCost, syncsLeft, gaugeTone, keyIdOf } from "../src/quota.js";
 
 const NOW = Date.parse("2026-10-14T12:00:00Z");
 const keys = [{ key: "sk-aaaa1111", label: "Personal" }, { key: "sk-bbbb2222", label: "" }];
@@ -70,11 +70,6 @@ describe("summarize", () => {
     expect(s.totalRemaining).toBe(10);
     expect(s.totalLimit).toBe(500);
   });
-  it("counts a key listed twice once", () => {
-    const s = summarize([{ key: "sk-aaaa1111" }, { key: "sk-aaaa1111" }, { key: "sk-bbbb2222" }], store({ "1111": { remaining: 100, limit: 500 } }), NOW);
-    expect(s.rows.map((r) => r.id)).toEqual(["1111", "2222"]);
-    expect(s.totalRemaining).toBe(100);
-  });
   it("derives key ids the same way the server does", () => {
     expect(keyIdOf("sk-aaaa1111")).toBe("1111");
   });
@@ -101,5 +96,21 @@ describe("syncCost / syncsLeft", () => {
 describe("gaugeTone", () => {
   it("is green, amber, red by share left, and grey when unknown", () => {
     expect([gaugeTone(0.9), gaugeTone(0.4), gaugeTone(0.2), gaugeTone(0.15), gaugeTone(0.05), gaugeTone(0), gaugeTone(null)]).toEqual(["good", "good", "warn", "warn", "bad", "bad", "none"]);
+  });
+});
+
+describe("dedupeKeyEntries (Settings save)", () => {
+  it("drops repeats of the same key, keeping the first position", () => {
+    expect(dedupeKeyEntries([{ key: "A", label: "one" }, { key: "B", label: "" }, { key: "A", label: "again" }])).toEqual([{ key: "A", label: "one" }, { key: "B", label: "" }]);
+  });
+  it("treats keys that differ only by surrounding whitespace as the same", () => {
+    expect(dedupeKeyEntries([{ key: "A" }, { key: "  A " }]).map((e) => e.key)).toEqual(["A"]);
+  });
+  it("lets the kept entry adopt a label from a later copy if it had none", () => {
+    expect(dedupeKeyEntries([{ key: "A", label: "" }, { key: "A", label: "Personal" }])).toEqual([{ key: "A", label: "Personal" }]);
+  });
+  it("drops blank keys, tolerates junk, and returns [] for nothing", () => {
+    expect(dedupeKeyEntries([{ key: "" }, { key: "   " }, null, undefined, {}])).toEqual([]);
+    expect(dedupeKeyEntries(undefined)).toEqual([]);
   });
 });
