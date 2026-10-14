@@ -84,7 +84,21 @@ describe("sync: a throttle is not a spent key", () => {
     const r = await post(handler, Object.assign({ marketcheckKeys: ["AAAA1111", "BBBB2222"] }, SYNC));
     expect(r.body.rateLimited).toBe(false);
     expect(r.body.keysUsed).toBe(2);
-    expect(r.body.errors.join(" ")).toMatch(/key #1 is out of monthly quota; continuing on key #2/);
+    expect(r.body.notices.join(" ")).toMatch(/Key #1 is out of monthly quota; continuing on key #2/);
+    expect(r.body.errors).toEqual([]); // a failover is not a query error
+  });
+  it("starts past keys the caller already knows are spent — no call wasted rediscovering them", async () => {
+    mockFetch({ AAAA1111: { status: 429, q: { remaining: 0, limit: 500, reset: "R" } }, BBBB2222: { status: 200, q: { remaining: 300, limit: 500, reset: "R" } } });
+    const r = await post(handler, Object.assign({ marketcheckKeys: ["AAAA1111", "BBBB2222"], spentKeys: ["1111"] }, SYNC));
+    expect(calls.every((k) => k === "BBBB2222")).toBe(true);
+    expect(r.body.notices).toEqual([]);
+    expect(r.body.keysUsed).toBe(2);
+  });
+  it("if every key is known spent it still tries the last one (once), not none", async () => {
+    mockFetch({ AAAA1111: { status: 429, q: { remaining: 0, limit: 500, reset: "R" } }, BBBB2222: { status: 429, q: { remaining: 0, limit: 500, reset: "R" } } });
+    const r = await post(handler, Object.assign({ marketcheckKeys: ["AAAA1111", "BBBB2222"], spentKeys: ["1111", "2222"] }, SYNC));
+    expect(calls).toEqual(["BBBB2222"]);
+    expect(r.body.rateLimited).toBe(true);
   });
   it("when every configured key is spent it stops — it does NOT reach for the shared key", async () => {
     process.env.MARKETCHECK_API_KEY = "ENVKEY99";

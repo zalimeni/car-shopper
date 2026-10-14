@@ -13,14 +13,17 @@ vi.mock("../src/admin", () => ({ getMe: async () => ({}), listAllowed: async () 
 vi.mock("../src/snapshots", () => ({ listSnapshots: async () => [], restoreSnapshot: async () => {} }));
 
 const { syncWarning, liveSearchHub, LocationPicker } = await import("../src/App.jsx");
+const { planSig } = await import("../src/quota.js");
 
 const NOW = Date.parse("2026-10-14T12:00:00Z");
+const PROFS = [{ id: "a", active: true, params: { make: "Toyota", model: "RAV4" } }, { id: "b", active: true, params: { make: "Honda", model: "CR-V" } }];
+const HUBS = [{ n: "Durham, NC", z: "27701" }, { n: "Boston, MA", z: "02108" }];
 const base = (over) => Object.assign({
   lastSynced: "2026-10-14T10:00:00Z",
-  profiles: [{ id: "a", active: true, params: { make: "Toyota", model: "RAV4" } }, { id: "b", active: true, params: { make: "Honda", model: "CR-V" } }],
+  profiles: PROFS,
   listings: [{ mcSeen: "2026-10-11" }, { mcSeen: "2026-10-12" }],
-  settings: { hubs: [{ n: "Durham, NC", z: "27701" }, { n: "Boston, MA", z: "02108" }], marketcheckKeys: [{ key: "sk-aaaa1111" }],
-    mcQuota: { snaps: { "1111": { remaining: 300, limit: 500, reset: "2026-11-01T00:00:00Z", at: "x" } }, lastSync: { calls: 9, at: "x" } } },
+  settings: { hubs: HUBS, marketcheckKeys: [{ key: "sk-aaaa1111" }],
+    mcQuota: { snaps: { "1111": { remaining: 300, limit: 500, reset: "2026-11-01T00:00:00Z", at: "x" } }, lastSync: { calls: 9, at: "x", plan: planSig(PROFS, HUBS) } } },
 }, over || {});
 
 describe("syncWarning (confirm before a redundant sync)", () => {

@@ -11,7 +11,7 @@ import { localPriceCheck } from "./priceCheck";
 import { sortRows, nextSort, sortIndicator } from "./tableSort";
 import { homeMiles } from "./geo";
 import { parseMarkdown, clampMemo, MEMO_MAX } from "./markdown";
-import { summarize, ingestSnaps, recordSyncCalls, syncCost, syncsLeft, gaugeTone, dedupeKeyEntries } from "./quota";
+import { summarize, ingestSnaps, recordSyncCalls, syncCost, syncsLeft, gaugeTone, dedupeKeyEntries, spentKeyIds, planSig } from "./quota";
 import { loadLocations, searchLocations, addHub as addHubTo, normalizeHubs, hubFromZip, hubParts, hubKey, hubOverlaps } from "./locations";
 
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
@@ -99,6 +99,11 @@ function getSettings(data) { return Object.assign({}, DEFAULT_SETTINGS, (data &&
 // Ordered list of the user's MarketCheck key strings (empty -> server uses its shared key).
 function mcKeys(data) {
   return (getSettings(data).marketcheckKeys || []).map(function (k) { return (k && k.key ? k.key : k) || ""; }).filter(Boolean);
+}
+// Ids of keys whose stored quota says they're spent this month — the server starts
+// past them instead of paying a call to find out again.
+function mcSpent(data) {
+  return spentKeyIds(getSettings(data).marketcheckKeys || [], getSettings(data).mcQuota);
 }
 
 // ── Utility ──
@@ -816,7 +821,7 @@ export default function App() {
           return prev.concat(dec.filter(function (c) { return !c.vin || !seen[c.vin]; }));
         });
       }
-      var res = await fetchListings(active, getSettings(data).hubs, opts, { franchiseOnly: !!getSettings(data).franchiseOnly, marketcheckKeys: mcKeys(data), fingerprints: searchFpMap(getSettings(data).mcSearches) }, onSyncProgress);
+      var res = await fetchListings(active, getSettings(data).hubs, opts, { franchiseOnly: !!getSettings(data).franchiseOnly, marketcheckKeys: mcKeys(data), spentKeys: mcSpent(data), fingerprints: searchFpMap(getSettings(data).mcSearches) }, onSyncProgress);
       // Reconcile + save against the LATEST state, not the `data` snapshot from
       // when the sync started — the fetches take a while and the UI stays live,
       // so approvals/edits/scores landed mid-sync must survive the final save.
@@ -853,9 +858,12 @@ export default function App() {
       if (!res.mock) {
         var nowIso = new Date().toISOString();
         var mq1 = ingestSnaps(getSettings(base).mcQuota, res.keyQuotas, nowIso);
-        if (!res.rateLimited && !(res.errors && res.errors.length) && res.calls > 0) {
+        // A query error still paid for its call, so the count stands; only a run cut
+        // short (rate limit, or stopped before the timeout) under-counts.
+        var cutShort = res.rateLimited || (res.errors || []).some(function (m) { return /Stopped early/.test(String(m)); });
+        if (!cutShort && res.calls > 0) {
           mq1 = recordSyncCalls(mq1, res.calls, nowIso);
-          mq1.lastSync = Object.assign({}, mq1.lastSync, { searches: res.queries || 0, unchanged: (res.unchanged || []).length });
+          mq1.lastSync = Object.assign({}, mq1.lastSync, { searches: res.queries || 0, unchanged: (res.unchanged || []).length, plan: planSig(active, getSettings(data).hubs || []) });
         }
         syncPatch.settings = Object.assign({}, base.settings || {}, { mcQuota: mq1, mcSearches: mergeSearchFps(getSettings(base).mcSearches, res.fingerprints, nowIso) }, res.apiInfo ? { mcApi: Object.assign({}, res.apiInfo, { at: nowIso }) } : {});
       }
@@ -868,7 +876,7 @@ export default function App() {
       // run those listings were just never checked, so don't report them as gone.
       var summaryOut = Object.assign({}, rec.summary, { newCount: added.length });
       if (res.rateLimited) summaryOut.notSeen = 0;
-      setSyncMsg({ ok: true, summary: summaryOut, skippedSeen: skippedSeen, unchanged: (res.unchanged || []).length, searches: res.queries || 0, errors: res.errors, mock: res.mock, rateLimited: res.rateLimited, rateLimitInfo: res.rateLimitInfo, quota: res.quota });
+      setSyncMsg({ ok: true, summary: summaryOut, skippedSeen: skippedSeen, unchanged: (res.unchanged || []).length, searches: res.queries || 0, errors: res.errors, notices: res.notices, mock: res.mock, rateLimited: res.rateLimited, rateLimitInfo: res.rateLimitInfo, quota: res.quota });
       setSyncing(false);
       // Auto-score only NEW candidates (never skipped, never already-queued, not
       // already scored, and passing their profile's trim filter — no point
@@ -1346,7 +1354,7 @@ export function syncWarning(data, nowMs) {
   if (!(ageH >= 0) || ageH >= RESYNC_WARN_HOURS) return null;
   var s = getSettings(data);
   var active = (data.profiles || []).filter(function (p) { return p.active; });
-  var cost = syncCost(active, (s.hubs || []).length, s.mcQuota && s.mcQuota.lastSync);
+  var cost = syncCost(active, s.hubs || [], s.mcQuota && s.mcQuota.lastSync);
   var sum = summarize(s.marketcheckKeys || [], s.mcQuota, now);
   var newest = (data.listings || []).reduce(function (m, l) { return l.mcSeen && l.mcSeen > m ? l.mcSeen : m; }, "");
   var ago = ageH < 1 ? Math.max(1, Math.round(ageH * 60)) + " min" : Math.round(ageH) + " hour" + (Math.round(ageH) === 1 ? "" : "s");
@@ -1435,7 +1443,7 @@ export function QuotaModal({ data, summary, onClose }) {
   var s = getSettings(data);
   var activeList = (data.profiles || []).filter(function (p) { return p.active; });
   var active = activeList.length;
-  var cost = syncCost(activeList, (s.hubs || []).length, s.mcQuota && s.mcQuota.lastSync);
+  var cost = syncCost(activeList, s.hubs || [], s.mcQuota && s.mcQuota.lastSync);
   var perSync = cost.measured || cost.min; // what the daily scheduled sync would spend each run
   var left = syncsLeft(summary.totalRemaining, cost);
   var n = function (v) { return Number(v).toLocaleString(); };
@@ -1497,8 +1505,12 @@ export function QuotaModal({ data, summary, onClose }) {
           <p style={S.help}>Add at least one active profile and one search location to estimate sync cost.</p>
         ) : (
           <div style={{ fontSize: 13, color: "#c8c8d0", lineHeight: 1.6 }}>
-            <div>Your <strong>{active}</strong> active profile{active === 1 ? "" : "s"} {cost.groups < active ? <span>merge into <strong>{cost.groups}</strong> search{cost.groups === 1 ? "" : "es"} (same powertrain filter)</span> : <span>need <strong>{cost.groups}</strong> search{cost.groups === 1 ? "" : "es"}</span>} × <strong>{cost.hubs}</strong> location{cost.hubs === 1 ? "" : "s"}, so one sync costs <strong>{range(cost.min, cost.max)}</strong> calls — the minimum when every search fits in one 50-car page, more for searches with more matches.</div>
-            {cost.measured ? <div>Your last full sync actually used <strong>{n(cost.measured)}</strong>{s.mcQuota && s.mcQuota.lastSync && s.mcQuota.lastSync.unchanged ? <span> — {s.mcQuota.lastSync.unchanged} of {s.mcQuota.lastSync.searches} searches were unchanged and stopped after one page</span> : null}.</div> : <div style={{ color: "#6b6b76" }}>No complete sync recorded yet to measure the real cost.</div>}
+            {cost.national ? (
+              <div>Your <strong>{active}</strong> active profile{active === 1 ? "" : "s"} share one search, run <strong>nationwide</strong> and kept to your <strong>{cost.hubs}</strong> locations' radii: as little as <strong>{n(cost.min)}</strong> call when it fits in one 50-car page, up to 10 when it pages. If too many cars match nationally it costs one extra call, then searches each location as before: up to <strong>{n(cost.max)}</strong>.</div>
+            ) : (
+              <div>Your <strong>{active}</strong> active profile{active === 1 ? "" : "s"} share one search × <strong>{cost.hubs}</strong> location{cost.hubs === 1 ? "" : "s"}, so one sync costs <strong>{range(cost.min, cost.max)}</strong> calls — the minimum when every search fits in one 50-car page, more for searches with more matches.{cost.hubs > 1 ? " (A cheaper nationwide search needs every location to have coordinates — re-add ZIP-only ones from the location picker.)" : ""}</div>
+            )}
+            {cost.measured ? <div>Your last full sync actually used <strong>{n(cost.measured)}</strong>{s.mcQuota && s.mcQuota.lastSync && s.mcQuota.lastSync.unchanged ? <span> — {s.mcQuota.lastSync.unchanged} of {s.mcQuota.lastSync.searches} searches were unchanged and stopped after one page</span> : null}.</div> : <div style={{ color: "#6b6b76" }}>No sync of your current profiles and locations recorded yet to measure the real cost.</div>}
             {left ? (
               <div style={{ marginTop: 6 }}>
                 {summary.fraction == null && !summary.totalRemaining ? "Quota not measured yet." : (<span>
@@ -2445,7 +2457,7 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings, onQuota
     setLive({ busy: true });
     // One location, not all of them: each location is a separate (billed) query,
     // and comps near home are the ones that matter for a fair-price read.
-    fetchPriceComps(result.query, [hub], mcKeys(data)).then(function (r) {
+    fetchPriceComps(result.query, [hub], mcKeys(data), mcSpent(data)).then(function (r) {
       var merged = localPriceCheck(data, candidates, result.query, { extra: r.listings });
       setResult(Object.assign({ query: result.query }, merged));
       setAi(null); // comps changed — any prior AI verdict is stale
@@ -3314,6 +3326,7 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
       text += " · " + syncMsg.errors.length + " query error(s): " + String(syncMsg.errors[0]).slice(0, 240);
       color = "#d4a017";
     }
+    if (syncMsg.notices && syncMsg.notices.length) text += " · " + syncMsg.notices.join(" ");
     if (syncMsg.rateLimited) {
       // Free-tier quota / rate limit: make it unmissable — results are partial.
       // Append when the limit clears if MarketCheck told us.

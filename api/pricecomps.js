@@ -47,10 +47,11 @@ export default async function handler(req, res) {
   const profile = { id: "pricecheck", name: "price check", params: params };
 
   try {
-    const r = await searchListings(keys[0], [profile], hubs, { keys: keys, budgetMs: 45000, keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? envKey : null); }) });
+    const r = await searchListings(keys[0], [profile], hubs, { keys: keys, budgetMs: 45000, spentKeys: body.spentKeys, keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? envKey : null); }) });
     res.status(200).json({
       listings: r.listings,
       errors: r.errors,
+      notices: r.notices,
       rateLimited: !!r.rateLimited,
       rateLimitInfo: r.rateLimitInfo || null,
       quota: r.quota || null,

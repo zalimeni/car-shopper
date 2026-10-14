@@ -8,16 +8,30 @@ const ev = P("ioniq", { make: "Hyundai", model: "Ioniq 5", years: "2023", maxPri
 const row = (make, model, year, price, miles) => ({ vin: make + model + year + price, price, miles, build: { make, model, year } });
 
 describe("groupProfiles", () => {
-  it("merges profiles whose powertrain filter matches (after normalising), keeps others apart", () => {
+  it("puts every profile in one query, whatever its powertrain (powertrain_type takes a list)", () => {
     const g = groupProfiles([rav4, ev, crv]);
-    expect(g.map((x) => x.map((p) => p.id))).toEqual([["rav4", "crv"], ["ioniq"]]);
+    expect(g.map((x) => x.map((p) => p.id))).toEqual([["rav4", "ioniq", "crv"]]);
+    expect(groupProfiles([])).toEqual([]);
   });
 });
 
 describe("mergedProfile", () => {
   it("unions make/model/years and takes the widest limits", () => {
     const m = mergedProfile([rav4, crv]);
-    expect(m.params).toEqual({ make: "Toyota,Honda", model: "RAV4,CR-V", years: "2020,2021,2022", maxPrice: 30000, maxMiles: 80000, powertrain: "Hybrid" });
+    expect(m.params).toEqual({ make: "Toyota,Honda", model: "RAV4,CR-V", years: "2020,2021,2022", maxPrice: 30000, maxMiles: 80000, powertrain: "HEV" });
+  });
+  it("sends the powertrains as one list (verified live: HEV,PHEV returns both)", () => {
+    const prime = P("prime", { make: "Toyota", model: "RAV4", powertrain: "PHEV" });
+    expect(mergedProfile([rav4, prime, crv]).params.powertrain).toBe("HEV,PHEV");
+    expect(mergedProfile([rav4, ev]).params.powertrain).toBeUndefined(); // ev sets none, so no filter
+  });
+  it("checks each row's powertrain against its own profile", () => {
+    const prime = P("prime", { make: "Toyota", model: "RAV4", years: "2021-2022", powertrain: "PHEV" });
+    const r = (pt) => Object.assign(row("Toyota", "RAV4", 2021, 25000, 1000), { build: { make: "Toyota", model: "RAV4", year: 2021, powertrain_type: pt } });
+    expect(attributeRow(r("PHEV"), [rav4, prime]).id).toBe("prime");
+    expect(attributeRow(r("HEV"), [rav4, prime]).id).toBe("rav4");
+    expect(attributeRow(r("Combustion"), [rav4, prime])).toBeNull();
+    expect(mapPowertrain("Electric")).toBe("BEV");
   });
   it("drops a filter any profile leaves unset, so no profile's cars are excluded", () => {
     const loose = P("any-crv", { make: "Honda", model: "CR-V" }); // no years / limits
@@ -97,7 +111,7 @@ describe("searchListings with merged queries", () => {
     mockFetch(() => ({ num_found: 0, listings: [] }));
     await searchListings("K", [rav4, ev], HUB, {});
     expect(calls.every((c) => c.car_type === "used")).toBe(true);
-    expect(calls.length).toBe(2); // two powertrain groups x one location
+    expect(calls.length).toBe(1); // every profile in one query x one location
   });
   it("pages a merged group up to 200 rows per profile (here 400) instead of splitting", async () => {
     mockFetch((q) => ({ num_found: 256, listings: Array.from({ length: Math.min(50, 256 - Number(q.start)) }, (_, i) => row("Toyota", "RAV4", 2021, 20000 + Number(q.start) + i, 1000)) }));

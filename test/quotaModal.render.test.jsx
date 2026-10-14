@@ -12,14 +12,16 @@ vi.mock("../src/admin", () => ({ getMe: async () => ({}), listAllowed: async () 
 vi.mock("../src/snapshots", () => ({ listSnapshots: async () => [], restoreSnapshot: async () => {} }));
 
 const { QuotaGauge, QuotaModal } = await import("../src/App.jsx");
-const { summarize } = await import("../src/quota.js");
+const { summarize, planSig } = await import("../src/quota.js");
 
 const KEYS = [{ key: "sk-aaaa1111", label: "Personal" }, { key: "sk-bbbb2222", label: "Spare" }];
 const FUTURE = new Date(Date.now() + 10 * 86400000).toISOString();
-const store = { snaps: { "1111": { remaining: 0, limit: 500, exhausted: true, reset: FUTURE, at: "2026-10-14T01:00:00Z" }, "2222": { remaining: 350, limit: 500, reset: FUTURE, at: "2026-10-14T01:00:00Z" } }, lastSync: { calls: 14, at: "x" } };
+const PROFILES = [{ id: "a", active: true }, { id: "b", active: true }, { id: "c", active: true }, { id: "d", active: false }];
+const HUBS = [{ n: "Durham, NC", z: "27701" }, { n: "Boston, MA", z: "02108" }]; // ZIP-only: no nationwide search
+const store = { snaps: { "1111": { remaining: 0, limit: 500, exhausted: true, reset: FUTURE, at: "2026-10-14T01:00:00Z" }, "2222": { remaining: 350, limit: 500, reset: FUTURE, at: "2026-10-14T01:00:00Z" } }, lastSync: { calls: 14, at: "x", plan: planSig(PROFILES.filter((p) => p.active), HUBS) } };
 const data = (mcQuota) => ({
-  profiles: [{ id: "a", active: true }, { id: "b", active: true }, { id: "c", active: true }, { id: "d", active: false }],
-  settings: { hubs: [{ n: "Durham, NC", z: "27701" }, { n: "Boston, MA", z: "02108" }], marketcheckKeys: KEYS, mcQuota: mcQuota },
+  profiles: PROFILES,
+  settings: { hubs: HUBS, marketcheckKeys: KEYS, mcQuota: mcQuota },
 });
 const sumOf = (d) => summarize(d.settings.marketcheckKeys, d.settings.mcQuota);
 
@@ -54,14 +56,23 @@ describe("QuotaModal", () => {
     expect(rows[1]).toMatch(/Spare.*…2222.*350.*\/ 500.*in use/);
     cleanup();
   });
-  it("estimates syncs from the CURRENT active profiles (merged by powertrain) x locations", () => {
+  it("estimates syncs from the CURRENT active profiles (all in one search) x locations", () => {
     const { container } = open(data(store));
     const text = container.textContent;
     // 3 active profiles with no powertrain filter -> one merged search x 2 locations
-    expect(text).toMatch(/3 active profiles merge into 1 search \(same powertrain filter\) × 2 locations/);
+    expect(text).toMatch(/3 active profiles share one search × 2 locations/);
+    expect(text).toMatch(/nationwide search needs every location to have coordinates/);
     expect(text).toMatch(/2–20 calls/); // floor 1x2; ceiling 10 pages (500-row cap) x 2
     expect(text).toMatch(/last full sync actually used 14/);
     expect(text).toMatch(/≈ 25 syncs left at your last sync's cost/); // floor(350/14)
+    cleanup();
+  });
+  it("explains the nationwide search when every location has coordinates", () => {
+    const d = data(null);
+    d.settings.hubs = [{ n: "Durham, NC", z: "27701", lat: 36, lon: -78.9 }, { n: "Boston, MA", z: "02108", lat: 42.36, lon: -71.06 }];
+    const { container } = open(d);
+    expect(container.textContent).toMatch(/share one search, run nationwide and kept to your 2 locations' radii/);
+    expect(container.textContent).toMatch(/No sync of your current profiles and locations recorded yet/);
     cleanup();
   });
   it("lists what each kind of call costs", () => {

@@ -131,20 +131,48 @@ export function summarize(userKeys, store, nowMs) {
   return { rows: rows, totalRemaining: totalRemaining, totalLimit: totalLimit, fraction: fl > 0 ? fr / fl : null, unknown: unknown, activeId: activeId, nextReset: nextReset };
 }
 
-// Calls one sync costs. Profiles that share a powertrain filter are merged into
-// one query per location (src/queryPlan.js — the same grouping the server uses),
-// so the floor is (query groups) x (locations). Pages depend on how many cars match,
-// so it's a range until a real sync tells us (`measured`). `activeProfiles` is the
-// array of active profiles (a bare count is accepted and treated as unmergeable).
+// Ids of the keys whose stored snapshot says this month's quota is used up (and
+// hasn't reset yet). Sent with a sync so the server starts on the first live key
+// instead of spending a call per request to rediscover that a key is spent.
+export function spentKeyIds(userKeys, store, nowMs) {
+  return summarize(userKeys, store, nowMs).rows.filter(function (r) { return r.state === "spent"; }).map(function (r) { return r.id; });
+}
+
+// Identity of what a sync searches (active profiles + their filters, locations),
+// so a measured cost is only reused for the same plan — add a location and the
+// last sync's call count no longer says anything.
+export function planSig(activeProfiles, hubs) {
+  const ps = (activeProfiles || []).map(function (p) { return (p && p.id) + ":" + JSON.stringify((p && p.params) || {}); }).sort();
+  const hs = (hubs || []).map(function (h) { return [h.lat, h.lon, h.z, h.r].join(":"); }).sort();
+  return ps.join("|") + "#" + hs.join("|");
+}
+
+// Mirrors api/marketcheck.js geoHubs: a nationwide search needs every location's coordinates.
+function nationalOk(hubs) {
+  return Array.isArray(hubs) && hubs.length > 1 && hubs.every(function (h) { return isFinite(parseFloat(h && h.lat)) && isFinite(parseFloat(h && h.lon)); });
+}
+
+// Calls one sync costs. All active profiles share one query (src/queryPlan.js —
+// the same grouping the server uses). With 2+ locations that all have coordinates
+// the sync first tries ONE nationwide search, kept to your locations' radii
+// locally: 1–10 pages when it fits, else one wasted page and per-location searches
+// (the old plan: a page per location, more for dense ones). Pages depend on how
+// many cars match, so it's a range until a real sync of the same plan measures it.
+// `hubs` is the locations array (a bare count = per-location only, no plan check).
 export function syncCost(activeProfiles, hubs, lastSync) {
   const groups = Array.isArray(activeProfiles) ? groupProfiles(activeProfiles) : Array.from({ length: activeProfiles || 0 }, function () { return [null]; });
   const P = groups.reduce(function (a, g) { return a + g.length; }, 0);
-  const H = hubs || 0;
+  const H = Array.isArray(hubs) ? hubs.length : (hubs || 0);
   const G = groups.length;
   const pagesMax = groups.reduce(function (a, g) { return a + Math.min(PAGE_CEILING, MAX_PAGES * g.length); }, 0);
+  const national = nationalOk(hubs) && G > 0;
+  // A measurement counts only for the plan it measured (when we can tell).
+  const samePlan = !Array.isArray(hubs) || !Array.isArray(activeProfiles) || (lastSync && lastSync.plan === planSig(activeProfiles, hubs));
   return {
-    profiles: P, groups: G, hubs: H, min: G * H, max: pagesMax * H,
-    measured: lastSync && lastSync.calls > 0 ? lastSync.calls : null,
+    profiles: P, groups: G, hubs: H, national: national,
+    min: national ? G : G * H,
+    max: (national ? G : 0) + pagesMax * H,
+    measured: samePlan && lastSync && lastSync.calls > 0 ? lastSync.calls : null,
     perHub: { min: G, max: pagesMax },
     // Price Check's live search runs one query around the home base.
     liveSearch: { min: 1, max: MAX_PAGES },
