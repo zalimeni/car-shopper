@@ -91,6 +91,7 @@ var DEFAULT_SETTINGS = {
   // 20 mi from a travel hub reads as "local" when it's a thousand miles away.
   homeBase: null, // { n, z } — picked from hubs in Settings
   mcQuota: null, // latest MarketCheck quota snapshot per key + last sync cost (see src/quota.js)
+  mcApi: null, // MarketCheck API version + deprecation/sunset headers from the last response (drift banner)
 };
 function getSettings(data) { return Object.assign({}, DEFAULT_SETTINGS, (data && data.settings) || {}); }
 // Ordered list of the user's MarketCheck key strings (empty -> server uses its shared key).
@@ -851,7 +852,7 @@ export default function App() {
         var nowIso = new Date().toISOString();
         var mq1 = ingestSnaps(getSettings(base).mcQuota, res.keyQuotas, nowIso);
         if (!res.rateLimited && !(res.errors && res.errors.length) && res.calls > 0) mq1 = recordSyncCalls(mq1, res.calls, nowIso);
-        syncPatch.settings = Object.assign({}, base.settings || {}, { mcQuota: mq1 });
+        syncPatch.settings = Object.assign({}, base.settings || {}, { mcQuota: mq1 }, res.apiInfo ? { mcApi: Object.assign({}, res.apiInfo, { at: nowIso }) } : {});
       }
       await save(Object.assign({}, base, syncPatch));
       // Report the count actually added to the queue (reconcile's newCount also
@@ -936,10 +937,13 @@ export default function App() {
   var quotaSummary = summarize(((data && getSettings(data).marketcheckKeys) || []), data && getSettings(data).mcQuota);
   // Fold per-key quota that rode back on a response we were making anyway (a live
   // Price Check search) into the gauge. Never makes a request of its own.
-  var noteQuota = useCallback(function (reports) {
-    if (!data || !reports || !reports.length) return;
+  var noteQuota = useCallback(function (reports, apiInfo) {
+    if (!data || ((!reports || !reports.length) && !apiInfo)) return;
     var cur = dataRef.current || data;
-    save(Object.assign({}, cur, { settings: Object.assign({}, cur.settings || {}, { mcQuota: ingestSnaps(getSettings(cur).mcQuota, reports, new Date().toISOString()) }) }));
+    var nowIso = new Date().toISOString();
+    var patch = { mcQuota: ingestSnaps(getSettings(cur).mcQuota, reports || [], nowIso) };
+    if (apiInfo) patch.mcApi = Object.assign({}, apiInfo, { at: nowIso });
+    save(Object.assign({}, cur, { settings: Object.assign({}, cur.settings || {}, patch) }));
   }, [data, save]);
 
   var viewProfile = useCallback(function (profileId) {
@@ -1199,6 +1203,13 @@ export default function App() {
         </div>
       )}
 
+      {apiDriftNotice(getSettings(data).mcApi) && (
+        <div style={S.conflictBar} role="status">
+          <span style={{ flex: 1 }}>⚠ {apiDriftNotice(getSettings(data).mcApi)}</span>
+          <button style={S.smBtn} onClick={function () { setQuotaOpen(true); }}>Details</button>
+        </div>
+      )}
+
       {mcKeys(data).length === 0 && tab !== "Settings" && (
         <div style={S.conflictBar}>
           <span style={{ flex: 1 }}>No MarketCheck API key set — syncs use the app's shared key and may hit its monthly quota. Add your own for reliable results (once you do, the shared key is no longer used).</span>
@@ -1341,6 +1352,40 @@ export function syncWarning(data, nowMs) {
     + (sum.fraction != null ? " (" + Number(sum.totalRemaining).toLocaleString() + " left this month)" : "") + ".\n\nSync anyway?";
 }
 
+// ── MarketCheck API version drift ──
+// Every response says which API version answered and, when that version is on its
+// way out, its deprecation and sunset dates. We pin a version (api/marketcheck.js
+// API_VERSION); this turns those headers into a banner when action is needed.
+var SUNSET_WARN_DAYS = 60;
+function majorOf(v) { var m = String(v || "").match(/v?(\d+)/i); return m ? Number(m[1]) : null; }
+function fmtDay(v) { var t = Date.parse(v); return isNaN(t) ? String(v) : new Date(t).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }); }
+export function apiDriftNotice(api, nowMs) {
+  if (!api) return null;
+  var now = nowMs != null ? nowMs : Date.now();
+  if (api.pinRejected) return "MarketCheck rejected the pinned API version (" + (api.pinned || "?") + "), so syncs are running on its default version" + (api.served ? " (" + api.served + ")" : "") + " — listings may parse wrong until the app is updated.";
+  var pm = majorOf(api.pinned), sm = majorOf(api.served);
+  if (pm != null && sm != null && pm !== sm) return "MarketCheck answered with API " + api.served + ", not the " + api.pinned + " this app was built for — listings may parse wrong until the app is updated.";
+  var sunset = api.sunset ? Date.parse(api.sunset) : NaN;
+  if (!isNaN(sunset)) {
+    var days = Math.ceil((sunset - now) / 86400000);
+    if (days <= 0) return "MarketCheck's API " + (api.served || "version") + " reached its sunset on " + fmtDay(api.sunset) + " — the app needs updating to the new version.";
+    if (days <= SUNSET_WARN_DAYS) return "MarketCheck's API " + (api.served || "version") + " sunsets " + fmtDay(api.sunset) + " (" + days + " day" + (days === 1 ? "" : "s") + ") — the app needs updating before then.";
+  }
+  return null;
+}
+function ApiVersionLine({ api }) {
+  if (!api) return (<p style={S.help}>Not seen yet — it's recorded from your next sync.</p>);
+  var notice = apiDriftNotice(api);
+  return (
+    <div style={{ fontSize: 13, color: "#c8c8d0", lineHeight: 1.6 }}>
+      <div>Served by <strong>{api.served || "unknown"}</strong>{api.pinned ? <span> · pinned to <strong>{api.pinned}</strong>{api.pinRejected ? <span style={{ color: "#e07a7a" }}> (rejected)</span> : null}</span> : " · not pinned"}</div>
+      {(api.deprecation || api.sunset) && <div style={{ color: "#8a8a96" }}>{api.deprecation ? "Deprecated " + fmtDay(api.deprecation) : ""}{api.deprecation && api.sunset ? " · " : ""}{api.sunset ? "sunsets " + fmtDay(api.sunset) : ""}</div>}
+      {notice && <div style={{ color: "#e8c96a", marginTop: 2 }}>⚠ {notice}</div>}
+      {api.at && <div style={{ color: "#555", fontSize: 11 }}>as of {fmtResetTs(api.at)}</div>}
+    </div>
+  );
+}
+
 // Claude-style usage ring: how much of the monthly MarketCheck capacity (all keys
 // together) is left. Grey dashed until a sync or refresh has measured anything.
 var TONE_COLOR = { good: "#3fae74", warn: "#e8c96a", bad: "#e07a7a", none: "#555" };
@@ -1459,6 +1504,9 @@ export function QuotaModal({ data, summary, onClose }) {
             ) : null}
           </div>
         )}
+
+        <h4 style={{ fontSize: 12, color: "#8a8a96", margin: "16px 0 4px", textTransform: "uppercase", letterSpacing: "0.04em" }}>API version</h4>
+        <ApiVersionLine api={s.mcApi} />
 
         <h4 style={{ fontSize: 12, color: "#8a8a96", margin: "16px 0 4px", textTransform: "uppercase", letterSpacing: "0.04em" }}>What each call costs</h4>
         <div style={{ overflowX: "auto" }}>
@@ -2396,7 +2444,7 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings, onQuota
       var merged = localPriceCheck(data, candidates, result.query, { extra: r.listings });
       setResult(Object.assign({ query: result.query }, merged));
       setAi(null); // comps changed — any prior AI verdict is stale
-      if (onQuota) onQuota(r.keyQuotas); // the search already told us each key's quota — keep the gauge current for free
+      if (onQuota) onQuota(r.keyQuotas, r.apiInfo); // the search already told us each key's quota + API version — keep them current for free
       setLive({ done: true, added: (r.listings || []).length, rateLimited: !!r.rateLimited, errors: r.errors || [] });
     }).catch(function (e) {
       setLive({ error: e.message || "Live market check failed" });

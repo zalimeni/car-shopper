@@ -46,13 +46,48 @@ const MAX_RETRIES = 3;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Fetch that retries on HTTP 429 with backoff (honoring Retry-After).
+// ── API version pinning ──
+// Without an x-version header MarketCheck serves its current default, and moves
+// unpinned clients to the next major version on its own schedule. Responses in
+// Oct 2026 said the default (v4.8.0) was deprecated 2026-08-07, sunset 2027-02-28.
+// Pinning keeps us on the version normalize()/buildUrl() were validated against
+// until we choose to move. Set MARKETCHECK_API_VERSION to change it, or to an
+// empty string to send no pin at all.
+export const API_VERSION = process.env.MARKETCHECK_API_VERSION != null ? String(process.env.MARKETCHECK_API_VERSION).trim() : "v4.8.0";
+
+function withVersion(opts, pin) {
+  const headers = Object.assign({ Accept: "application/json" }, (opts && opts.headers) || {});
+  if (pin && API_VERSION) headers["x-version"] = API_VERSION;
+  return Object.assign({}, opts || {}, { headers: headers });
+}
+
+// Version + lifecycle headers on a response, or null when it carries none.
+export function readApiInfo(r) {
+  const h = function (k) { return r && r.headers && r.headers.get ? r.headers.get(k) : null; };
+  const info = {
+    served: h("served-by-version"), requested: h("requested-from-version"), autoUpgraded: h("auto-upgraded-version"),
+    deprecation: h("deprecation"), sunset: h("sunset"),
+  };
+  return info.served || info.requested || info.deprecation || info.sunset ? info : null;
+}
+
+// Fetch that retries on HTTP 429 with backoff (honoring Retry-After), sending the
+// pinned API version. If MarketCheck rejects the pin itself (a 400 that names the
+// version) it retries once unpinned, so a bad pin can't take sync down — and says
+// so via meter.pinRejected, which the UI surfaces.
 async function fetchWithRetry(url, opts, maxRetries, meter) {
   const limit = maxRetries != null ? maxRetries : MAX_RETRIES;
   let attempt = 0;
+  let pin = !!API_VERSION && !(meter && meter.pinRejected);
   while (true) {
     if (meter) meter.calls++; // every request actually sent, retries included
-    const r = await fetch(url, opts);
+    const r = await fetch(url, withVersion(opts, pin));
+    if (pin && r.status === 400) {
+      let text = "";
+      try { text = r.clone ? await r.clone().text() : ""; } catch (e) { /* ignore */ }
+      if (/version/i.test(text)) { pin = false; if (meter) meter.pinRejected = true; continue; }
+    }
+    if (meter) { const a = readApiInfo(r); if (a) meter.api = a; }
     // A 429 that says the MONTH is spent won't clear by waiting — return at once.
     // One that's just the per-second throttle does, so back off and retry.
     if (r.status !== 429 || attempt >= limit || await isSpent(r)) return r;
@@ -127,10 +162,10 @@ function keyRing(keys) {
 // ring and repeat the same request — but only when the key's MONTHLY quota is
 // spent. A momentary throttle is retried on the same key (fetchWithRetry), since
 // the next key would just be spending someone else's quota to dodge a pause.
-async function fetchAcrossKeys(ring, makeUrl, opts) {
+async function fetchAcrossKeys(ring, makeUrl, opts, meter) {
   while (true) {
     const url = makeUrl(ring.key());
-    const r = await fetchWithRetry(url, opts);
+    const r = await fetchWithRetry(url, opts, undefined, meter);
     if ((await isSpent(r)) && ring.next()) continue;
     return { r: r, url: url };
   }
@@ -187,8 +222,10 @@ export default async function handler(req, res) {
     const ring = keyRing(keys);
     const out = { request: buildVinUrl("REDACTED", vin), vin: vin };
     try {
-      const f = await fetchAcrossKeys(ring, function (k) { return buildVinUrl(k, vin); }, { headers: { Accept: "application/json" } });
+      const vm = { calls: 0 };
+      const f = await fetchAcrossKeys(ring, function (k) { return buildVinUrl(k, vin); }, {}, vm);
       const r = f.r;
+      out.apiVersion = Object.assign({ pinned: API_VERSION || null, pinRejected: !!vm.pinRejected }, vm.api || {});
       Object.assign(out, ring.used());
       out.status = r.status;
       const text = await r.text();
@@ -217,8 +254,10 @@ export default async function handler(req, res) {
     const url = buildUrl("REDACTED", pr, hub);
     const debug = { request: url, profile: pr.id, hub: hub };
     try {
-      const f = await fetchAcrossKeys(ring, function (k) { return buildUrl(k, pr, hub); }, { headers: { Accept: "application/json" } });
+      const dm = { calls: 0 };
+      const f = await fetchAcrossKeys(ring, function (k) { return buildUrl(k, pr, hub); }, {}, dm);
       const r = f.r;
+      debug.apiVersion = Object.assign({ pinned: API_VERSION || null, pinRejected: !!dm.pinRejected }, dm.api || {});
       Object.assign(debug, ring.used());
       debug.status = r.status;
       const text = await r.text();
@@ -250,7 +289,7 @@ export default async function handler(req, res) {
               const u = new URL(buildUrl(k, pr, hub));
               v.drop.forEach(function (d) { u.searchParams.delete(d); });
               return u.toString();
-            }, { headers: { Accept: "application/json" } });
+            }, {});
             const rr = ff.r;
             const jj = await rr.json().catch(function () { return null; });
             const entry = { relaxed: v.relaxed, status: rr.status, num_found: jj && jj.num_found != null ? jj.num_found : null };
@@ -287,7 +326,7 @@ export default async function handler(req, res) {
   }
 
   const r = await searchListings(apiKey, profiles, hubs, { dealerType: dealerType, keys: keys, keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? envKey : null); }) });
-  res.status(200).json({ listings: r.listings, errors: r.errors, rateLimited: !!r.rateLimited, rateLimitInfo: r.rateLimitInfo || null, quota: r.quota || null, keysUsed: r.keysUsed, keyQuotas: r.keyQuotas || [], calls: r.calls || 0 });
+  res.status(200).json({ listings: r.listings, errors: r.errors, rateLimited: !!r.rateLimited, rateLimitInfo: r.rateLimitInfo || null, quota: r.quota || null, keysUsed: r.keysUsed, keyQuotas: r.keyQuotas || [], calls: r.calls || 0, apiInfo: r.apiInfo, formatSuspect: !!r.formatSuspect });
 }
 
 // Core active-inventory search for a set of profiles × hubs — shared by the
@@ -308,6 +347,10 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
   const seen = {}; // vin -> normalized listing (dedup across hubs, keep lowest price)
   const errors = [];
   let queries = 0, splits = 0;
+  // Drift guard: rows missing the fields every listing must have. A burst of these
+  // means MarketCheck's response shape changed under us (e.g. a new major version),
+  // which would otherwise just drop listings silently.
+  let rowsSeen = 0, malformed = 0, shapeless = false;
 
   // Stop issuing new queries before the function wall so we return partial
   // results instead of a 504. The client already splits by hub, so this is a
@@ -342,7 +385,7 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
       first = false;
       try {
         const url = buildUrl(keys[keyIdx], pr, hub, start, carType, dealerType);
-        const r = await fetchWithRetry(url, { headers: { Accept: "application/json" } }, undefined, meter);
+        const r = await fetchWithRetry(url, {}, undefined, meter);
         if (!r.ok) {
           let body = "";
           try { body = (await r.text()).slice(0, 300); } catch (e) { /* ignore */ }
@@ -386,7 +429,9 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
         if (qrem != null) quota = { remaining: qrem, limit: num(r.headers.get("quota-limit")), reset: r.headers.get("quota-reset-time") || null };
         const json = await r.json();
         const numFound = typeof json.num_found === "number" ? json.num_found : null;
+        if (!Array.isArray(json.listings) && json.num_found == null) shapeless = true;
         const rows = Array.isArray(json.listings) ? json.listings : [];
+        rows.forEach(function (row) { rowsSeen++; if (!row || !row.vin || !row.build || !row.build.make || !row.build.model) malformed++; });
         rows.forEach(onRow);
         // A merged query too big to page completely: run its profiles separately
         // (this page's rows are already kept — dedupe handles the overlap).
@@ -431,7 +476,14 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
     }
   }
 
+  const formatSuspect = shapeless || (rowsSeen >= 10 && malformed / rowsSeen >= 0.5);
+  if (formatSuspect) {
+    errors.unshift("⚠ MarketCheck's response format looks changed (" + (shapeless ? "no listings array" : malformed + " of " + rowsSeen + " rows missing VIN/make/model")
+      + ", served by " + ((meter.api && meter.api.served) || "an unknown API version") + ") — listings may be missing or wrong. Check Debug raw.");
+  }
   return {
+    formatSuspect: formatSuspect,
+    apiInfo: Object.assign({ pinned: API_VERSION || null, pinRejected: !!meter.pinRejected }, meter.api || {}),
     listings: Object.values(seen), errors: errors, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota,
     keysUsed: keysUsed, keyQuotas: Object.keys(snaps).map(function (i) { return snaps[i]; }), calls: meter.calls,
     queries: queries, splits: splits,

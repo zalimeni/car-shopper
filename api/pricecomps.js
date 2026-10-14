@@ -56,6 +56,8 @@ export default async function handler(req, res) {
       quota: r.quota || null,
       keysUsed: r.keysUsed,
       keyQuotas: r.keyQuotas || [],
+      apiInfo: r.apiInfo,
+      formatSuspect: !!r.formatSuspect,
       calls: r.calls || 0,
     });
   } catch (e) {

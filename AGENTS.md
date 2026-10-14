@@ -106,6 +106,14 @@ See `docs/listing-pipeline.md` for the full design. In short:
 - **All MarketCheck-specific field/param names live in `buildUrl()` and
   `normalize()` in `api/marketcheck.js`** — if the API shape is wrong, that's the
   only place to change.
+- **API version is pinned** (`x-version`, `API_VERSION` in `api/marketcheck.js`,
+  default `v4.8.0`, overridable via `MARKETCHECK_API_VERSION`). Every response's
+  `served-by-version` / `deprecation` / `sunset` headers are stored in
+  `settings.mcApi`; the app shows a banner within 60 days of sunset, if a different
+  major version answers, or if the pin is rejected (sync then retries unpinned).
+  A sync where most rows lack VIN/make/model is flagged as a format change rather
+  than silently dropping listings. To move versions: update `normalize()` /
+  `buildUrl()` + the fixture, then bump `API_VERSION`.
 
 `App.jsx` is large but navigable; in order: constants/defaults (incl.
 `DEFAULT_SETTINGS`, `roleColor`, `RoleBadge`) → utilities (`calcRem`, `applyScore`)
