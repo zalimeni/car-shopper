@@ -95,6 +95,32 @@ export default async function handler(req, res) {
   // Debug: run one real query (first profile × first hub) and return the raw
   // MarketCheck response alongside how normalize() maps it — for confirming the
   // live field names. Key redacted from the echoed URL.
+  // VIN lookup (raw mode): fetch every active record MarketCheck has for one VIN
+  // and lay out all its price-related fields — for answering "why does the app
+  // show a different price than the dealer's site?" without guessing.
+  if (raw && typeof body.vin === "string" && body.vin.trim()) {
+    const vin = body.vin.trim().toUpperCase();
+    if (!/^[A-HJ-NPR-Z0-9]{17}$/.test(vin)) { res.status(400).json({ error: "That doesn't look like a 17-character VIN" }); return; }
+    const url = buildVinUrl(apiKey, vin);
+    const out = { request: url.replace(/(api_key=)[^&]*/, "$1REDACTED"), vin: vin };
+    try {
+      const r = await fetchWithRetry(url, { headers: { Accept: "application/json" } });
+      out.status = r.status;
+      const text = await r.text();
+      let json = null;
+      try { json = JSON.parse(text); } catch (e) { /* non-JSON body */ }
+      const rows = json && Array.isArray(json.listings) ? json.listings : [];
+      out.num_found = json && json.num_found != null ? json.num_found : rows.length;
+      out.records = rows.map(function (row) { return Object.assign(priceFacts(row), { appWouldStore: normalize(row, "debug").price }); });
+      out.rawRecords = rows.map(stripMedia);
+      if (!r.ok || !rows.length) out.body = text.slice(0, 600);
+    } catch (e) {
+      out.error = e && e.message ? e.message : "fetch failed";
+    }
+    res.status(200).json(JSON.parse(JSON.stringify(out).replace(/api_key=[^"&\\\s]+/g, "api_key=REDACTED")));
+    return;
+  }
+
   if (raw) {
     const pr = profiles[0];
     const hub = hubs[0];
@@ -287,6 +313,34 @@ export async function searchListings(apiKey, profiles, hubs, opts) {
 }
 
 // ── MarketCheck query construction ──
+// One VIN, any car_type (a VIN may be listed under more than one).
+export function buildVinUrl(apiKey, vin) {
+  const q = new URLSearchParams();
+  q.set("api_key", apiKey);
+  q.set("vin", vin);
+  q.set("rows", "10");
+  return HOST + ENDPOINT + "?" + q.toString();
+}
+
+// Every price-related field on a raw record, side by side, plus who/when — the
+// docs say last_seen_at_date is the last time the car was active at this price.
+export function priceFacts(row) {
+  row = row || {};
+  const dealer = row.dealer || {};
+  return {
+    price: row.price != null ? row.price : null,
+    msrp: row.msrp != null ? row.msrp : null,
+    ref_price: row.ref_price != null ? row.ref_price : null,
+    price_change_percent: row.price_change_percent != null ? row.price_change_percent : null,
+    first_seen_at_date: row.first_seen_at_date || row.scraped_at_date || null,
+    last_seen_at_date: row.last_seen_at_date || null,
+    inventory_type: row.inventory_type || null,
+    seller_type: row.seller_type || null,
+    source: row.source || null,
+    dealer: dealer.name || null,
+    vdp_url: row.vdp_url || null,
+  };
+}
 export function buildUrl(apiKey, profile, hub, start, carType, dealerType) {
   const p = profile.params || {};
   const q = new URLSearchParams();

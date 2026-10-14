@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { buildUrl, parseYears, normalize, mapDealerType, isCpo, mapPowertrain, pickPhoto, safeHttpUrl } from "../api/marketcheck.js";
+import { buildUrl, parseYears, normalize, mapDealerType, isCpo, mapPowertrain, pickPhoto, safeHttpUrl, buildVinUrl, priceFacts } from "../api/marketcheck.js";
 
 const fixture = JSON.parse(
   readFileSync(fileURLToPath(new URL("./fixtures/marketcheck-active-search.json", import.meta.url)), "utf8")
@@ -207,5 +207,20 @@ describe("isCpo", () => {
   it("normalize surfaces cpo from is_certified", () => {
     expect(normalize({ vin: "X", is_certified: 1, build: {} }, "p").cpo).toBe(true);
     expect(normalize({ vin: "Y", build: {} }, "p").cpo).toBe(false);
+  });
+});
+
+describe("VIN price lookup (debug)", () => {
+  it("builds a single-VIN query with no car_type filter, so used/certified/new all show", () => {
+    const u = new URL(buildVinUrl("KEY", "KNDPUCDF5R7123456"));
+    expect(u.searchParams.get("vin")).toBe("KNDPUCDF5R7123456");
+    expect(u.searchParams.get("car_type")).toBeNull();
+    expect(u.pathname).toBe("/v2/search/car/active");
+  });
+  it("lays out every price-related field plus last-seen, without dropping nulls silently", () => {
+    const f = priceFacts({ price: 26683, msrp: 31000, ref_price: 25995, price_change_percent: 2.6,
+      last_seen_at_date: "2026-10-12", scraped_at_date: "2026-09-30", source: "kiaoftheshoals.com", dealer: { name: "Kia of the Shoals" } });
+    expect(f).toMatchObject({ price: 26683, msrp: 31000, ref_price: 25995, price_change_percent: 2.6, last_seen_at_date: "2026-10-12", first_seen_at_date: "2026-09-30", dealer: "Kia of the Shoals" });
+    expect(priceFacts({}).ref_price).toBeNull();
   });
 });

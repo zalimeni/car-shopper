@@ -891,9 +891,9 @@ export default function App() {
   // confirming live field names.
   useEffect(function () {
     if (typeof window === "undefined" || !data) return;
-    window.__rawSync = function () {
+    window.__rawSync = function (vin) {
       var active = data.profiles.filter(function (p) { return p.active; });
-      return fetchRawSample(active, getSettings(data).hubs).then(function (r) { console.log("[rawSync]", r); return r; });
+      return fetchRawSample(active, getSettings(data).hubs, vin).then(function (r) { console.log("[rawSync]", r); return r; });
     };
   }, [data]);
 
@@ -901,10 +901,13 @@ export default function App() {
   // (mobile-friendly equivalent of window.__rawSync()).
   var runRawDebug = useCallback(async function () {
     if (!data || rawBusy) return;
+    // Optional: a VIN shows every price field MarketCheck holds for that car.
+    var vin = window.prompt("VIN to look up (blank = the normal one-query sample)", "");
+    if (vin === null) return;
     setRawBusy(true); setRawDebug("");
     try {
       var active = data.profiles.filter(function (p) { return p.active; });
-      var r = await fetchRawSample(active, getSettings(data).hubs);
+      var r = await fetchRawSample(active, getSettings(data).hubs, vin.trim());
       setRawDebug(JSON.stringify(r, null, 2));
     } catch (e) { setRawDebug("Error: " + (e && e.message ? e.message : String(e))); }
     setRawBusy(false);
