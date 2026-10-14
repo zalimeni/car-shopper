@@ -30,7 +30,7 @@ describe("QuotaGauge", () => {
     const d = data(store);
     render(<QuotaGauge summary={sumOf(d)} onClick={() => {}} />);
     const b = screen.getByRole("button");
-    expect(b.getAttribute("aria-label")).toMatch(/350 calls left \(35%\)/);
+    expect(b.getAttribute("aria-label")).toMatch(/65% used, 350 calls left/);
     cleanup();
   });
   it("says 'not measured' before anything is known, and opens on click", () => {

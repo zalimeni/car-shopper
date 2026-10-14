@@ -190,8 +190,11 @@ export function syncsLeft(remaining, cost) {
   };
 }
 
-// good / warn / bad by share of capacity left; null when we can't tell.
-export function gaugeTone(fraction) {
-  if (fraction == null) return "none";
-  return fraction >= 0.4 ? "good" : fraction >= 0.15 ? "warn" : "bad";
+
+// Usage-bar colour by share USED (the bar fills up as calls are spent, like
+// Claude's usage meter): neutral until three-quarters used, then amber, red from
+// 90%; grey when unknown.
+export function gaugeTone(used) {
+  if (used == null) return "none";
+  return used >= 0.9 ? "bad" : used >= 0.75 ? "warn" : "ok";
 }
