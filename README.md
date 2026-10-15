@@ -30,9 +30,8 @@ data live in Supabase.
 - **Setup wizard** — a guided first run (budget, locations, profiles, rules)
   for new users; re-runnable without wiping data.
 
-The default setup is opinionated (the owner's): a two-car, ≤$40K Northeast
-hybrid/EV search (RAV4 Hybrid/Prime + Bolt EUV/EV + Volt; hubs in Boston MA and
-Durham NC). The wizard and Settings make all of that yours.
+The default setup is opinionated (the owner's): a two-car, ≤$40K Durham-based
+hybrid/EV search (RAV4 Hybrid/Prime + Bolt EUV/EV + Volt; home base Durham NC). The wizard and Settings make all of that yours.
 
 ## Tabs
 

@@ -72,18 +72,17 @@ var DEFAULT_CRITERIA = [
 ];
 
 var HUBS = [
-  { n: "Boston MA", z: "02101", lat: 42.3601, lon: -71.0589 },
   { n: "Durham NC", z: "27701", lat: 35.994, lon: -78.8986 },
 ];
 
 // Per-user settings (synced in data.settings). Defaults preserve the original
-// two-car/Northeast setup; the setup wizard and the Settings card edit them.
+// two-car, Durham-based setup; the setup wizard and the Settings card edit them.
 // There's no single/multi-car "mode" — one-car shopping is just the case where
 // only one car type (role) is active, and the pairing widgets follow from that.
 var DEFAULT_SETTINGS = {
   budget: BUDGET,
   taxRate: TAX,
-  tagline: "2-car · Boston + Durham · ≤$40K",
+  tagline: "2-car · Durham · ≤$40K",
   hubs: HUBS,
   franchiseOnly: false, // when true, sync targets franchise dealers only (excludes independent)
   marketcheckKeys: [], // per-user MarketCheck API keys, tried in order with quota fallback: [{ key, label }]
@@ -2290,7 +2289,7 @@ function Wizard({ data, onComplete }) {
           {step === 0 && (
             <div>
               <p style={lbl}>This app tracks used-car listings from dealer inventory across your search areas, scores them against your criteria (optionally with AI), and keeps a watchlist with price-change and still-available tracking.</p>
-              <p style={lbl}>A few quick questions to tailor it to you. <span style={b}>Everything here is editable later</span> on the Profiles tab — and the starter cars, locations, and rules below are opinionated defaults (a Northeast hybrid/EV, two-car search) you can keep, change, or clear.</p>
+              <p style={lbl}>A few quick questions to tailor it to you. <span style={b}>Everything here is editable later</span> on the Profiles tab — and the starter cars, locations, and rules below are opinionated defaults (a Durham-based hybrid/EV, two-car search) you can keep, change, or clear.</p>
             </div>
           )}
           {step === 1 && (
@@ -2308,7 +2307,7 @@ function Wizard({ data, onComplete }) {
           {step === 2 && (
             <div>
               <p style={lbl}>You can shop for one car or several. Each "profile" is one vehicle you're hunting (make/model/years/price). Profiles can have an optional <span style={b}>category</span> (e.g. "SUV", "Daily") to group your watchlist — single-car shoppers can ignore it.</p>
-              <p style={lbl}>The starter set is the owner's picks: <span style={b}>{starterProfiles.map(function (p) { return p.name; }).join(", ") || "none"}</span> — Northeast hybrid/EV oriented.</p>
+              <p style={lbl}>The starter set is the owner's picks: <span style={b}>{starterProfiles.map(function (p) { return p.name; }).join(", ") || "none"}</span> — hybrid/EV oriented.</p>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <button style={Object.assign({}, S.secBtn, keepProfiles ? { borderColor: "#2563eb", color: "#fff" } : {})} onClick={function () { setKeepProfiles(true); }}>
                   {keepProfiles ? "✓ " : ""}Keep the {starterProfiles.length} starter profile{starterProfiles.length === 1 ? "" : "s"} (edit later)

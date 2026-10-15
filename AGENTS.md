@@ -10,7 +10,7 @@ aggregator, scores listings against weighted criteria (optionally with AI using
 the user's own Anthropic key), and keeps a watchlist with price/availability
 tracking. Budget, search locations, and freeform categories are configurable
 (one car or several); a setup wizard handles first-run. Access is allowlisted;
-the default config is opinionated (the owner's two-car ≤$40K Northeast hybrid/EV
+the default config is opinionated (the owner's two-car ≤$40K Durham-based hybrid/EV
 search) but fully editable.
 
 It is a small, pragmatic app — not a framework. Favor simple, surgical changes
@@ -219,7 +219,7 @@ the **API surface only** (no DB/user-data access; RLS still applies). Example:
 ```bash
 curl -X POST "$SITE/api/marketcheck?raw=1" \
   -H "Authorization: Bearer $DEBUG_TOKEN" -H "Content-Type: application/json" \
-  -d '{"profiles":[{"id":"rav4-hybrid","name":"RAV4 Hybrid","params":{"make":"Toyota","model":"RAV4 Hybrid","years":"2019-2022","maxPrice":25000,"maxMiles":90000}}],"hubs":[{"n":"Boston MA","z":"02101"}]}'
+  -d '{"profiles":[{"id":"rav4-hybrid","name":"RAV4 Hybrid","params":{"make":"Toyota","model":"RAV4 Hybrid","years":"2019-2022","maxPrice":25000,"maxMiles":90000}}],"hubs":[{"n":"Durham NC","z":"27701"}]}'
 ```
 Use `?mock=1` instead of `?raw=1` to avoid hitting MarketCheck. Rotate
 `DEBUG_TOKEN` to revoke. For a *real user* session (to exercise data/RLS), the

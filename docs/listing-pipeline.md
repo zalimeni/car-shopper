@@ -63,7 +63,7 @@ App opens (user authenticated)  ──or── "Sync now" button
          The browser sends this as one request (national:"only"), then one
          request per hub for the leftovers (`localProfiles`); cron does both in
          one call.
-         Then, for the leftovers × each hub (Boston 02101, Durham 27701 @ radius):
+         Then, for the leftovers × each hub (e.g. Durham 27701 @ radius):
            # radius = MARKETCHECK_RADIUS, default 100mi (free-tier cap); raise on a paid plan
            ONE query MarketCheck /v2/search/car/active, car_type=used (paginate)
              # make/model/year as comma-separated unions, widest price/miles caps;
