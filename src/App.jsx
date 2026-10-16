@@ -15,7 +15,7 @@ import { homeMiles } from "./geo";
 import { parseMarkdown, clampMemo, MEMO_MAX } from "./markdown";
 import { addTag, removeTag, allTags, hasTag, TAG_MAX } from "./tags";
 import { baseColorOf, colorHideReason, colorChoices, COMMON_COLORS } from "./colors";
-import { summarize, ingestSnaps, recordSyncCalls, syncsLeft, gaugeTone, dedupeKeyEntries, spentKeyIds, FREE_PLAN_CALLS } from "./quota";
+import { summarize, ingestSnaps, recordSyncCalls, syncsLeft, gaugeTone, dedupeKeyEntries, spentKeyIds, FREE_PLAN_CALLS, parseMcTime } from "./quota";
 import { loadLocations, searchLocations, hubFromZip } from "./locations";
 
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
@@ -3433,7 +3433,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
 // Compact absolute timestamp (e.g. "Aug 1, 12:00 AM") for reset times.
 function fmtResetTs(iso) {
   if (!iso) return "";
-  var d = new Date(iso);
+  var d = new Date(parseMcTime(iso)); // MarketCheck's "YYYY-MM-DD HH:MM:SS UTC" too (Safari can't parse it natively)
   if (isNaN(d.getTime())) return "";
   return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }

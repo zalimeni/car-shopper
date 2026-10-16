@@ -24,6 +24,7 @@
 import { authorize } from "./_auth.js";
 import { mapPowertrain, parseYears } from "../src/queryPlan.js";
 import { searchStates } from "../src/regions.js";
+import { isoMcTime } from "../src/quota.js";
 
 export { mapPowertrain, parseYears };
 
@@ -125,7 +126,7 @@ export function readQuota(r, bodyText) {
   const h = function (k) { return r.headers && r.headers.get ? r.headers.get(k) : null; };
   const remaining = num(h("quota-remaining"));
   const limit = num(h("quota-limit"));
-  const reset = h("quota-reset-time") || null;
+  const reset = isoMcTime(h("quota-reset-time"));
   const quotaWords = /quota|monthly/i.test(String(bodyText || ""));
   // Retry-After of an hour or more can only mean "next month" — the per-second
   // throttle clears in seconds. 402 (payment required) is always a spent plan.
@@ -435,7 +436,7 @@ async function getPage(s, makeUrl, label, opts) {
         s.timeUp = true;
         s.rateLimitInfo = {
           status: r.status, retryAfter: num(r.headers.get("retry-after")),
-          rateReset: r.headers.get("ratelimit-reset-time") || null, quotaReset: r.headers.get("quota-reset-time") || null,
+          rateReset: isoMcTime(r.headers.get("ratelimit-reset-time")), quotaReset: isoMcTime(r.headers.get("quota-reset-time")),
           rateRemaining: num(r.headers.get("ratelimit-remaining")), quotaRemaining: num(r.headers.get("quota-remaining")),
         };
         const whose = s.keys.length === 1 ? "your key" : "all " + s.keys.length + " keys";
@@ -452,7 +453,7 @@ async function getPage(s, makeUrl, label, opts) {
     const q = readQuota(r, "");
     if (q) s.snaps[s.keyIdx] = Object.assign({ id: s.ids[s.keyIdx] }, q);
     const qrem = num(r.headers.get("quota-remaining"));
-    if (qrem != null) s.quota = { remaining: qrem, limit: num(r.headers.get("quota-limit")), reset: r.headers.get("quota-reset-time") || null };
+    if (qrem != null) s.quota = { remaining: qrem, limit: num(r.headers.get("quota-limit")), reset: isoMcTime(r.headers.get("quota-reset-time")) };
     let json;
     try { json = await r.json(); } catch (e) { s.errors.push(label + ": unreadable response"); return null; }
     if (opts && opts.decode) return { rows: [], numFound: null, facets: null, json: json };
