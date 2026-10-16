@@ -13,7 +13,7 @@ describe("v8 migration: searches went nationwide", () => {
     expect(d.settings.mcSearches).toBeUndefined();
     expect(d.settings.homeBase).toMatchObject({ z: "27701", lat: 35.99 });
     expect(d.settings.saltMode).toBe("exclude");
-    expect(d.version).toBe(8);
+    expect(d.version).toBe(9);
   });
   it("keeps a chosen home base, borrowing coordinates from its matching location", () => {
     const d = migrate({ version: 7, settings: { homeBase: { n: "Durham NC", z: "27701" }, hubs: [{ n: "Boston MA", z: "02101", lat: 42.36, lon: -71.06 }, { n: "Durham NC", z: "27701", lat: 35.99, lon: -78.9 }] } });
@@ -21,5 +21,15 @@ describe("v8 migration: searches went nationwide", () => {
   });
   it("leaves the home base empty when no location had coordinates", () => {
     expect(migrate({ version: 7, settings: { homeBase: null, hubs: [{ z: "02101" }] } }).settings.homeBase).toBeNull();
+  });
+});
+
+describe("v9 migration: trim text filters are gone", () => {
+  it("drops trimInclude/trimExclude, keeps the chips", () => {
+    const d = migrate({ version: 8, settings: {}, profiles: [
+      { id: "a", params: { make: "Subaru", trimExclude: "XT", trimInclude: "", excludeTrims: ["Limited XT"] } },
+      { id: "b", params: { make: "Chevrolet" } }] });
+    expect(d.profiles[0].params).toEqual({ make: "Subaru", excludeTrims: ["Limited XT"] });
+    expect(d.profiles[1].params).toEqual({ make: "Chevrolet" });
   });
 });

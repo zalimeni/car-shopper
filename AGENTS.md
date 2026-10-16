@@ -50,7 +50,7 @@ over architecture.
 | `src/regions.js` | Salt-belt states and the `state=` list a search sends (salt belt excluded, or every state when flagging). Pure. |
 | `src/airports.js`, `src/travel.js` | Major-airport list + `travelFacts`: miles from the home base ("ship or fly" past 500), nearest airport ("fly-in friendly" within 50 mi), salt-belt flag. Flags only — never filters. Used by cards and AI scoring. Pure, tested. |
 | `src/colors.js` | Per-profile exterior-color filter (`params.excludeColors`, `params.includeUnlistedColor` default on), applied on our side to candidates — matches MarketCheck's normalized `baseColor` (`base_ext_color`; filled from the VIN decoder when a listing has none), keyword fallback for older listings. The editor's choices come from a facet (counts per color, plus how many list none) fetched when a profile is saved with new search filters (`refreshProfileFacets` → a `count` step) and refreshed by every full refresh (facet on its page 1, no extra call). Global `settings.defaultExcludeColors` seeds new profiles. Pure, tested. |
-| `src/trims.js` | Per-profile trim + drivetrain chips — same model as colors, from the same facet call. Trims are MarketCheck's `version` (what cards show; tells "Limited XT" from "Limited"), three states: ☆ neutral / ★ preferred (`params.preferTrims`, mirrored into `params.trims` for the scorer) / hidden (`params.excludeTrims`); drivetrains hide-only (`params.excludeDrivetrains`). Choices = facet ∪ trims seen on synced cars. The old fuzzy `trimInclude`/`trimExclude` text still filters until the editor converts it (`legacyTrimChips`). Pure, tested. |
+| `src/trims.js` | Per-profile trim + drivetrain chips — same model as colors, from the same facet call. Trims are MarketCheck's `version` (what cards show; tells "Limited XT" from "Limited"), three states: ☆ neutral / ★ preferred (`params.preferTrims`, mirrored into `params.trims` for the scorer) / hidden (`params.excludeTrims`); drivetrains hide-only (`params.excludeDrivetrains`). Choices = facet ∪ trims seen on synced cars. (Replaced the old fuzzy `trimInclude`/`trimExclude` text; migrate v9 dropped it.) Pure, tested. |
 | `src/tags.js` | Freeform listing tags (`listing.tags`): add/remove (case-insensitive, adopts an existing tag's spelling), `allTags` for suggestions + the Results/Compare tag filter. AI scoring sees them; editing never marks a score stale. Pure, tested. |
 | `src/compareCols.js` | Compare table column layout: user order (drag a header) + pins (sticky on the left), stored in `settings.compareCols`. `layoutColumns`/`moveColumn`/`togglePin`. Pure, tested. |
 | `src/markdown.js` | Safe Markdown parser for listing notes (text → typed tree, never HTML; http(s)-only links) + the `MEMO_MAX` (4,000-char) limit. Pure, tested. Rendered by `MarkdownView` / `ListingMemo` in `App.jsx`. |
@@ -211,9 +211,9 @@ per environment (Preview vs Production) — set keys in the env you're testing.
 ## UI patterns (reuse these)
 
 - **Tabs** (`TABS` in `App.jsx`): Dashboard, Profiles (profile editor `ProfEd`:
-  search fields, trim include/exclude — free-text, comma-separated, not chips —
-  `ColorFilter` chips), Criteria, Results (candidates `CandCard`, watchlist
-  `LCard`), Compare (sortable table; rows open the card), Price, Settings, Help.
+  search fields, then `TrimChips` / `DrivetrainChips` / `ColorFilter` chips),
+  Criteria, Results (candidates `CandCard`, watchlist `LCard`), Compare
+  (sortable table; rows open the card), Price, Settings, Help.
   User-facing changes get a line in `HelpTab`.
 - **Modals:** fixed backdrop (`zIndex: 200`) that closes on `onMouseDown`, inner
   dialog stops propagation, Escape closes via a `keydown` listener —
@@ -229,18 +229,6 @@ per environment (Preview vs Production) — set keys in the env you're testing.
 - **Touch / iOS Home Screen:** the owner uses it as an iPhone web app. Inputs are
   16px on coarse pointers (no zoom); HTML5 drag-and-drop doesn't work with touch,
   so drags use pointer events on a `touch-action: none` grip (Compare headers).
-
-## Pending cleanup
-
-- **Old trim text filters** (`params.trimInclude` / `params.trimExclude`, fuzzy
-  substrings): replaced by trim chips (`src/trims.js`). The owner is resaving each
-  profile to convert them (profile cards show "⚠ Old trim text filter" until
-  then). Once none are left, delete the legacy path: `legacyTrimHide` /
-  `legacyTrimChips` and their tests, the conversion in `ProfEd`, the legacy
-  branches of `showTrim`, the text inputs + "Only/Exclude trims" summary + ⚠ note
-  on profile cards, and the `trimInclude`/`trimExclude` defaults (convert
-  `DEFAULT_PROFILES`' Outback to `excludeTrims`). Add a `migrate()` step that
-  deletes any leftover keys.
 
 ## Debugging playbook
 

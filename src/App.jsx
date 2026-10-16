@@ -6,7 +6,7 @@ import { planSync, trackedVins, nextProfileMeta, estimateCost, profileStatus, se
 import { travelFacts, DRIVE_MAX_MI, AIRPORT_NEAR_MI } from "./travel";
 import { SALT_STATES, isSaltState } from "./regions";
 import { layoutColumns, moveColumn, togglePin } from "./compareCols";
-import { trimHideReason, trimState, setTrimState, nextTrimState, facetChoices, legacyTrimChips } from "./trims";
+import { trimHideReason, trimState, setTrimState, nextTrimState, facetChoices } from "./trims";
 import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBaseline, generatePriceAssessment, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
 import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
 import { listSnapshots, restoreSnapshot } from "./snapshots";
@@ -23,7 +23,7 @@ import { loadLocations, searchLocations, hubFromZip } from "./locations";
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
 
 var STORAGE_KEY = "car-search-data";
-var VERSION = 8;
+var VERSION = 9;
 var STALE_DAYS = 5;
 var STALE_MC_DAYS = 3; // flag a listing MarketCheck itself last confirmed this many days ago
 // A synced listing unseen in results for this long is almost certainly sold —
@@ -61,7 +61,8 @@ var DEFAULT_PROFILES = [
     params: { make: "Chevrolet", model: "Volt", years: "2016, 2018", trims: "LT w/ DC-II, Premier", maxPrice: 14000, maxMiles: 90000,
       mustHave: "Gen 2 (2016+), BECM extended warranty", niceToHave: "Heated seats, adaptive cruise", dealbreakers: "2017 or 2019 model year" } },
   { id: "outback", name: "Outback", role: "SUV", active: true,
-    params: { make: "Subaru", model: "Outback", years: "2020-2022", trims: "Premium, Limited, Base", trimInclude: "", trimExclude: "XT, Turbo, Onyx, Wilderness", maxPrice: 25000, maxMiles: 100000,
+    params: { make: "Subaru", model: "Outback", years: "2020-2022", trims: "Premium, Limited, Base", preferTrims: ["Premium", "Limited", "Base"],
+      excludeTrims: ["Touring XT", "Limited XT", "Onyx Edition XT", "Outback Wilderness", "2.4 Premier XT"], maxPrice: 25000, maxMiles: 100000,
       mustHave: "AWD (standard); non-turbo 2.5L; rear-passenger safety (IIHS Acceptable rear)", niceToHave: "Premium or Limited trim, moonroof, heated seats, power driver seat", dealbreakers: "Turbo XT / Onyx Edition XT / Wilderness (reliability); open CVT recall WRK-22 or brake-bolt recall WUL-97" } },
 ];
 
@@ -385,8 +386,11 @@ function parseProfiles(text) {
         powertrain: String(params.powertrain || ""),
         years: String(params.years || ""),
         trims: String(params.trims || ""),
-        trimInclude: String(params.trimInclude || ""),
-        trimExclude: String(params.trimExclude || ""),
+        preferTrims: strList(params.preferTrims),
+        excludeTrims: strList(params.excludeTrims),
+        excludeDrivetrains: strList(params.excludeDrivetrains),
+        excludeColors: strList(params.excludeColors),
+        includeUnlistedColor: params.includeUnlistedColor !== false,
         maxPrice: Number(params.maxPrice) || 0,
         maxMiles: Number(params.maxMiles) || 0,
         mustHave: String(params.mustHave || ""),
@@ -399,9 +403,8 @@ function parseProfiles(text) {
   return out;
 }
 
-// Fuzzy (case-insensitive substring) trim filter. `trimText` is matched against
-// comma-separated include/exclude terms: excluded if it contains any exclude
-// term; if any include terms are set, kept only if it contains one of them.
+// An imported list of chip values (trims, drivetrains, colors): strings only.
+function strList(v) { return Array.isArray(v) ? v.map(function (x) { return String(x == null ? "" : x).trim(); }).filter(Boolean) : []; }
 
 // Give queued candidates a color they're missing: the fresh copy of the same car
 // from a sync (its listing color, or one decoded from its VIN), else a remembered
@@ -484,6 +487,17 @@ export function migrate(data) {
     delete st.hubs;
     delete st.mcSearches;
     data.settings = st;
+  }
+  if (v < 9) {
+    // The old fuzzy trim text filters were replaced by trim chips (src/trims.js),
+    // and every profile was resaved with chips; drop any leftover text.
+    data.profiles = (data.profiles || []).map(function (p) {
+      if (!p || !p.params || (!("trimInclude" in p.params) && !("trimExclude" in p.params))) return p;
+      var np = Object.assign({}, p.params);
+      delete np.trimInclude;
+      delete np.trimExclude;
+      return Object.assign({}, p, { params: np });
+    });
   }
   // v6: budget/tax/tagline moved into data.settings (was hardcoded).
   data.settings = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
@@ -1138,17 +1152,11 @@ export default function App() {
     if (cand.trim) patchProfileParams(cand.profileId, function (pp) { return setTrimState(pp, cand.trim, "hide"); });
   }, [patchProfileParams]);
 
-  // "Show" a trim- or drivetrain-hidden candidate: un-hide its trim chip, or drop
-  // the old text-filter term(s) that caught it (or, if it failed an include list,
-  // add its trim to that list), or un-hide its drivetrain.
+  // "Show" a trim- or drivetrain-hidden candidate: un-hide its trim chip, or its
+  // drivetrain.
   var showTrim = useCallback(function (cand) {
     patchProfileParams(cand.profileId, function (pp) {
       if (cand.trim && trimState(pp, cand.trim) === "hide") return setTrimState(pp, cand.trim, null);
-      var t = ((cand.trim || "") + " " + (cand.vehicle || "")).toLowerCase();
-      var exc = (pp.trimExclude || "").split(",").map(function (x) { return x.trim(); }).filter(Boolean);
-      var kept = exc.filter(function (e) { return t.indexOf(e.toLowerCase()) === -1; });
-      if (kept.length < exc.length) return { trimExclude: kept.join(", ") };
-      if ((pp.trimInclude || "").trim() && cand.trim) return { trimInclude: pp.trimInclude + ", " + cand.trim };
       if (cand.drivetrain) return { excludeDrivetrains: (pp.excludeDrivetrains || []).filter(function (d) { return String(d).toLowerCase() !== String(cand.drivetrain).toLowerCase(); }) };
       return {};
     });
@@ -2118,7 +2126,7 @@ export function ProfileCount({ p, data, refresh, busy }) {
 // Per-profile trim chips (src/trims.js): the trims this profile's matches come in
 // (its facet, with counts, plus any seen on its synced cars). A tap cycles
 // neutral → ★ preferred (a floor for AI scoring) → hidden → neutral.
-export function TrimChips({ choices, params, onChange, measuredAt, converted }) {
+export function TrimChips({ choices, params, onChange, measuredAt }) {
   var look = {
     prefer: { border: "1px solid #6b5a1f", color: "#e8c96a" },
     hide: { border: "1px solid #5a2a2a", color: "#e07a7a", textDecoration: "line-through" },
@@ -2142,7 +2150,6 @@ export function TrimChips({ choices, params, onChange, measuredAt, converted }) 
         </div>
       )}
       {choices.length > 0 && <p style={Object.assign({}, S.help, { margin: "4px 0 0" })}>
-        {converted ? "Converted from your old trim text filters — check them, then Save. " : ""}
         {measuredAt ? "Counts are this profile's nationwide matches, measured " + fmtResetTs(measuredAt) + "; trims without a count were seen on your synced cars." : "From your synced cars — counts appear after the next count or full refresh."}
         {" "}A trim nobody has seen yet still shows until you hide it.</p>}
     </div>
@@ -2228,7 +2235,7 @@ function ProfilesTab({ data, save, keyOk, scoreModel, refreshFacets }) {
   function delProf(id) { save(Object.assign({}, data, { profiles: data.profiles.filter(function (p) { return p.id !== id; }) })); }
   function addProf() {
     var n = { id: "p-" + Date.now(), name: "New Profile", role: "", active: true,
-      params: { make: "", model: "", years: "", trims: "", trimInclude: "", trimExclude: "", maxPrice: 20000, maxMiles: 80000, mustHave: "", niceToHave: "", dealbreakers: "",
+      params: { make: "", model: "", years: "", trims: "", preferTrims: [], excludeTrims: [], excludeDrivetrains: [], maxPrice: 20000, maxMiles: 80000, mustHave: "", niceToHave: "", dealbreakers: "",
         // Start from the global default color excludes (Settings).
         excludeColors: (getSettings(data).defaultExcludeColors || []).slice(), includeUnlistedColor: true } };
     // Prepend + open the editor so the new profile is immediately visible (was
@@ -2342,20 +2349,10 @@ function ProfilesTab({ data, save, keyOk, scoreModel, refreshFacets }) {
                 <div>{p.params.make} {p.params.model} · {p.params.years} · {p.params.trims}</div>
                 <div>≤${p.params.maxPrice.toLocaleString()} · ≤{p.params.maxMiles.toLocaleString()} mi</div>
                 {p.params.mustHave && <div style={{ marginTop: 4 }}><span style={{ fontSize: 11, fontWeight: 600, color: "#2d8659" }}>Must:</span> {p.params.mustHave}</div>}
-                {(p.params.trimInclude || p.params.trimExclude || (p.params.excludeTrims || []).length > 0 || (p.params.excludeDrivetrains || []).length > 0) && (
+                {((p.params.excludeTrims || []).length > 0 || (p.params.excludeDrivetrains || []).length > 0) && (
                   <div style={{ marginTop: 4, fontSize: 12 }}>
                     {(p.params.excludeTrims || []).length > 0 && <span><span style={{ fontSize: 11, fontWeight: 600, color: "#d4a017" }}>Hidden trims:</span> {p.params.excludeTrims.join(", ")} </span>}
                     {(p.params.excludeDrivetrains || []).length > 0 && <span><span style={{ fontSize: 11, fontWeight: 600, color: "#d4a017" }}>Hidden drivetrains:</span> {p.params.excludeDrivetrains.join(", ")} </span>}
-                    {p.params.trimInclude && <span><span style={{ fontSize: 11, fontWeight: 600, color: "#2d8659" }}>Only trims:</span> {p.params.trimInclude} </span>}
-                    {p.params.trimExclude && <span><span style={{ fontSize: 11, fontWeight: 600, color: "#d4a017" }}>Exclude trims:</span> {p.params.trimExclude}</span>}
-                  </div>
-                )}
-                {(p.params.trimInclude || p.params.trimExclude) && (
-                  // Temporary: the old text filters are going away once every profile is resaved.
-                  <div style={{ marginTop: 4, fontSize: 12, color: "#e8c96a" }}>
-                    ⚠ Old trim text filter — {((getSettings(data).mcProfiles || {})[p.id] || {}).trims || data.listings.some(function (l) { return l.profileId === p.id && l.trim; })
-                      ? "open Edit and Save to turn it into trim chips."
-                      : "tap “check now” to load this profile's trims, then Edit and Save to turn it into chips."}
                   </div>
                 )}
                 {p.params.priceBaseline && <div style={{ marginTop: 4 }}><span style={{ fontSize: 11, fontWeight: 600, color: "#b89edd" }}>Price baseline:</span> {(p.params.priceBaseline.tiers || []).length} tier(s) — anchors the price score</div>}
@@ -2375,13 +2372,7 @@ function ProfEd({ profile, onSave, listings, queued, keyOk, model, facets }) {
   var cars = (listings || []).concat(queued || []);
   var seenOf = function (k) { var o = {}; cars.forEach(function (c) { if (c[k]) o[c[k]] = true; }); return Object.keys(o); };
   var trimSeen = seenOf("trim"), dtSeen = seenOf("drivetrain");
-  // Old trim text filters become chip states the first time the editor opens
-  // with trims to show them against; Save keeps the conversion.
-  var [conv] = useState(function () {
-    var vals = facetChoices(f.trims, trimSeen, []).map(function (c) { return c.value; });
-    return vals.length ? legacyTrimChips(profile.params, vals) : null;
-  });
-  var [p, setP] = useState(Object.assign({}, profile.params, conv || {}));
+  var [p, setP] = useState(Object.assign({}, profile.params));
   var trimChoices = facetChoices(f.trims, trimSeen, (p.preferTrims || []).concat(p.excludeTrims || []));
   var dtChoices = facetChoices(f.drivetrains, dtSeen, p.excludeDrivetrains || []);
   var [name, setName] = useState(profile.name || "");
@@ -2395,12 +2386,8 @@ function ProfEd({ profile, onSave, listings, queued, keyOk, model, facets }) {
       })}
       <div style={S.field}><label style={S.lbl}>Max Price</label><input style={S.inp} type="number" value={p.maxPrice} onChange={function (e) { setP(Object.assign({}, p, { maxPrice: parseInt(e.target.value) || 0 })); }} /></div>
       <div style={S.field}><label style={S.lbl}>Max Miles</label><input style={S.inp} type="number" value={p.maxMiles} onChange={function (e) { setP(Object.assign({}, p, { maxMiles: parseInt(e.target.value) || 0 })); }} /></div>
-      {/* The old fuzzy text filters: shown only while they hold something the chips couldn't take over yet. */}
-      {[["trimInclude", "Trim include (fuzzy, comma-sep)"], ["trimExclude", "Trim exclude (fuzzy, comma-sep)"]].filter(function (pair) { return (p[pair[0]] || "").trim(); }).map(function (pair) {
-        return (<div key={pair[0]} style={S.field}><label style={S.lbl}>{pair[1]}</label><input style={S.inp} value={p[pair[0]] || ""} onChange={function (e) { setP(Object.assign({}, p, { [pair[0]]: e.target.value })); }} /></div>);
-      })}
       <div style={Object.assign({}, S.field, { gridColumn: "1/-1" })}>
-        <TrimChips choices={trimChoices} params={p} measuredAt={f.trims && f.trims.at} converted={!!conv}
+        <TrimChips choices={trimChoices} params={p} measuredAt={f.trims && f.trims.at}
           onChange={function (patch) { setP(Object.assign({}, p, patch)); }} />
       </div>
       {(dtChoices.length > 1 || (p.excludeDrivetrains || []).length > 0) && (
@@ -3310,7 +3297,7 @@ function HelpTab() {
         <p style={li}>The Results tab keeps "needs a look" separate from "saved": <span style={b}>Candidates</span> (brand-new matches, full cards) and <span style={b}>Updated — review</span> (saved listings whose price changed this sync, shown as compact cards with a link) sit up top. Your <span style={b}>Watchlist</span> below is the stuff you've already saved and reviewed.</p>
         <p style={li}><span style={b}>Approve</span> moves a candidate to the watchlist; <span style={b}>Skip</span> sets it aside (collapsible <span style={b}>Skipped</span> list; won't reappear on future syncs, and is never auto-scored). On an Updated card, <span style={b}>✓ Reviewed</span> returns it to the watchlist; <span style={b}>Reject</span> drops it.</p>
         <p style={li}>From Skipped you can <span style={b}>Restore to queue</span>, send straight to <span style={b}>Watchlist</span>, or <span style={b}>Remove</span> the record.</p>
-        <p style={li}><span style={b}>Trims &amp; drivetrains</span> (Profiles tab → Edit): chips for the trims this profile's matches actually come in (MarketCheck's full trim names, like "Limited XT" or "SEL Convenience HEV AWD"), with counts — measured with the colors, at no extra cost. Tap a trim to ★ prefer it (a floor for AI scoring — richer trims still count as a plus), tap again to hide it, again to reset. When a profile's cars come in more than one drivetrain, those get chips too (MarketCheck calls AWD "4WD"). Hiding happens on your device, so a trim nobody has seen yet still shows. Hidden candidates land under <span style={b}>Hidden by your … filters</span> — tap <span style={b}>🚫 Exclude trim</span> on a candidate to hide its trim, or <span style={b}>✓ Show this trim</span> in the hidden list to bring it back. Older free-text trim filters convert to chips the first time you open the profile's editor.</p>
+        <p style={li}><span style={b}>Trims &amp; drivetrains</span> (Profiles tab → Edit): chips for the trims this profile's matches actually come in (MarketCheck's full trim names, like "Limited XT" or "SEL Convenience HEV AWD"), with counts — measured with the colors, at no extra cost. Tap a trim to ★ prefer it (a floor for AI scoring — richer trims still count as a plus), tap again to hide it, again to reset. When a profile's cars come in more than one drivetrain, those get chips too (MarketCheck calls AWD "4WD"). Hiding happens on your device, so a trim nobody has seen yet still shows. Hidden candidates land under <span style={b}>Hidden by your … filters</span> — tap <span style={b}>🚫 Exclude trim</span> on a candidate to hide its trim, or <span style={b}>✓ Show this trim</span> in the hidden list to bring it back.</p>
       </div>
 
       <div style={S.card}>
