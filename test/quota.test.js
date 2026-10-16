@@ -116,3 +116,24 @@ describe("dedupeKeyEntries (Settings save)", () => {
     expect(dedupeKeyEntries(undefined)).toEqual([]);
   });
 });
+
+describe("MarketCheck reset times (\"2026-11-01 00:00:00 UTC\" — Safari can't parse it natively)", async () => {
+  const { parseMcTime, isoMcTime, summarize, spentKeyIds } = await import("../src/quota.js");
+  it("parses MarketCheck's format and ISO alike", () => {
+    expect(parseMcTime("2026-11-01 00:00:00 UTC")).toBe(Date.parse("2026-11-01T00:00:00Z"));
+    expect(parseMcTime("2026-11-01T00:00:00Z")).toBe(Date.parse("2026-11-01T00:00:00Z"));
+    expect(Number.isNaN(parseMcTime(""))).toBe(true);
+  });
+  it("isoMcTime rewrites MarketCheck's format, leaves others alone", () => {
+    expect(isoMcTime("2026-11-01 00:00:00 UTC")).toBe("2026-11-01T00:00:00Z");
+    expect(isoMcTime("2026-11-01T00:00:00Z")).toBe("2026-11-01T00:00:00Z");
+    expect(isoMcTime(null)).toBeNull();
+  });
+  it("a spent key stored with MarketCheck's format renews once its reset passes", () => {
+    const keys = [{ key: "sk-aaaa1111" }];
+    const store = { snaps: { "1111": { remaining: 0, limit: 500, exhausted: true, reset: "2026-11-01 00:00:00 UTC" } } };
+    expect(spentKeyIds(keys, store, Date.parse("2026-10-20T00:00:00Z"))).toEqual(["1111"]);
+    expect(spentKeyIds(keys, store, Date.parse("2026-11-02T00:00:00Z"))).toEqual([]);
+    expect(summarize(keys, store, Date.parse("2026-10-20T00:00:00Z")).nextReset).toBe(Date.parse("2026-11-01T00:00:00Z"));
+  });
+});

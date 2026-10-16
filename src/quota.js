@@ -35,6 +35,22 @@ export function dedupeKeyEntries(entries) {
 // its first call says otherwise — reading it any sooner would cost a call.
 export const FREE_PLAN_CALLS = 500;
 
+// MarketCheck's reset headers look like "2026-11-01 00:00:00 UTC" — not ISO.
+// Chrome's Date parses that, Safari's (iPhone, incl. the Home Screen app) does
+// not, which left the Resets column blank and made a spent key look spent forever.
+// -> epoch ms, or NaN. Accepts ISO too (what the server stores now).
+export function parseMcTime(s) {
+  if (!s) return NaN;
+  const m = String(s).trim().match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)\s*(?:UTC|GMT|Z)$/i);
+  return Date.parse(m ? m[1] + "T" + m[2] + "Z" : String(s));
+}
+// MarketCheck's format rewritten as ISO, for storing; anything else as is (null if empty).
+export function isoMcTime(s) {
+  if (!s) return null;
+  const m = String(s).trim().match(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}(?::\d{2})?)\s*(?:UTC|GMT)$/i);
+  return m ? m[1] + "T" + m[2] + "Z" : String(s);
+}
+
 export function keyIdOf(key) { return String(key || "").slice(-4); }
 
 // Merge snapshots reported by the server ([{ id, remaining, limit, reset, exhausted }])
@@ -82,7 +98,7 @@ export function mergeReports(a, b) {
 // quota has renewed, so assume it's full again (flagged `assumed`) until re-read.
 function effective(snap, nowMs) {
   if (!snap || (snap.remaining == null && !snap.exhausted)) return { known: false };
-  const resetMs = snap.reset ? Date.parse(snap.reset) : NaN;
+  const resetMs = parseMcTime(snap.reset);
   if (!isNaN(resetMs) && resetMs <= nowMs && snap.limit) {
     return { known: true, assumed: true, remaining: snap.limit, limit: snap.limit, reset: null, at: snap.at };
   }
@@ -121,7 +137,7 @@ export function summarize(userKeys, store, nowMs) {
     totalRemaining += r.remaining;
     if (r.limit != null) totalLimit += r.limit;
     if (r.remaining > 0 && !activeId) activeId = r.id;
-    if (r.reset) { const t = Date.parse(r.reset); if (!isNaN(t) && t > now && (nextReset == null || t < nextReset)) nextReset = t; }
+    if (r.reset) { const t = parseMcTime(r.reset); if (!isNaN(t) && t > now && (nextReset == null || t < nextReset)) nextReset = t; }
   });
   rows.forEach(function (r) {
     r.state = !r.known ? "unmeasured" : r.remaining <= 0 ? "spent" : r.id === activeId ? "in use" : "standby";

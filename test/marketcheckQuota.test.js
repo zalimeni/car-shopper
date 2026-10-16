@@ -135,3 +135,10 @@ describe("Price Check live search follows the same key policy", () => {
     expect(r.body.keyQuotas[0].id).toBe("shared");
   });
 });
+
+describe("reset times are stored as ISO", () => {
+  it("readQuota rewrites MarketCheck's 'YYYY-MM-DD HH:MM:SS UTC'", () => {
+    const r = { status: 200, headers: { get: (k) => ({ "quota-remaining": "145", "quota-limit": "500", "quota-reset-time": "2026-11-01 00:00:00 UTC" })[k] ?? null } };
+    expect(readQuota(r, "").reset).toBe("2026-11-01T00:00:00Z");
+  });
+});
