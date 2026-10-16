@@ -1574,7 +1574,7 @@ export function QuotaModal({ data, summary, onClose }) {
                         {r.limit ? (<div style={{ height: 4, background: "#2a2d38", borderRadius: 2, marginTop: 4, width: 110 }}><div style={{ height: 4, borderRadius: 2, width: Math.round(pct * 110), background: TONE_COLOR[gaugeTone(pct)] }} /></div>) : null}
                       </div>) : <span style={{ color: "#6b6b76" }}>—</span>}
                     </td>
-                    <td style={Object.assign({}, td, { whiteSpace: "nowrap" })}>{r.presumed ? <span style={{ color: "#6b6b76", whiteSpace: "normal" }}>not used yet — assumed {n(FREE_PLAN_CALLS)}, confirmed on first use</span> : r.assumed ? <span style={{ color: "#6b6b76", whiteSpace: "normal" }}>renewed — confirmed on next use</span> : (r.reset ? fmtResetTs(r.reset) : "—")}</td>
+                    <td style={td}>{r.presumed ? <span style={{ color: "#6b6b76", whiteSpace: "normal" }}>not used yet — assumed {n(FREE_PLAN_CALLS)}, confirmed on first use</span> : r.assumed ? <span style={{ color: "#6b6b76", whiteSpace: "normal" }}>renewed — confirmed on next use</span> : (r.reset ? fmtResetTs(r.reset) : "—")}</td>
                     <td style={td}><span style={{ color: stateColor[r.state] }}>{r.state}</span>{r.known && r.at && !r.assumed ? <div style={{ color: "#555", fontSize: 10 }}>as of {fmtResetTs(r.at)}</div> : null}</td>
                   </tr>
                 );
