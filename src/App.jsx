@@ -409,6 +409,23 @@ function trimAllowed(trimText, includeStr, excludeStr) {
   return true;
 }
 
+// Give queued candidates a color they're missing: the fresh copy of the same car
+// from a sync (its listing color, or one decoded from its VIN), else a remembered
+// decode. Never replaces a color the candidate already has. Exported for tests.
+export function fillQueueColors(queue, fresh, colorCache) {
+  var byVin = {};
+  (fresh || []).forEach(function (l) { if (l && l.vin && (l.baseColor || l.color)) byVin[String(l.vin).toUpperCase()] = l; });
+  return (queue || []).map(function (c) {
+    if (!c || !c.vin || c.color || c.baseColor) return c;
+    var v = String(c.vin).toUpperCase();
+    var f = byVin[v];
+    if (f) return Object.assign({}, c, { color: f.color || c.color, baseColor: f.baseColor || null, colorSource: f.colorSource });
+    var k = colorCache && colorCache[v];
+    if (k && k.baseColor) return Object.assign({}, c, { color: k.color, baseColor: k.baseColor, colorSource: "neovin" });
+    return c;
+  });
+}
+
 // Why a profile's own filters hide a candidate (trim include/exclude, then exterior
 // color — both applied on our side after the search), or null when it shows.
 function candHideReason(c, p) {
@@ -854,7 +871,9 @@ export default function App() {
       }
       var po = planOpts(data);
       var steps = planSync(active, getSettings(data).mcProfiles || {}, Object.assign({ manual: !auto }, po));
-      var res = await fetchListings(steps, trackedVins(data.listings), opts, { franchiseOnly: po.franchiseOnly, excludeSalt: po.excludeSalt, marketcheckKeys: mcKeys(data), spentKeys: mcSpent(data), colorCache: getSettings(data).mcColors || {} }, onSyncProgress);
+      var res = await fetchListings(steps, trackedVins(data.listings), opts, { franchiseOnly: po.franchiseOnly, excludeSalt: po.excludeSalt, marketcheckKeys: mcKeys(data), spentKeys: mcSpent(data), colorCache: getSettings(data).mcColors || {},
+        // Queued candidates still without a color get decoded too (they may not come back in this sync).
+        alsoDecode: candidates.filter(function (c) { return c.vin && !c.color && !c.baseColor; }).map(function (c) { return c.vin; }) }, onSyncProgress);
       // Reconcile + save against the LATEST state, not the `data` snapshot from
       // when the sync started — the fetches take a while and the UI stays live,
       // so approvals/edits/scores landed mid-sync must survive the final save.
@@ -871,10 +890,14 @@ export default function App() {
       var queueVins = {};
       candidates.forEach(function (c) { if (c.vin) queueVins[c.vin] = true; });
       var added = decorated.filter(function (c) { return (!c.vin || !queueVins[c.vin]) && !(c.vin && skippedVins[c.vin]); });
+      // Queued candidates (added mid-sync, before the colors were decoded, or left
+      // from an earlier sync) take any color they're missing — from this sync's
+      // results or the remembered decodes — so the color filter can place them.
+      var colorCache = mergeColorCache(getSettings(base).mcColors, res.decoded, new Date().toISOString());
       setCandidates(function (prev) {
         var seen = {};
         prev.forEach(function (c) { if (c.vin) seen[c.vin] = true; });
-        return prev.concat(added.filter(function (c) { return !c.vin || !seen[c.vin]; }));
+        return fillQueueColors(prev, res.listings, colorCache).concat(added.filter(function (c) { return !c.vin || !seen[c.vin]; }));
       });
       if (res.errors && res.errors.length) console.warn("Sync query errors:", res.errors);
       // Existing listings whose price changed this run — materially changed, so

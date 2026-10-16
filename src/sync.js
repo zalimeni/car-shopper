@@ -16,7 +16,7 @@ export { reconcile } from "./reconcile.js";
 // Run a planned sync (src/syncPlan.js planSync) — one /api/marketcheck request per
 // step, so no single serverless invocation nears the timeout. Keys found spent are
 // carried forward so later steps start on a live key instead of each re-hitting it.
-// filters: { franchiseOnly, excludeSalt, marketcheckKeys, spentKeys, colorCache }
+// filters: { franchiseOnly, excludeSalt, marketcheckKeys, spentKeys, colorCache, alsoDecode }
 // -> runSync's result: { listings, results, goneVins, errors, notices, calls, ... }
 export async function fetchListings(steps, tracked, opts, filters, onProgress) {
   const f = filters || {};
@@ -25,7 +25,7 @@ export async function fetchListings(steps, tracked, opts, filters, onProgress) {
     const r = await postStep(step, opts, Object.assign({}, f, { spentKeys: spent }));
     (r.keyQuotas || []).forEach(function (q) { if (q && q.exhausted && q.id && spent.indexOf(q.id) < 0) spent.push(q.id); });
     return r;
-  }, onProgress, { colorCache: f.colorCache });
+  }, onProgress, { colorCache: f.colorCache, alsoDecode: f.alsoDecode });
 }
 
 // One step -> the proxy's report. Throws on an HTTP failure (err.rateLimited for 429/503/402).

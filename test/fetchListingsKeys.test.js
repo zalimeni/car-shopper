@@ -117,3 +117,12 @@ describe("fills missing colors from the VIN decoder, once per car", () => {
     expect(bodies[1].vins.length).toBe(10);
   });
 });
+
+describe("queued candidates without a color are decoded too", () => {
+  it("adds them after this sync's own colorless cars, within the cap, skipping remembered ones", async () => {
+    const bodies = [];
+    global.fetch = vi.fn(async (url, init) => { const b = JSON.parse(init.body); bodies.push(b); return ok(b.kind === "decode" ? { decoded: {} } : { listings: [{ vin: "AAAAAAAAAAAAAAAA1", price: 1 }] }); });
+    await fetchListings([{ kind: "new", profile: P("a"), since: 2 }], [], {}, { alsoDecode: ["QQQQQQQQQQQQQQQQ1", "aaaaaaaaaaaaaaaa1", "KNOWNKNOWNKNOWN01"], colorCache: { KNOWNKNOWNKNOWN01: { color: null, at: "2026-10-16T00:00:00Z" } } });
+    expect(bodies.find((b) => b.kind === "decode").vins).toEqual(["AAAAAAAAAAAAAAAA1", "QQQQQQQQQQQQQQQQ1"]);
+  });
+});
