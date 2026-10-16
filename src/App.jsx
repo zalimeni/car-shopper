@@ -3246,10 +3246,10 @@ function CompareTab({ data, cardCtx, saveCols }) {
     { id: "price", label: "Price", get: function (l) { return l.price; }, fmt: function (v) { return "$" + v.toLocaleString(); }, best: "min" },
     { id: "mileage", label: "Mileage", get: function (l) { return l.mileage; }, fmt: function (v) { return v.toLocaleString() + " mi"; }, best: "min" },
     { id: "year", label: "Year", get: function (l) { return l.year; }, fmt: function (v) { return String(v); }, best: "max" },
-    { id: "dealer", label: "Dealer", get: function (l) { return l.dealer ? l.dealer + " (" + (l.dealerType || "?") + ")" : ""; }, fmt: function (v) { return v; } },
-    { id: "location", label: "Location", get: function (l) { return [l.location, l.state].filter(Boolean).join(", ") + (isSalt(l.state) ? " 🧂" : ""); }, fmt: function (v) { return v; } },
+    { id: "dealer", wrap: true, label: "Dealer", get: function (l) { return l.dealer ? l.dealer + " (" + (l.dealerType || "?") + ")" : ""; }, fmt: function (v) { return v; } },
+    { id: "location", wrap: true, label: "Location", get: function (l) { return [l.location, l.state].filter(Boolean).join(", ") + (isSalt(l.state) ? " 🧂" : ""); }, fmt: function (v) { return v; } },
     { id: "distance", label: homeBase ? "Miles from home" : "Distance", get: function (l) { var m = homeMiles(l, homeBase); return m != null ? m : l.distMi; }, fmt: function (v) { return v + " mi"; }, best: "min" },
-    { id: "color", label: "Color", get: function (l) { return l.color; }, fmt: function (v) { return v; } },
+    { id: "color", wrap: true, label: "Color", get: function (l) { return l.color; }, fmt: function (v) { return v; } },
     { id: "dom", label: "Days listed (this dealer)", get: function (l) { return l.dom; }, fmt: function (v) { return String(v); }, best: "min" },
   ];
 
@@ -3262,7 +3262,7 @@ function CompareTab({ data, cardCtx, saveCols }) {
 
   // Columns: total score, primary attributes, CPO, then each scoring criterion.
   var cols = [{ key: "score", label: "Score", kind: "score", best: "max", get: function (l) { return l.compositeScore || 0; } }]
-    .concat(specs.map(function (s) { return { key: "spec:" + s.id, label: s.label, kind: "spec", best: s.best, get: s.get, fmt: s.fmt }; }))
+    .concat(specs.map(function (s) { return { key: "spec:" + s.id, label: s.label, kind: "spec", best: s.best, get: s.get, fmt: s.fmt, wrap: s.wrap }; }))
     .concat([{ key: "cpo", label: "CPO", kind: "cpo", best: "max", get: isCpo }])
     .concat((data.criteria || []).map(function (c) { return { key: "crit:" + c.id, label: c.name + " (" + c.weight + ")", kind: "crit", best: "max", crit: c, get: function (l) { return l.scores && l.scores[c.id]; } }; }));
   var bestByCol = {};
@@ -3280,39 +3280,97 @@ function CompareTab({ data, cardCtx, saveCols }) {
   var lay = layoutColumns(cols, colPref);
   var shownCols = lay.pinned.concat(lay.rest);
   var pinnedKeys = lay.pinned.map(function (c) { return c.key; });
-  var lastPinned = pinnedKeys[pinnedKeys.length - 1];
 
   // Sticky `left` offsets for the pinned columns, from their rendered widths.
+  // Pins stay sticky only while Listing + pins fit in PIN_MAX of the table's
+  // visible width — on a phone, two wide pins would otherwise cover the screen
+  // and leave nothing to scroll. Pins past that keep their place but scroll.
+  var PIN_MAX = 0.7;
   var thRefs = useRef({});
+  var wrapRef = useRef(null);
   var [lefts, setLefts] = useState({});
+  var [, setViewW] = useState(0);
+  useEffect(function () {
+    function onResize() { setViewW(window.innerWidth); }
+    window.addEventListener("resize", onResize);
+    return function () { window.removeEventListener("resize", onResize); };
+  }, []);
   useLayoutEffect(function () {
     var next = {};
+    var room = (wrapRef.current ? wrapRef.current.clientWidth : 0) * PIN_MAX;
     var x = thRefs.current.listing ? thRefs.current.listing.offsetWidth : 0;
-    pinnedKeys.forEach(function (k) { next[k] = x; var el = thRefs.current[k]; x += el ? el.offsetWidth : 0; });
+    for (var i = 0; i < pinnedKeys.length; i++) {
+      var el = thRefs.current[pinnedKeys[i]], w = el ? el.offsetWidth : 0;
+      if (room > 0 && x + w > room) break;
+      next[pinnedKeys[i]] = x; x += w;
+    }
     if (JSON.stringify(next) !== JSON.stringify(lefts)) setLefts(next);
   });
+  var stickyKeys = pinnedKeys.filter(function (k) { return lefts[k] != null; });
+  var lastSticky = stickyKeys[stickyKeys.length - 1];
   function pinStyle(col, head) {
-    if (pinnedKeys.indexOf(col.key) < 0) return {};
-    return Object.assign({ position: "sticky", left: lefts[col.key] || 0, zIndex: head ? 3 : 1, background: "#161820" },
-      col.key === lastPinned ? { boxShadow: "inset -1px 0 0 #2a3058" } : {});
+    if (lefts[col.key] == null || pinnedKeys.indexOf(col.key) < 0) return {};
+    return Object.assign({ position: "sticky", left: lefts[col.key], zIndex: head ? 3 : 1, background: "#161820" },
+      col.key === lastSticky ? { boxShadow: "inset -1px 0 0 #2a3058" } : {});
   }
 
-  // Reorder by dragging a header: the mouse can grab anywhere on it, touch uses
-  // the ⋮⋮ grip (so a swipe elsewhere still scrolls the table). A drag that ends
-  // on another header moves the column there; a plain click still sorts.
+  // Reorder by dragging a header onto another: the mouse can grab anywhere on it
+  // (pointer events below); touch drags the ⋮⋮ grip (native touch listeners —
+  // see gripRef). A plain click on a header still sorts. Tapping the grip instead
+  // picks the column up; tapping another heading then moves it there.
   var [drag, setDrag] = useState(null); // { key, over, live }
+  var [picked, setPicked] = useState(null); // column key picked up by a grip tap
   var justDragged = useRef(false);
+  function overAt(x, y) {
+    var el = document.elementFromPoint(x, y);
+    var th = el && el.closest ? el.closest("[data-colkey]") : null;
+    return th ? th.getAttribute("data-colkey") : null;
+  }
+  function moveTo(from, to) { if (from && to && from !== to) saveCols(moveColumn(cols, colPref, from, to)); }
+  // React's touch handlers are passive, so they can't stop iOS from scrolling the
+  // table instead — the drag never started. The grip gets real non-passive
+  // listeners once per element; `dragNow` hands them this render's state.
+  var dragNow = useRef(null);
+  dragNow.current = { moveTo: moveTo, setDrag: setDrag, setPicked: setPicked };
+  var gripEls = useRef(typeof WeakSet === "function" ? new WeakSet() : null);
+  function gripRef(el) {
+    if (!el || !gripEls.current || gripEls.current.has(el)) return;
+    gripEls.current.add(el);
+    el.addEventListener("touchstart", function (e) {
+      var t0 = (e.touches || [])[0];
+      if (!t0) return;
+      e.preventDefault(); // no scroll, no synthetic click
+      e.stopPropagation();
+      var key = el.getAttribute("data-grip"), x0 = t0.clientX, y0 = t0.clientY;
+      var st = { key: key, over: null, live: false };
+      function move(ev) {
+        var t = (ev.touches || [])[0];
+        if (!t) return;
+        ev.preventDefault();
+        if (!st.live && Math.abs(t.clientX - x0) + Math.abs(t.clientY - y0) < 8) return;
+        var over = overAt(t.clientX, t.clientY);
+        if (!st.live || over !== st.over) { st = { key: key, over: over, live: true }; dragNow.current.setDrag(st); }
+      }
+      function end(ev) {
+        document.removeEventListener("touchmove", move);
+        document.removeEventListener("touchend", end);
+        document.removeEventListener("touchcancel", end);
+        dragNow.current.setDrag(null);
+        if (ev.type !== "touchend") return;
+        if (st.live) dragNow.current.moveTo(key, st.over);
+        else dragNow.current.setPicked(function (prev) { return prev === key ? null : key; });
+      }
+      document.addEventListener("touchmove", move, { passive: false });
+      document.addEventListener("touchend", end);
+      document.addEventListener("touchcancel", end);
+    }, { passive: false });
+  }
   function startDrag(e, col, grip) {
-    if (e.button > 0 || (!grip && e.pointerType !== "mouse")) return;
+    if (e.button > 0 || e.pointerType !== "mouse") return; // touch: gripRef
+    if (grip) { e.preventDefault(); e.stopPropagation(); }
     if (grip) { e.preventDefault(); e.stopPropagation(); }
     var x0 = e.clientX, y0 = e.clientY;
-    var st = { key: col.key, over: null, live: !!grip };
-    if (st.live) setDrag(st);
-    function overAt(x, y) {
-      var el = document.elementFromPoint(x, y);
-      var th = el && el.closest ? el.closest("[data-colkey]") : null;
-      return th ? th.getAttribute("data-colkey") : null;
-    }
+    var st = { key: col.key, over: null, live: false };
     function move(ev) {
       if (!st.live && Math.abs(ev.clientX - x0) + Math.abs(ev.clientY - y0) < 6) return;
       var over = overAt(ev.clientX, ev.clientY);
@@ -3323,10 +3381,10 @@ function CompareTab({ data, cardCtx, saveCols }) {
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
       setDrag(null);
-      if (!st.live) return;
+      if (!st.live) { if (grip && ev.type === "pointerup") setPicked(function (prev) { return prev === col.key ? null : col.key; }); return; }
       justDragged.current = true; // swallow the click that follows a mouse drag
       setTimeout(function () { justDragged.current = false; }, 0);
-      if (ev.type === "pointerup" && st.over && st.over !== st.key) saveCols(moveColumn(cols, colPref, st.key, st.over));
+      if (ev.type === "pointerup") moveTo(st.key, st.over);
     }
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", end);
@@ -3336,13 +3394,19 @@ function CompareTab({ data, cardCtx, saveCols }) {
   function headerProps(col) {
     return {
       className: "cs-sort",
-      onClick: function () { if (justDragged.current) return; setSort(function (prev) { return nextSort(prev, col); }); },
+      onClick: function () {
+        if (justDragged.current) return;
+        if (picked) { if (picked !== col.key && col.key !== "listing") moveTo(picked, col.key); setPicked(null); return; }
+        setSort(function (prev) { return nextSort(prev, col); });
+      },
       title: "Sort by " + col.label,
     };
   }
 
-  var rowLabel = { position: "sticky", left: 0, background: "#161820", textAlign: "left", padding: "7px 10px", borderBottom: "1px solid #1e2028", minWidth: 150, maxWidth: 210, zIndex: 1, verticalAlign: "top" };
-  var cell = { padding: "7px 10px", borderBottom: "1px solid #1e2028", textAlign: "left", whiteSpace: "nowrap", color: "#c8c8d0" };
+  var rowLabel = { position: "sticky", left: 0, background: "#161820", textAlign: "left", padding: "7px 10px", borderBottom: "1px solid #1e2028", minWidth: 120, maxWidth: 190, zIndex: 1, verticalAlign: "top" };
+  var cell = { padding: "7px 10px", borderBottom: "1px solid #1e2028", textAlign: "left", whiteSpace: "nowrap", color: "#c8c8d0", verticalAlign: "top" };
+  // Free-text columns (dealer, location, color) wrap instead of widening the table.
+  var wrapCell = { whiteSpace: "normal", minWidth: 80, maxWidth: 130, overflowWrap: "anywhere" };
   var tap = { cursor: "pointer", textDecoration: "underline dotted", textUnderlineOffset: "3px" };
 
   function renderCell(l, col) {
@@ -3369,14 +3433,14 @@ function CompareTab({ data, cardCtx, saveCols }) {
     var v = col.get(l);
     var blank = v == null || v === "" || (typeof v === "number" && isNaN(v));
     var vBest = best != null && typeof v === "number" && v === best;
-    return (<td key={col.key} style={Object.assign({}, cell, vBest ? { color: "#2d8659", fontWeight: 700 } : {})}>{blank ? "—" : col.fmt(v)}</td>);
+    return (<td key={col.key} style={Object.assign({}, cell, col.wrap ? wrapCell : {}, vBest ? { color: "#2d8659", fontWeight: 700 } : {})}>{blank ? "—" : col.fmt(v)}</td>);
   }
 
   return (
     <div>
       <div style={S.secH}><h2 style={S.secT}>Compare</h2></div>
       <div style={S.card}>
-        <p style={S.help}>Watchlist listings (rows) for the selected profiles, with each listing's price/mileage and a CPO column. Filter by dealer type below. Click any column heading to sort by it — click again to reverse; listings missing that value stay at the bottom either way. Best value per column is highlighted (★ / green). Tap an underlined score (or a row's total) for the AI rationale; tap anywhere else on a row to open its card (edit tags, notes, status). Drag a column heading (or its ⋮⋮ grip on touch) to move it; 📌 pins a column to the left so it stays in view while you scroll. Your layout syncs across devices.{colPref ? <span> <button style={S.linkBtn} onClick={function () { saveCols(null); }}>Reset columns</button></span> : null}</p>
+        <p style={S.help}>Watchlist listings (rows) for the selected profiles, with each listing's price/mileage and a CPO column. Filter by dealer type below. Click any column heading to sort by it — click again to reverse; listings missing that value stay at the bottom either way. Best value per column is highlighted (★ / green). Tap an underlined score (or a row's total) for the AI rationale; tap anywhere else on a row to open its card (edit tags, notes, status). Drag a column heading (on a phone, its ⋮⋮ grip) to move it — or tap the ⋮⋮, then tap where it should go; 📌 pins a column to the left so it stays in view while you scroll (on a narrow screen, only as many pins as leave room to scroll). Your layout syncs across devices.{colPref ? <span> <button style={S.linkBtn} onClick={function () { saveCols(null); }}>Reset columns</button></span> : null}</p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
           {profs.map(function (p) {
             var on = sel.indexOf(p.id) > -1;
@@ -3408,7 +3472,14 @@ function CompareTab({ data, cardCtx, saveCols }) {
       {listings.length === 0 ? (
         <p style={S.empty}>No watchlist listings for the selected profile(s).</p>
       ) : (
-        <div className="cs-wide" style={Object.assign({}, S.card, { overflowX: "auto", padding: 0 })}>
+        <div>
+        {picked && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#c8c8d0", background: "#1e2a4a", border: "1px solid #2563eb", borderRadius: 8, padding: "6px 10px", margin: "0 0 8px" }}>
+            <span style={{ flex: 1 }}>Moving <b>{(cols.find(function (c) { return c.key === picked; }) || {}).label}</b> — tap the heading it should take the place of.</span>
+            <button style={S.smBtn} onClick={function () { setPicked(null); }}>Cancel</button>
+          </div>
+        )}
+        <div ref={wrapRef} className="cs-wide" style={Object.assign({}, S.card, { overflowX: "auto", padding: 0 })}>
           <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%" }}>
             <thead>
               <tr>
@@ -3417,20 +3488,21 @@ function CompareTab({ data, cardCtx, saveCols }) {
                 </th>
                 {shownCols.map(function (col) {
                   var pinned = pinnedKeys.indexOf(col.key) > -1;
-                  var dragging = drag && drag.key === col.key, over = drag && drag.over === col.key && drag.key !== col.key;
+                  var dragging = (drag && drag.key === col.key) || picked === col.key, over = drag && drag.over === col.key && drag.key !== col.key;
                   return (
                     <th key={col.key} data-colkey={col.key} {...headerProps(col)} ref={function (el) { thRefs.current[col.key] = el; }}
                       onPointerDown={function (e) { startDrag(e, col, false); }}
-                      style={Object.assign({}, cell, { fontSize: 11, fontWeight: 600, borderBottom: "1px solid #2a2d38", color: col.kind === "crit" ? "#b89edd" : "#8a8a96", verticalAlign: "bottom" },
-                        pinStyle(col, true), dragging ? { opacity: 0.45 } : {}, over ? { background: "#1e2a4a", color: "#f0f0f3" } : {})}>
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                        <span aria-label={"Drag to move " + col.label} title="Drag to move this column" onPointerDown={function (e) { startDrag(e, col, true); }} onClick={function (e) { e.stopPropagation(); }}
-                          style={{ cursor: "grab", touchAction: "none", color: "#4a4a56", padding: "2px 1px", letterSpacing: "-2px" }}>⋮⋮</span>
-                        <span>{col.label}{sortIndicator(sort, col)}</span>
+                      style={Object.assign({}, cell, { fontSize: 11, fontWeight: 600, borderBottom: "1px solid #2a2d38", color: col.kind === "crit" ? "#b89edd" : "#8a8a96", verticalAlign: "bottom", whiteSpace: "normal", minWidth: 64, maxWidth: 130 },
+                        pinStyle(col, true), dragging ? { opacity: 0.45 } : {}, over || (picked && picked !== col.key) ? { background: "#1e2a4a", color: "#f0f0f3" } : {})}>
+                      <span style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                        <span ref={gripRef} data-grip={col.key} aria-label={"Drag to move " + col.label} title="Drag to move this column (or tap, then tap where it goes)"
+                          onPointerDown={function (e) { startDrag(e, col, true); }} onClick={function (e) { e.stopPropagation(); }}
+                          style={{ cursor: "grab", touchAction: "none", WebkitUserSelect: "none", userSelect: "none", color: picked === col.key ? "#8ab4f8" : "#4a4a56", padding: "6px 4px", margin: "-6px 0 -6px -6px", letterSpacing: "-2px", flex: "0 0 auto" }}>⋮⋮</span>
+                        <span style={{ flex: "1 1 auto", minWidth: 0 }}>{col.label}{sortIndicator(sort, col)}</span>
                         <button type="button" aria-pressed={pinned} title={pinned ? "Unpin this column" : "Pin this column to the left"}
                           onPointerDown={function (e) { e.stopPropagation(); }}
                           onClick={function (e) { e.stopPropagation(); saveCols(togglePin(cols, colPref, col.key)); }}
-                          style={{ background: "none", border: "none", padding: "0 2px", cursor: "pointer", fontSize: 11, opacity: pinned ? 1 : 0.3, filter: pinned ? "none" : "grayscale(1)" }}>📌</button>
+                          style={{ background: "none", border: "none", padding: "4px 2px", cursor: "pointer", fontSize: 11, flex: "0 0 auto", opacity: pinned ? 1 : 0.3, filter: pinned ? "none" : "grayscale(1)" }}>📌</button>
                       </span>
                     </th>
                   );
@@ -3466,6 +3538,7 @@ function CompareTab({ data, cardCtx, saveCols }) {
               })}
             </tbody>
           </table>
+        </div>
         </div>
       )}
 

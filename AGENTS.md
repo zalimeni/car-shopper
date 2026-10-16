@@ -233,8 +233,13 @@ per environment (Preview vs Production) — set keys in the env you're testing.
 - **Sortable tables:** `sortRows` / `nextSort` / `sortIndicator` + the `cs-sort`
   class (Compare, Price Check comps).
 - **Touch / iOS Home Screen:** the owner uses it as an iPhone web app. Inputs are
-  16px on coarse pointers (no zoom); HTML5 drag-and-drop doesn't work with touch,
-  so drags use pointer events on a `touch-action: none` grip (Compare headers).
+  16px on coarse pointers (no zoom). HTML5 drag-and-drop doesn't work with touch,
+  and neither did pointer events on a `touch-action: none` grip — iOS scrolled
+  the table instead. React's touch handlers are passive (can't `preventDefault`),
+  so a touch drag needs native `addEventListener("touchstart"/"touchmove", …,
+  { passive: false })` (Compare's `gripRef`), plus a tap-based fallback (tap the
+  grip, then the target). Sticky columns must leave room to scroll on a phone
+  (Compare caps pins at 70% of the table's width).
 
 ## Debugging playbook
 
