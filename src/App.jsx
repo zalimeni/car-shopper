@@ -2350,6 +2350,14 @@ function ProfilesTab({ data, save, keyOk, scoreModel, refreshFacets }) {
                     {p.params.trimExclude && <span><span style={{ fontSize: 11, fontWeight: 600, color: "#d4a017" }}>Exclude trims:</span> {p.params.trimExclude}</span>}
                   </div>
                 )}
+                {(p.params.trimInclude || p.params.trimExclude) && (
+                  // Temporary: the old text filters are going away once every profile is resaved.
+                  <div style={{ marginTop: 4, fontSize: 12, color: "#e8c96a" }}>
+                    ⚠ Old trim text filter — {((getSettings(data).mcProfiles || {})[p.id] || {}).trims || data.listings.some(function (l) { return l.profileId === p.id && l.trim; })
+                      ? "open Edit and Save to turn it into trim chips."
+                      : "tap “check now” to load this profile's trims, then Edit and Save to turn it into chips."}
+                  </div>
+                )}
                 {p.params.priceBaseline && <div style={{ marginTop: 4 }}><span style={{ fontSize: 11, fontWeight: 600, color: "#b89edd" }}>Price baseline:</span> {(p.params.priceBaseline.tiers || []).length} tier(s) — anchors the price score</div>}
                 {p.params.dealbreakers && <div style={{ marginTop: 4 }}><span style={{ fontSize: 11, fontWeight: 600, color: "#c44" }}>Breaks:</span> {p.params.dealbreakers}</div>}
                 {p.active && <ProfileCount p={p} data={data} refresh={refreshFacets} busy={facetBusy === p.id} />}
