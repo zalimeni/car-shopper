@@ -8,7 +8,7 @@ A personal **car-shopping tracker**. It tracks vehicle *profiles* (make/model/
 years/price), pulls matching dealer inventory automatically from the MarketCheck
 aggregator, scores listings against weighted criteria (optionally with AI using
 the user's own Anthropic key), and keeps a watchlist with price/availability
-tracking. Budget, search locations, and freeform categories are configurable
+tracking. Budget, home base, and freeform categories are configurable
 (one car or several); a setup wizard handles first-run. Access is allowlisted;
 the default config is opinionated (the owner's two-car ≤$40K Durham-based hybrid/EV
 search) but fully editable.
@@ -43,12 +43,15 @@ over architecture.
 | `src/supabaseClient.js` | Supabase client + default URL/anon key. |
 | `src/Auth.jsx` | Magic-link auth gate + the "not authorized" screen. |
 | `src/main.jsx`, `src/index.css` | Entry point + global styles. |
-| `src/locations.js` | Search-location logic: parse/search `public/locations.txt`, dedupe + sort (state, then city) the saved hubs. Pure, tested. |
-| `src/queryPlan.js` | How profiles become MarketCheck queries: merge every active profile into one query (powertrain_type as a list), and attribute results back (each row's powertrain checked locally). The sync tries that query nationwide first, filtered to the locations' radii by dealer coordinates (`searchListings` `national`), and falls back to per-location searches for profiles with too many matches. Shared by the server (`searchListings`) and the quota gauge's cost estimate. Pure, tested. |
+| `src/locations.js` | Home-base picker logic: parse/search `public/locations.txt` (city or ZIP suggestions with coordinates). Pure, tested. |
+| `src/syncPlan.js` | **What a sync does and costs.** Per active profile: a full refresh (due after 3 days, an edit, or a manual Sync) or a new-listings pass; then a VIN lookup of watchlist cars the searches didn't return (the only "gone" signal). `planSync`, `runSync` (orchestration with an injected step runner — shared by the browser and the scheduled sync), `estimateCost`, `nextProfileMeta` (`settings.mcProfiles`). Pure, tested. |
+| `src/queryPlan.js` | Profile field → MarketCheck value helpers (`mapPowertrain`, `parseYears`). Profiles are no longer merged: nationwide, merging widens filters. |
+| `src/regions.js` | Salt-belt states and the `state=` list a search sends (salt belt excluded, or every state when flagging). Pure. |
+| `src/airports.js`, `src/travel.js` | Major-airport list + `travelFacts`: miles from the home base ("ship or fly" past 500), nearest airport ("fly-in friendly" within 50 mi), salt-belt flag. Flags only — never filters. Used by cards and AI scoring. Pure, tested. |
 | `src/markdown.js` | Safe Markdown parser for listing notes (text → typed tree, never HTML; http(s)-only links) + the `MEMO_MAX` (4,000-char) limit. Pure, tested. Rendered by `MarkdownView` / `ListingMemo` in `App.jsx`. |
 | `src/quota.js` | MarketCheck quota bookkeeping for the header gauge + modal: per-key snapshots (from syncs / live searches — never its own calls), capacity across keys (used in order), sync-cost estimates. Pure, tested. |
 | `public/locations.txt` | Flat file (`ST|City|ZIP|lat|lon`, ~41k rows) behind the location picker; lazy-loaded, not bundled. Built by `scripts/build-locations.mjs` from GeoNames (CC BY 4.0). |
-| `api/marketcheck.js` | Serverless proxy to MarketCheck (holds the API key). `buildUrl`/`normalize`. |
+| `api/marketcheck.js` | Serverless proxy to MarketCheck (holds the API key). One sync step per request (`runStep`: full / new / count / vins / local) over a `createSession` (key failover, throttle, time budget). `buildUrl`/`normalize`. |
 | `api/_auth.js` | Server-side auth + allowlist (`authorize()`). Shared module. |
 | `api/me.js` | Allowlist + Anthropic-key-status check for the UI. |
 | `api/_scoring.js` | Scoring prompt/schema/coercion + model allowlist (`resolveScoreModel`). |
@@ -82,7 +85,7 @@ There is **no generated source** in `src/` or `api/` — it's all authored by ha
 See `docs/listing-pipeline.md` for the full design. In short:
 
 - **State model:** the whole app state (`profiles`, `criteria`, `globalReqs`,
-  `listings`, `settings` {budget, taxRate, tagline, hubs}, `skipped`,
+  `listings`, `settings` {budget, taxRate, tagline, homeBase, saltMode, …}, `skipped`,
   `scoreModel`, `autoScore`, `onboarded`, `version`, `lastSynced`) is one JSONB
   blob per user in `app_state.data`. `storage.js` reads/writes it; `App.jsx`
   holds it in `data` and saves via `save()` / `saveRecalc()` / `patchListings()`.
@@ -91,18 +94,22 @@ See `docs/listing-pipeline.md` for the full design. In short:
 - **AI scoring:** `src/score.js` → `POST /api/score` decrypts the user's vaulted
   Anthropic key (`_crypto` + `_supabaseAdmin`) and scores each listing against a
   JSON schema built from the user's criteria (`_scoring.js`, model allowlisted).
-  Roles/categories are freeform; budget/hubs live in `data.settings`.
+  Roles/categories are freeform; budget/home base live in `data.settings`.
 - **Auth + allowlist (server-enforced):** anyone can sign up via magic link, but
   `api/_auth.js` requires the email be allowlisted — via the `ALLOWED_EMAILS`
   env var **or** the `allowed_emails` DB table (`is_allowed()` RPC). RLS on
   `app_state` enforces the same at the data layer. The UI calls `GET /api/me`
   and shows a friendly screen for non-allowlisted users (fails open on error —
   RLS/API are the real boundary).
-- **Sync pipeline:** `src/sync.js` → `POST /api/marketcheck` (proxy holding
-  `MARKETCHECK_API_KEY`) → MarketCheck `/v2/search/car/active` → `normalize()` →
+- **Sync pipeline:** `src/syncPlan.js` plans it; `src/sync.js` → `POST
+  /api/marketcheck` per step (proxy holding `MARKETCHECK_API_KEY`) → MarketCheck
+  `/v2/search/car/active`, **nationwide, one search per active profile**, salt-belt
+  states excluded via `state=` (or flagged — Settings) → `normalize()` →
   `reconcile()`. New VINs become **candidates** (human-approved, same as Import);
-  known VINs get price-change notes + `lastSeen`. Runs on app open (12h debounce)
-  and via the **↻ Sync** button on the Results tab.
+  known VINs get price-change notes + `lastSeen`; a watchlist VIN the direct VIN
+  lookup can't find is stamped `goneAt`. Manual only — the **↻ Sync** button on
+  the Results tab (a full refresh of every active profile) — plus the optional
+  daily scheduled sync (`api/cron-sync.js`, cheap path). No sync on app open.
 - **All MarketCheck-specific field/param names live in `buildUrl()` and
   `normalize()` in `api/marketcheck.js`** — if the API shape is wrong, that's the
   only place to change.
@@ -111,10 +118,6 @@ See `docs/listing-pipeline.md` for the full design. In short:
   `served-by-version` / `deprecation` / `sunset` headers are stored in
   `settings.mcApi`; the app shows a banner within 60 days of sunset, if a different
   major version answers, or if the pin is rejected (sync then retries unpinned).
-  Searches are sorted by `last_seen` desc; an unchanged page-1 fingerprint
-  (`pageFingerprint`, stored in `settings.mcSearches`) stops a search after one
-  page, and `reconcile(..., { unchangedKeys })` keeps that search's cars (tagged via
-  `mcQ`) untouched instead of flagging them not seen.
   A sync where most rows lack VIN/make/model is flagged as a format change rather
   than silently dropping listings. To move versions: update `normalize()` /
   `buildUrl()` + the fixture, then bump `API_VERSION`.
@@ -166,7 +169,7 @@ Defined/documented in `.env.example`. Summary:
 | Var | Where | Purpose |
 |---|---|---|
 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | client (bundled) | Supabase connection. Public by design (RLS protects data). |
-| `MARKETCHECK_API_KEY` | server only | Shared MarketCheck key — used only for accounts with no keys of their own in Settings; ignored entirely once a user has any (never a fallback). **Never** `VITE_`-prefixed. (Optional: `MARKETCHECK_HOST`, `MARKETCHECK_RADIUS` default 100, `MARKETCHECK_THROTTLE_MS`.) |
+| `MARKETCHECK_API_KEY` | server only | Shared MarketCheck key — used only for accounts with no keys of their own in Settings; ignored entirely once a user has any (never a fallback). **Never** `VITE_`-prefixed. (Optional: `MARKETCHECK_HOST`, `MARKETCHECK_RADIUS` default 100 — Price Check's live comps only, `MARKETCHECK_THROTTLE_MS`.) |
 | `SUPABASE_SECRET_KEY` | server only | Supabase Secret key (`sb_secret_…`); service-role access to the `user_anthropic_keys` vault. |
 | `KEY_ENCRYPTION_SECRET` | server only | ≥16 chars; AES-256-GCM key for the stored Anthropic keys. Rotating invalidates them. |
 | `SCORING_MODEL` | server (optional) | Override default scoring model (`claude-sonnet-5-5`); must be allowlisted in `_scoring.js`. |
@@ -207,8 +210,8 @@ per environment (Preview vs Production) — set keys in the env you're testing.
    - `No MarketCheck API key` → the account has no keys in Settings **and** `MARKETCHECK_API_KEY` is unset for that Vercel env.
    - HTTP 401/403 → bad key or the plan lacks the active-search endpoint.
    - HTTP 4xx on every query → wrong host/param (it's `api.marketcheck.com`,
-     `year` as an exact-year CSV, `price_range`/`miles_range`, `zip`+`radius`).
-   - Radius > 100 on the free tier → set `MARKETCHECK_RADIUS=100`.
+     `year` as an exact-year CSV, `price_range`/`miles_range`, `state` CSV).
+   - Radius > 100 on the free tier (Price Check's live comps) → set `MARKETCHECK_RADIUS=100`.
 4. To exercise the full candidate/approve flow **without** the API or key, the
    proxy supports `?mock=1` (synthetic listings).
 
@@ -219,7 +222,7 @@ the **API surface only** (no DB/user-data access; RLS still applies). Example:
 ```bash
 curl -X POST "$SITE/api/marketcheck?raw=1" \
   -H "Authorization: Bearer $DEBUG_TOKEN" -H "Content-Type: application/json" \
-  -d '{"profiles":[{"id":"rav4-hybrid","name":"RAV4 Hybrid","params":{"make":"Toyota","model":"RAV4 Hybrid","years":"2019-2022","maxPrice":25000,"maxMiles":90000}}],"hubs":[{"n":"Durham NC","z":"27701"}]}'
+  -d '{"profiles":[{"id":"rav4-hybrid","name":"RAV4 Hybrid","params":{"make":"Toyota","model":"RAV4","powertrain":"Hybrid","years":"2019-2022","maxPrice":25000,"maxMiles":90000}}]}'
 ```
 Use `?mock=1` instead of `?raw=1` to avoid hitting MarketCheck. Rotate
 `DEBUG_TOKEN` to revoke. For a *real user* session (to exercise data/RLS), the

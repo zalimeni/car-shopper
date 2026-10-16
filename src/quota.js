@@ -13,15 +13,6 @@
 // the sum across keys, and "where we are" is the first key with calls left. The
 // shared server key is used only when you have no keys of your own.
 
-import { groupProfiles } from "./queryPlan.js";
-
-// Mirrors api/marketcheck.js: one car type (used — it includes certified), 50 rows
-// per page, up to 200 rows per profile (4 pages), and never past the account's
-// 500-row pagination ceiling (10 pages) for a merged query.
-export const ROWS = 50;
-export const MAX_PAGES = 4;
-export const PAGE_CEILING = 10;
-
 // Settings' save step: trim, drop blanks, and drop repeats of the same key (first
 // wins, but it adopts a later copy's label if it had none). This is the ONLY place
 // duplicates are handled — everything else assumes the saved list is already clean.
@@ -149,56 +140,11 @@ export function spentKeyIds(userKeys, store, nowMs) {
   return summarize(userKeys, store, nowMs).rows.filter(function (r) { return r.state === "spent"; }).map(function (r) { return r.id; });
 }
 
-// Identity of what a sync searches (active profiles + their filters, locations),
-// so a measured cost is only reused for the same plan — add a location and the
-// last sync's call count no longer says anything.
-export function planSig(activeProfiles, hubs) {
-  const ps = (activeProfiles || []).map(function (p) { return (p && p.id) + ":" + JSON.stringify((p && p.params) || {}); }).sort();
-  const hs = (hubs || []).map(function (h) { return [h.lat, h.lon, h.z, h.r].join(":"); }).sort();
-  return ps.join("|") + "#" + hs.join("|");
-}
-
-// Mirrors api/marketcheck.js geoHubs: a nationwide search needs every location's coordinates.
-function nationalOk(hubs) {
-  return Array.isArray(hubs) && hubs.length > 1 && hubs.every(function (h) { return isFinite(parseFloat(h && h.lat)) && isFinite(parseFloat(h && h.lon)); });
-}
-
-// Calls one sync costs. All active profiles share one query (src/queryPlan.js —
-// the same grouping the server uses). With 2+ locations that all have coordinates
-// the sync first tries ONE nationwide search, kept to your locations' radii
-// locally: 1–10 pages when it fits, else one wasted page and per-location searches
-// (the old plan: a page per location, more for dense ones). Pages depend on how
-// many cars match, so it's a range until a real sync of the same plan measures it.
-// `hubs` is the locations array (a bare count = per-location only, no plan check).
-export function syncCost(activeProfiles, hubs, lastSync) {
-  const groups = Array.isArray(activeProfiles) ? groupProfiles(activeProfiles) : Array.from({ length: activeProfiles || 0 }, function () { return [null]; });
-  const P = groups.reduce(function (a, g) { return a + g.length; }, 0);
-  const H = Array.isArray(hubs) ? hubs.length : (hubs || 0);
-  const G = groups.length;
-  const pagesMax = groups.reduce(function (a, g) { return a + Math.min(PAGE_CEILING, MAX_PAGES * g.length); }, 0);
-  const national = nationalOk(hubs) && G > 0;
-  // A measurement counts only for the plan it measured (when we can tell).
-  const samePlan = !Array.isArray(hubs) || !Array.isArray(activeProfiles) || (lastSync && lastSync.plan === planSig(activeProfiles, hubs));
-  return {
-    profiles: P, groups: G, hubs: H, national: national,
-    min: national ? G : G * H,
-    max: (national ? G : 0) + pagesMax * H,
-    measured: samePlan && lastSync && lastSync.calls > 0 ? lastSync.calls : null,
-    perHub: { min: G, max: pagesMax },
-    // Price Check's live search runs one query around the home base.
-    liveSearch: { min: 1, max: MAX_PAGES },
-  };
-}
-
-// Whole syncs the remaining calls cover: best case (cheapest), worst case, and at the
-// last measured cost. Null when there's nothing to divide by.
+// Whole syncs the remaining calls cover, best case (cheapest) and worst case, for a
+// cost estimate { min, max } (src/syncPlan.js estimateCost). Null with nothing to divide by.
 export function syncsLeft(remaining, cost) {
   if (remaining == null || !cost || !cost.min) return null;
-  return {
-    best: Math.floor(remaining / cost.min),
-    worst: Math.floor(remaining / cost.max),
-    measured: cost.measured ? Math.floor(remaining / cost.measured) : null,
-  };
+  return { best: Math.floor(remaining / cost.min), worst: Math.floor(remaining / cost.max) };
 }
 
 

@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import storage from "./storage";
 import { signOut } from "./Auth";
-import { fetchListings, fetchPriceComps, fetchRawSample, reconcile } from "./sync";
-import { searchFpMap, mergeSearchFps } from "./reconcile";
+import { fetchListings, postStep, fetchPriceComps, fetchRawSample, reconcile } from "./sync";
+import { planSync, trackedVins, nextProfileMeta, estimateCost, profileStatus, searchSig, COUNT_WARN, ROWS as MC_ROWS, FULL_REFRESH_DAYS } from "./syncPlan";
+import { travelFacts, DRIVE_MAX_MI, AIRPORT_NEAR_MI } from "./travel";
+import { SALT_STATES, isSaltState } from "./regions";
 import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBaseline, generatePriceAssessment, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
 import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
 import { listSnapshots, restoreSnapshot } from "./snapshots";
@@ -11,13 +13,13 @@ import { localPriceCheck } from "./priceCheck";
 import { sortRows, nextSort, sortIndicator } from "./tableSort";
 import { homeMiles } from "./geo";
 import { parseMarkdown, clampMemo, MEMO_MAX } from "./markdown";
-import { summarize, ingestSnaps, recordSyncCalls, syncCost, syncsLeft, gaugeTone, dedupeKeyEntries, spentKeyIds, planSig, FREE_PLAN_CALLS } from "./quota";
-import { loadLocations, searchLocations, addHub as addHubTo, normalizeHubs, hubFromZip, hubParts, hubKey, hubOverlaps } from "./locations";
+import { summarize, ingestSnaps, recordSyncCalls, syncsLeft, gaugeTone, dedupeKeyEntries, spentKeyIds, FREE_PLAN_CALLS } from "./quota";
+import { loadLocations, searchLocations, hubFromZip } from "./locations";
 
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
 
 var STORAGE_KEY = "car-search-data";
-var VERSION = 7;
+var VERSION = 8;
 var STALE_DAYS = 5;
 var STALE_MC_DAYS = 3; // flag a listing MarketCheck itself last confirmed this many days ago
 // A synced listing unseen in results for this long is almost certainly sold —
@@ -26,7 +28,6 @@ var STALE_MC_DAYS = 3; // flag a listing MarketCheck itself last confirmed this 
 var UNSEEN_SOLD_DAYS = 14;
 var BUDGET = 40000; // default budget; per-user override in data.settings.budget
 var TAX = 0.07;
-var SALT = new Set("CT,MA,NH,VT,ME,NY,NJ,PA,OH,MI,WI,MN,IL,IN,IA,MD,DE,WV,RI".split(","));
 
 // Starter global requirements (fed to AI scoring). Broad rules first; the
 // color/taste preferences (gold, then the soft prefer-not-black) come last.
@@ -71,9 +72,8 @@ var DEFAULT_CRITERIA = [
   { id: "deal", name: "Deal rating", weight: 10 },
 ];
 
-var HUBS = [
-  { n: "Durham NC", z: "27701", lat: 35.994, lon: -78.8986 },
-];
+// The owner's home base (the default; Settings changes it).
+var HOME_BASE = { n: "Durham, NC", z: "27701", lat: 35.994, lon: -78.8986 };
 
 // Per-user settings (synced in data.settings). Defaults preserve the original
 // two-car, Durham-based setup; the setup wizard and the Settings card edit them.
@@ -83,16 +83,16 @@ var DEFAULT_SETTINGS = {
   budget: BUDGET,
   taxRate: TAX,
   tagline: "2-car · Durham · ≤$40K",
-  hubs: HUBS,
   franchiseOnly: false, // when true, sync targets franchise dealers only (excludes independent)
   marketcheckKeys: [], // per-user MarketCheck API keys, tried in order with quota fallback: [{ key, label }]
-  // Where the buyer actually lives — the anchor for the "location" score. The
-  // hubs above are only places they're willing to SEARCH, so without this a car
-  // 20 mi from a travel hub reads as "local" when it's a thousand miles away.
-  homeBase: null, // { n, z } — picked from hubs in Settings
+  // Where the buyer lives: distance flags (drive vs. ship), the "location" score,
+  // and Price Check's live comps are all measured from here. Searches themselves
+  // are nationwide.
+  homeBase: HOME_BASE, // { n, z, lat, lon }
+  saltMode: "exclude", // salt-belt dealers (src/regions.js): "exclude" from searches, or "flag" them
   mcQuota: null, // latest MarketCheck quota snapshot per key + last sync cost (see src/quota.js)
   mcApi: null, // MarketCheck API version + deprecation/sunset headers from the last response (drift banner)
-  mcSearches: null, // { searchKey: { fp, at } } page-1 fingerprints — lets an unchanged search stop after page 1
+  mcProfiles: null, // { profileId: { fullAt, lastAt, sig, count, countSig, countAt } } — src/syncPlan.js
 };
 function getSettings(data) { return Object.assign({}, DEFAULT_SETTINGS, (data && data.settings) || {}); }
 // Ordered list of the user's MarketCheck key strings (empty -> server uses its shared key).
@@ -103,6 +103,11 @@ function mcKeys(data) {
 // past them instead of paying a call to find out again.
 function mcSpent(data) {
   return spentKeyIds(getSettings(data).marketcheckKeys || [], getSettings(data).mcQuota);
+}
+// Settings that change what every search returns (part of each profile's search signature).
+function planOpts(data) {
+  var s = getSettings(data);
+  return { franchiseOnly: !!s.franchiseOnly, excludeSalt: s.saltMode !== "flag" };
 }
 
 // ── Utility ──
@@ -136,7 +141,7 @@ function RoleBadge({ role, extra }) {
   if (!role || role === "?") return null;
   return (<span style={Object.assign({}, S.role, { background: roleColor(role) }, extra || {})}>{role}</span>);
 }
-function isSalt(st) { return SALT.has((st || "").toUpperCase()); }
+function isSalt(st) { return isSaltState(st); } // salt-belt list: src/regions.js
 function daysSince(d) { if (!d) return Infinity; return Math.floor((new Date() - new Date(d)) / 864e5); }
 function today() { return new Date().toISOString().split("T")[0]; }
 function calcScore(scores, crit) {
@@ -416,7 +421,7 @@ function dedupInsert(existing, newL) {
   return existing;
 }
 
-function migrate(data) {
+export function migrate(data) {
   if (!data) return null;
   var v = data.version || 1;
   if (v < 2) {
@@ -440,7 +445,21 @@ function migrate(data) {
       return l.status === "purchased" ? Object.assign({}, l, { status: "sold" }) : l;
     });
   }
-  // v6: budget/tax/hubs/tagline moved into data.settings (was hardcoded).
+  if (v < 8 && data.settings) {
+    // Searches went nationwide: the search-location list is gone. Its first located
+    // entry becomes the home base if none was set; the old search fingerprints go.
+    var st = Object.assign({}, data.settings);
+    var hubs = Array.isArray(st.hubs) ? st.hubs : [];
+    if (!st.homeBase) st.homeBase = hubs.find(function (h) { return h && h.lat != null && h.lon != null; }) || null;
+    else if (st.homeBase.lat == null) {
+      var hb = hubs.find(function (h) { return h && h.z === st.homeBase.z && h.lat != null; });
+      if (hb) st.homeBase = Object.assign({}, st.homeBase, { lat: hb.lat, lon: hb.lon });
+    }
+    delete st.hubs;
+    delete st.mcSearches;
+    data.settings = st;
+  }
+  // v6: budget/tax/tagline moved into data.settings (was hardcoded).
   data.settings = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
   // Existing users are already set up — don't pop the wizard at them.
   if (data.onboarded == null) data.onboarded = true;
@@ -782,7 +801,9 @@ export default function App() {
   // Pull dealer inventory via the proxy and reconcile. New VINs flow into the
   // candidate queue (same review path as Import); known VINs get price/last-seen
   // updates written to the blob. Manual only (↻ Sync) — no sync-on-load, to
-  // spare MarketCheck's free-tier quota. (opts.auto is retained but unused.)
+  // spare MarketCheck's free-tier quota. A manual sync fully refreshes every
+  // active profile (src/syncPlan.js); the scheduled sync takes the cheap path.
+  // (opts.auto is retained but unused.)
   var doSync = useCallback(async function (opts) {
     if (!data || syncing) return;
     var auto = opts && opts.auto;
@@ -795,13 +816,7 @@ export default function App() {
         setSyncing(false);
         return;
       }
-      if (!(getSettings(data).hubs || []).length) {
-        // Without a location the search would silently return nothing — say why.
-        if (!auto) setSyncMsg({ ok: false, error: "No search locations configured — add one in Settings (Profiles tab)." });
-        setSyncing(false);
-        return;
-      }
-      // As each location's request returns, show progress and surface any new
+      // As each search returns, show progress and surface any new
       // candidates found so far, so results appear progressively instead of all
       // at the end. Existing-listing updates (price/last-seen) still happen once
       // at the end over the full merged set, so nothing is falsely flagged
@@ -820,12 +835,14 @@ export default function App() {
           return prev.concat(dec.filter(function (c) { return !c.vin || !seen[c.vin]; }));
         });
       }
-      var res = await fetchListings(active, getSettings(data).hubs, opts, { franchiseOnly: !!getSettings(data).franchiseOnly, marketcheckKeys: mcKeys(data), spentKeys: mcSpent(data), fingerprints: searchFpMap(getSettings(data).mcSearches) }, onSyncProgress);
+      var po = planOpts(data);
+      var steps = planSync(active, getSettings(data).mcProfiles || {}, Object.assign({ manual: !auto }, po));
+      var res = await fetchListings(steps, trackedVins(data.listings), opts, { franchiseOnly: po.franchiseOnly, excludeSalt: po.excludeSalt, marketcheckKeys: mcKeys(data), spentKeys: mcSpent(data) }, onSyncProgress);
       // Reconcile + save against the LATEST state, not the `data` snapshot from
       // when the sync started — the fetches take a while and the UI stays live,
       // so approvals/edits/scores landed mid-sync must survive the final save.
       var base = dataRef.current || data;
-      var rec = reconcile(base.listings, res.listings, today(), { unchangedKeys: res.unchanged });
+      var rec = reconcile(base.listings, res.listings, today(), { goneVins: res.goneVins });
       var decorated = rec.candidates.map(function (c) {
         return Object.assign({}, c, { compositeScore: calcScore(c.scores, base.criteria), _candidate: true });
       });
@@ -862,9 +879,9 @@ export default function App() {
         var cutShort = res.rateLimited || (res.errors || []).some(function (m) { return /Stopped early/.test(String(m)); });
         if (!cutShort && res.calls > 0) {
           mq1 = recordSyncCalls(mq1, res.calls, nowIso);
-          mq1.lastSync = Object.assign({}, mq1.lastSync, { searches: res.queries || 0, unchanged: (res.unchanged || []).length, plan: planSig(active, getSettings(data).hubs || []) });
+          mq1.lastSync = Object.assign({}, mq1.lastSync, { full: steps.filter(function (x) { return x.kind === "full"; }).length, searches: steps.length });
         }
-        syncPatch.settings = Object.assign({}, base.settings || {}, { mcQuota: mq1, mcSearches: mergeSearchFps(getSettings(base).mcSearches, res.fingerprints, nowIso) }, res.apiInfo ? { mcApi: Object.assign({}, res.apiInfo, { at: nowIso }) } : {});
+        syncPatch.settings = Object.assign({}, base.settings || {}, { mcQuota: mq1, mcProfiles: nextProfileMeta(getSettings(base).mcProfiles, res.results, po, nowIso) }, res.apiInfo ? { mcApi: Object.assign({}, res.apiInfo, { at: nowIso }) } : {});
       }
       await save(Object.assign({}, base, syncPatch));
       // Report the count actually added to the queue (reconcile's newCount also
@@ -875,7 +892,7 @@ export default function App() {
       // run those listings were just never checked, so don't report them as gone.
       var summaryOut = Object.assign({}, rec.summary, { newCount: added.length });
       if (res.rateLimited) summaryOut.notSeen = 0;
-      setSyncMsg({ ok: true, summary: summaryOut, skippedSeen: skippedSeen, unchanged: (res.unchanged || []).length, searches: res.queries || 0, nationalInfo: res.nationalInfo, errors: res.errors, notices: res.notices, mock: res.mock, rateLimited: res.rateLimited, rateLimitInfo: res.rateLimitInfo, quota: res.quota });
+      setSyncMsg({ ok: true, summary: summaryOut, skippedSeen: skippedSeen, calls: res.calls, errors: res.errors, notices: res.notices, mock: res.mock, rateLimited: res.rateLimited, rateLimitInfo: res.rateLimitInfo, quota: res.quota });
       setSyncing(false);
       // Auto-score only NEW candidates (never skipped, never already-queued, not
       // already scored, and passing their profile's trim filter — no point
@@ -924,7 +941,7 @@ export default function App() {
     if (typeof window === "undefined" || !data) return;
     window.__rawSync = function (vin) {
       var active = data.profiles.filter(function (p) { return p.active; });
-      return fetchRawSample(active, getSettings(data).hubs, vin, mcKeys(data)).then(function (r) { console.log("[rawSync]", r); return r; });
+      return fetchRawSample(active, [], vin, mcKeys(data)).then(function (r) { console.log("[rawSync]", r); return r; });
     };
   }, [data]);
 
@@ -938,7 +955,7 @@ export default function App() {
     setRawBusy(true); setRawDebug("");
     try {
       var active = data.profiles.filter(function (p) { return p.active; });
-      var r = await fetchRawSample(active, getSettings(data).hubs, vin.trim(), mcKeys(data));
+      var r = await fetchRawSample(active, [], vin.trim(), mcKeys(data));
       setRawDebug(JSON.stringify(r, null, 2));
     } catch (e) { setRawDebug("Error: " + (e && e.message ? e.message : String(e))); }
     setRawBusy(false);
@@ -1140,10 +1157,11 @@ export default function App() {
     save(Object.assign({}, data, { listings: data.listings.map(function (l) { return l.status === "watch" ? Object.assign({}, l, { lastChecked: t }) : l; }) }));
   }, [data, save]);
 
-  // Synced watch listings unseen in results for UNSEEN_SOLD_DAYS+ — offered for
-  // one-click archiving to Sold (restorable from the Sold section).
+  // Synced watch listings that are gone — confirmed by the sync's VIN lookup
+  // (goneAt), or unseen for UNSEEN_SOLD_DAYS+ — offered for one-click archiving to
+  // Sold (restorable from the Sold section).
   function isUnseenOld(l) {
-    return l.source === "marketcheck" && l.status === "watch" && l.lastSeen && daysSince(l.lastSeen) >= UNSEEN_SOLD_DAYS;
+    return l.source === "marketcheck" && l.status === "watch" && (!!l.goneAt || (l.lastSeen && daysSince(l.lastSeen) >= UNSEEN_SOLD_DAYS));
   }
   var archiveUnseen = useCallback(function () {
     if (!data) return;
@@ -1152,7 +1170,7 @@ export default function App() {
       return Object.assign({}, l, {
         status: "sold",
         reviewPending: false,
-        notes: ((l.notes || "") + " · Archived " + today() + " — not seen in sync since " + l.lastSeen).replace(/^ · /, ""),
+        notes: ((l.notes || "") + " · Archived " + today() + " — " + (l.goneAt ? "no longer listed (checked " + l.goneAt + ")" : "not seen in sync since " + l.lastSeen)).replace(/^ · /, ""),
       });
     }) }));
   }, [data, save]);
@@ -1347,30 +1365,9 @@ export default function App() {
 // data is. Returns the confirm() text, or null when no warning is needed.
 
 var RESYNC_WARN_HOURS = 6;
-// The "Searching…" line while a sync runs. The nationwide request covers every
-// location at once, so it isn't counted as one; the per-location count only
-// appears for profiles it couldn't cover.
-// One clause for the final status line: did the nationwide search run, and how far did it get?
-export function nationalNote(n) {
-  if (!n) return "";
-  if (n.failed) return "nationwide search failed, so every location was searched";
-  if (n.skipped === "no-coords") return "nationwide search skipped: " + n.missing + " location" + (n.missing === 1 ? " has" : "s have") + " no coordinates (saving Settings fills them in)";
-  if (n.skipped) return "";
-  var calls = " (" + n.calls + " call" + (n.calls === 1 ? "" : "s") + ")";
-  if (n.covered >= n.profiles) return "nationwide search covered every profile" + calls;
-  if (n.timedOut) return "nationwide search covered " + n.covered + " of " + n.profiles + " profiles before its time limit; the rest by location";
-  return "nationwide search covered " + n.covered + " of " + n.profiles + " profile" + (n.profiles === 1 ? "" : "s") + calls + "; the rest had too many matches nationally, so by location";
-}
+// The "Searching…" line while a sync runs: one step per profile, then the watchlist lookup.
 export function syncProgressText(info) {
-  var found = " · " + (info.listings || []).length + " found";
-  var locs = info.total + " location" + (info.total === 1 ? "" : "s");
-  if (info.phase === "national") return "Searching nationwide across " + locs + "…";
-  if (info.phase === "done") return "Searched nationwide across " + locs + found;
-  if (info.phase === "local") {
-    var note = info.covered ? " (nationwide covered " + info.covered + " of " + info.profiles + " profile" + (info.profiles === 1 ? "" : "s") + ")" : "";
-    return "Searching… " + info.done + "/" + locs + found + note;
-  }
-  return "Searching… " + info.done + "/" + locs + found; // single-request sync
+  return "Searching… " + info.done + "/" + info.total + (info.label ? " · " + info.label : "") + " · " + (info.listings || []).length + " found";
 }
 export function syncWarning(data, nowMs) {
   if (!data || !data.lastSynced) return null;
@@ -1379,11 +1376,12 @@ export function syncWarning(data, nowMs) {
   if (!(ageH >= 0) || ageH >= RESYNC_WARN_HOURS) return null;
   var s = getSettings(data);
   var active = (data.profiles || []).filter(function (p) { return p.active; });
-  var cost = syncCost(active, s.hubs || [], s.mcQuota && s.mcQuota.lastSync);
+  // The ↻ Sync button fully refreshes every active profile.
+  var cost = estimateCost(active, s.mcProfiles || {}, data.listings, Object.assign({ manual: true }, planOpts(data)), now);
   var sum = summarize(s.marketcheckKeys || [], s.mcQuota, now);
   var newest = (data.listings || []).reduce(function (m, l) { return l.mcSeen && l.mcSeen > m ? l.mcSeen : m; }, "");
   var ago = ageH < 1 ? Math.max(1, Math.round(ageH * 60)) + " min" : Math.round(ageH) + " hour" + (Math.round(ageH) === 1 ? "" : "s");
-  var calls = cost.measured ? "about " + cost.measured : (cost.min === cost.max ? String(cost.min) : cost.min + "–" + cost.max);
+  var calls = cost.min === cost.max ? String(cost.min) : cost.min + "–" + cost.max;
   return "Your last sync was " + ago + " ago."
     + (newest ? " MarketCheck's newest data on your listings is from " + newest + ", and it refreshes roughly daily, so a sync now will likely return the same results." : "")
     + " It will use " + calls + " MarketCheck call" + (calls === "1" ? "" : "s")
@@ -1470,9 +1468,14 @@ export function QuotaModal({ data, summary, onClose }) {
   var s = getSettings(data);
   var activeList = (data.profiles || []).filter(function (p) { return p.active; });
   var active = activeList.length;
-  var cost = syncCost(activeList, s.hubs || [], s.mcQuota && s.mcQuota.lastSync);
-  var perSync = cost.measured || cost.min; // what the daily scheduled sync would spend each run
+  var meta = s.mcProfiles || {};
+  var po = planOpts(data);
+  var cost = estimateCost(activeList, meta, data.listings, Object.assign({ manual: true }, po)); // the ↻ Sync button
+  // The scheduled sync: a new-listings pass most days, a full refresh every FULL_REFRESH_DAYS.
+  var dailyNew = activeList.length + (trackedVins(data.listings).length ? 1 : 0);
+  var perMonth = Math.round((30 - 30 / FULL_REFRESH_DAYS) * dailyNew + (30 / FULL_REFRESH_DAYS) * (cost.min + cost.max) / 2);
   var left = syncsLeft(summary.totalRemaining, cost);
+  var lastSync = s.mcQuota && s.mcQuota.lastSync;
   var n = function (v) { return Number(v).toLocaleString(); };
   var range = function (a, b) { return a === b ? n(a) : n(a) + "–" + n(b); };
   var used = usedOf(summary);
@@ -1531,21 +1534,34 @@ export function QuotaModal({ data, summary, onClose }) {
         </div>
 
         <h4 style={{ fontSize: 12, color: "#8a8a96", margin: "16px 0 4px", textTransform: "uppercase", letterSpacing: "0.04em" }}>Syncs left</h4>
-        {cost.min === 0 ? (
-          <p style={S.help}>Add at least one active profile and one search location to estimate sync cost.</p>
+        {!active ? (
+          <p style={S.help}>Activate a profile to estimate sync cost.</p>
         ) : (
           <div style={{ fontSize: 13, color: "#c8c8d0", lineHeight: 1.6 }}>
-            {cost.national ? (
-              <div>Your <strong>{active}</strong> active profile{active === 1 ? " runs as" : "s share"} one search, run <strong>nationwide</strong> and kept to your <strong>{cost.hubs}</strong> locations' radii: as little as <strong>{n(cost.min)}</strong> call when it fits in one 50-car page, up to 10 when it pages. If too many cars match nationally it costs one extra call, then searches each location as before: up to <strong>{n(cost.max)}</strong>.</div>
-            ) : (
-              <div>Your <strong>{active}</strong> active profile{active === 1 ? " runs as" : "s share"} one search × <strong>{cost.hubs}</strong> location{cost.hubs === 1 ? "" : "s"}, so one sync costs <strong>{range(cost.min, cost.max)}</strong> calls — the minimum when every search fits in one 50-car page, more for searches with more matches.{cost.hubs > 1 ? " (A cheaper nationwide search needs every location to have coordinates — saving Settings fills them in from their ZIPs.)" : ""}</div>
-            )}
-            {cost.measured ? <div>Your last full sync actually used <strong>{n(cost.measured)}</strong>{s.mcQuota && s.mcQuota.lastSync && s.mcQuota.lastSync.unchanged ? <span> — {s.mcQuota.lastSync.unchanged} of {s.mcQuota.lastSync.searches} searches were unchanged and stopped after one page</span> : null}.</div> : <div style={{ color: "#6b6b76" }}>No sync of your current profiles and locations recorded yet to measure the real cost.</div>}
+            <div>Each active profile is one nationwide search{po.excludeSalt ? " (salt-belt states left out)" : ""}. <strong>↻ Sync</strong> fully refreshes them all: one call per 50 matching cars, so <strong>{range(cost.min, cost.max)}</strong> calls{cost.vins.max ? ", including up to " + n(cost.vins.max) + " for watchlist cars the searches don't return" : ""}.</div>
+            <div style={{ overflowX: "auto", margin: "6px 0" }}>
+              <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                <thead><tr>{["Profile", "Matching cars", "Full refresh", "Last full refresh"].map(function (h) { return (<th key={h} style={th}>{h}</th>); })}</tr></thead>
+                <tbody>
+                  {activeList.map(function (p) {
+                    var st = profileStatus(p, meta, po);
+                    var c = cost.profiles.find(function (x) { return x.id === p.id; }) || { min: 1, max: 10 };
+                    var m = meta[p.id] || {};
+                    return (<tr key={p.id}>
+                      <td style={td}>{p.name || p.id}</td>
+                      <td style={Object.assign({}, td, st.count != null && st.count > COUNT_WARN ? { color: "#e8c96a" } : {})}>{st.count == null ? "—" : n(st.count) + (st.countCurrent ? "" : " (before your last edit)")}</td>
+                      <td style={td}>{range(c.min, c.max)} call{c.max === 1 ? "" : "s"}</td>
+                      <td style={td}>{m.fullAt ? fmtResetTs(m.fullAt) : "never"}</td>
+                    </tr>);
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {lastSync && lastSync.calls ? <div>Your last sync used <strong>{n(lastSync.calls)}</strong> call{lastSync.calls === 1 ? "" : "s"}.</div> : null}
             {left ? (
               <div style={{ marginTop: 6 }}>
                 {summary.fraction == null && !summary.totalRemaining ? "Quota not measured yet." : (<span>
-                  ≈ <strong style={{ color: "#f0f0f3" }}>{left.measured != null ? n(left.measured) : range(left.worst, left.best)}</strong> sync{(left.measured != null ? left.measured : left.best) === 1 ? "" : "s"} left
-                  {left.measured != null ? " at your last sync's cost" : ""}{left.measured != null || left.worst === left.best ? "" : " (worst–best case)"}.
+                  ≈ <strong style={{ color: "#f0f0f3" }}>{range(left.worst, left.best)}</strong> full sync{left.best === 1 ? "" : "s"} left{left.worst === left.best ? "" : " (worst–best case)"}.
                 </span>)}
               </div>
             ) : null}
@@ -1561,12 +1577,13 @@ export function QuotaModal({ data, summary, onClose }) {
             <thead><tr>{["Action", "Calls"].map(function (h) { return (<th key={h} style={th}>{h}</th>); })}</tr></thead>
             <tbody>
               {[
-                ["Full sync (all locations)", range(cost.min, cost.max) + (cost.measured ? " · last " + n(cost.measured) : "")],
-                ["Sync of one location", range(cost.perHub.min, cost.perHub.max)],
-                ["Price Check → live market", range(cost.liveSearch.min, cost.liveSearch.max)],
+                ["↻ Sync (full refresh of every active profile)", range(cost.min, cost.max)],
+                ["New-listings pass (scheduled sync, most days)", n(dailyNew) + " or so"],
+                ["Check a profile's match count", "1"],
+                ["Price Check → live market", "1–4"],
                 ["Debug raw VIN lookup", "1"],
                 ["Debug raw sample (+ up to 4 diagnosis re-runs if empty)", "1–5"],
-                ["Daily scheduled sync, if enabled on the server (30 runs)", "≈ " + n(perSync * 30) + " / month"],
+                ["Daily scheduled sync, if enabled on the server", "≈ " + n(perMonth) + " / month (full refresh every " + FULL_REFRESH_DAYS + " days)"],
               ].map(function (row) { return (<tr key={row[0]}><td style={td}>{row[0]}</td><td style={td}>{row[1]}</td></tr>); })}
             </tbody>
           </table>
@@ -1678,13 +1695,12 @@ function BG({ label, items, budget, tax }) {
   );
 }
 
-// ── Search-location picker ──
-// One box instead of separate name + ZIP fields: type a city or ZIP, pick a
-// suggestion, and it's added (with coordinates) to a list that stays deduped and
-// sorted by state then city. Suggestions come from public/locations.txt, loaded
-// the first time the box is used. If that file can't load, a bare 5-digit ZIP is
-// still accepted so the page never dead-ends.
-export function LocationPicker({ hubs, onChange }) {
+// ── Home-base picker ──
+// One box: type a city or ZIP, pick a suggestion, and it becomes the home base
+// (with coordinates). Suggestions come from public/locations.txt, loaded the first
+// time the box is used. If that file can't load, a bare 5-digit ZIP is still
+// accepted (its coordinates are filled in on save when the file loads).
+export function HomeBasePicker({ value, onChange }) {
   var [q, setQ] = useState("");
   var [open, setOpen] = useState(false);
   var [hi, setHi] = useState(0);
@@ -1697,42 +1713,27 @@ export function LocationPicker({ hubs, onChange }) {
     loadLocations().then(function (i) { setIdx(i); setLoadErr(false); }).catch(function () { setLoadErr(true); });
   }
   var results = idx ? searchLocations(idx, q) : [];
-
-  function add(hub) {
-    var r = addHubTo(hubs, hub, idx);
-    setNote(r.added ? "" : (hub.n || hub.z) + " is already in your list.");
-    if (r.added) onChange(r.hubs);
-    setQ(""); setOpen(false); setHi(0);
-  }
+  function pick(hub) { onChange(hub); setQ(""); setOpen(false); setHi(0); setNote(""); }
   function onKey(e) {
     if (e.key === "ArrowDown") { e.preventDefault(); setOpen(true); setHi(function (h) { return Math.min(h + 1, Math.max(results.length - 1, 0)); }); }
     else if (e.key === "ArrowUp") { e.preventDefault(); setHi(function (h) { return Math.max(h - 1, 0); }); }
     else if (e.key === "Escape") { setOpen(false); }
     else if (e.key === "Enter") {
       e.preventDefault();
-      if (results[hi]) add(results[hi].hub);
-      else { var z = hubFromZip(q); if (z) add(z); else if (q.trim()) setNote(idx ? "No match — try a city name or a 5-digit ZIP." : "Locations are still loading — try again in a moment."); }
+      if (results[hi]) pick(results[hi].hub);
+      else { var z = hubFromZip(q); if (z) pick(z); else if (q.trim()) setNote(idx ? "No match — try a city name or a 5-digit ZIP." : "Locations are still loading — try again in a moment."); }
     }
   }
-  function remove(h) { var k = hubKey(h); onChange(hubs.filter(function (x) { return hubKey(x) !== k; })); setNote(""); }
 
-  var shown = normalizeHubs(hubs, idx);
   return (
     <div>
-      {shown.length === 0 && <p style={Object.assign({}, S.help, { marginTop: 6 })}>No locations yet — add at least one below.</p>}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
-        {shown.map(function (h) {
-          var p = hubParts(h, idx);
-          return (
-            <span key={(h.z || "") + "|" + h.n} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#1b1e27", border: "1px solid #2a2d38", borderRadius: 6, padding: "4px 4px 4px 10px", fontSize: 13, color: "#e4e4e7" }}>
-              {p.st ? p.city + ", " + p.st : (h.n || h.z)}{h.z && h.n !== h.z ? <span style={{ color: "#6b6b76", fontSize: 11 }}>{h.z}</span> : null}
-              <button style={Object.assign({}, S.smBtn, { color: "#888", padding: "0 6px" })} title={"Remove " + (h.n || h.z)} onClick={function () { remove(h); }}>×</button>
-            </span>
-          );
-        })}
+      <div style={{ fontSize: 13, color: "#e4e4e7", marginTop: 6 }}>
+        {value ? (<span>📍 {value.n || value.z}{value.z && value.n !== value.z ? <span style={{ color: "#6b6b76", fontSize: 11 }}> {value.z}</span> : null}
+          <button style={Object.assign({}, S.smBtn, { color: "#888", padding: "0 6px", marginLeft: 6 })} title="Clear home base" onClick={function () { onChange(null); }}>×</button></span>)
+          : <span style={{ color: "#6b6b76" }}>Not set — distance flags need it.</span>}
       </div>
       <div style={{ position: "relative", marginTop: 8 }}>
-        <input style={Object.assign({}, S.inp, { width: "100%" })} value={q} placeholder="Add a location — type a city or ZIP"
+        <input style={Object.assign({}, S.inp, { width: "100%", boxSizing: "border-box" })} value={q} placeholder={value ? "Change — type a city or ZIP" : "Type a city or ZIP"}
           role="combobox" aria-expanded={open && results.length > 0} aria-autocomplete="list" autoComplete="off"
           onFocus={function () { ensureIndex(); setOpen(true); }}
           onChange={function (e) { ensureIndex(); setQ(e.target.value); setOpen(true); setHi(0); setNote(""); }}
@@ -1743,7 +1744,7 @@ export function LocationPicker({ hubs, onChange }) {
             {results.map(function (r, i) {
               return (
                 <div key={r.key} role="option" aria-selected={i === hi}
-                  onMouseDown={function (e) { e.preventDefault(); add(r.hub); }} onMouseEnter={function () { setHi(i); }}
+                  onMouseDown={function (e) { e.preventDefault(); pick(r.hub); }} onMouseEnter={function () { setHi(i); }}
                   style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "7px 10px", fontSize: 13, cursor: "pointer", color: "#e4e4e7", background: i === hi ? "#1f2a44" : "transparent" }}>
                   <span>{r.label}</span><span style={{ color: "#6b6b76", fontSize: 11 }}>{r.sub}</span>
                 </div>
@@ -1753,30 +1754,29 @@ export function LocationPicker({ hubs, onChange }) {
           </div>
         )}
       </div>
-      {hubOverlaps(shown, idx).map(function (o) {
-        var name = function (h) { var p = hubParts(h, idx); return p.st ? p.city + ", " + p.st : (h.n || h.z); };
-        return (
-          <div key={hubKey(o.a) + hubKey(o.b)} style={{ fontSize: 12, color: "#d4a017", marginTop: 6, lineHeight: 1.45 }}>
-            ⚠ {name(o.a)} and {name(o.b)} are {o.miles} mi apart, so their search areas overlap about {Math.round(o.overlap * 100)}%. Each location is its own search on every sync — dropping one would save its calls and lose few cars.
-          </div>
-        );
-      })}
       {note && <div style={{ fontSize: 12, color: "#d4a017", marginTop: 6 }}>{note}</div>}
       {loadErr && <div style={{ fontSize: 12, color: "#d4a017", marginTop: 6 }}>City suggestions couldn't load — you can still enter a 5-digit ZIP and press Enter.</div>}
     </div>
   );
 }
 
-// ── Settings (budget, tagline, search locations) ──
+// A home base saved as a bare ZIP gets its coordinates from the location list.
+function withHomeCoords(hb, idx) {
+  if (!hb || (hb.lat != null && hb.lon != null)) return hb;
+  var r = idx && idx.byZip && idx.byZip[String(hb.z || "").trim()];
+  return r ? Object.assign({}, hb, { lat: r.lat, lon: r.lon }) : hb;
+}
+
+// ── Settings (budget, tagline, home base, salt belt, keys) ──
 export function SettingsCard({ data, save }) {
   var s = getSettings(data);
   var [open, setOpen] = useState(false);
   var [budget, setBudget] = useState(String(s.budget || ""));
   var [tagline, setTagline] = useState(s.tagline || "");
   var [franchiseOnly, setFranchiseOnly] = useState(!!s.franchiseOnly);
-  var [hubs, setHubs] = useState(normalizeHubs(s.hubs));
+  var [saltMode, setSaltMode] = useState(s.saltMode === "flag" ? "flag" : "exclude");
   var [mck, setMck] = useState((s.marketcheckKeys || []).map(function (k) { return { key: (k && k.key ? k.key : k) || "", label: (k && k.label) || "" }; }));
-  var [homeZ, setHomeZ] = useState((s.homeBase && s.homeBase.z) || "");
+  var [home, setHome] = useState(s.homeBase || null);
 
   function setMckField(i, field, val) { setMck(function (prev) { return prev.map(function (k, j) { return j === i ? Object.assign({}, k, { [field]: val }) : k; }); }); }
   function addMck() { setMck(function (prev) { return prev.concat([{ key: "", label: "" }]); }); }
@@ -1788,19 +1788,16 @@ export function SettingsCard({ data, save }) {
     });
   }
 
-  // Saving settings also fills any location's missing coordinates by ZIP (the
-  // nationwide search needs them), so the location index is loaded first; if it
-  // can't load, the save goes ahead without.
+  // A home base entered as a bare ZIP gets its coordinates on save (the location
+  // list is loaded only then); if the list can't load, the save goes ahead.
   function saveAll() {
-    Promise.resolve().then(loadLocations).catch(function () { return null; }).then(saveWith);
+    if (home && home.lat == null) Promise.resolve().then(loadLocations).catch(function () { return null; }).then(saveWith);
+    else saveWith(null);
   }
   function saveWith(idx) {
-    var cleanHubs = normalizeHubs(hubs, idx);
     var cleanMck = dedupeKeyEntries(mck); // the one place duplicate keys are handled
-    // Home base is stored as its own {n,z} (not a pointer into hubs) so renaming
-    // or removing a search location can't silently orphan it.
-    var hb = cleanHubs.find(function (h) { return h.z === homeZ; });
-    save(Object.assign({}, data, { settings: Object.assign({}, s, { budget: parseInt(budget) || 0, tagline: tagline.trim(), franchiseOnly: franchiseOnly, hubs: cleanHubs, marketcheckKeys: cleanMck, homeBase: hb ? { n: hb.n, z: hb.z, lat: hb.lat, lon: hb.lon } : null }) }));
+    var hb = withHomeCoords(home, idx);
+    save(Object.assign({}, data, { settings: Object.assign({}, s, { budget: parseInt(budget) || 0, tagline: tagline.trim(), franchiseOnly: franchiseOnly, saltMode: saltMode, marketcheckKeys: cleanMck, homeBase: hb ? { n: hb.n, z: hb.z, lat: hb.lat, lon: hb.lon } : null }) }));
     setOpen(false);
   }
 
@@ -1811,26 +1808,25 @@ export function SettingsCard({ data, save }) {
         <button style={S.secBtn} onClick={function () { setOpen(!open); }}>{open ? "Close" : "Edit"}</button>
       </div>
       {!open ? (
-        <p style={S.help}>Budget ${Number(s.budget || 0).toLocaleString()} · {(s.hubs || []).length} search location{(s.hubs || []).length === 1 ? "" : "s"} ({(s.hubs || []).map(function (h) { return h.n || h.z; }).join(", ") || "none"}){s.franchiseOnly ? " · franchise dealers only" : ""}{(s.marketcheckKeys || []).length ? " · " + s.marketcheckKeys.length + " MarketCheck key" + (s.marketcheckKeys.length === 1 ? "" : "s") : ""} · home base {s.homeBase ? (s.homeBase.n || s.homeBase.z) : "not set"}</p>
+        <p style={S.help}>Budget ${Number(s.budget || 0).toLocaleString()} · home base {s.homeBase ? (s.homeBase.n || s.homeBase.z) : "not set"} · salt-belt dealers {s.saltMode === "flag" ? "flagged" : "excluded"}{s.franchiseOnly ? " · franchise dealers only" : ""}{(s.marketcheckKeys || []).length ? " · " + s.marketcheckKeys.length + " MarketCheck key" + (s.marketcheckKeys.length === 1 ? "" : "s") : ""}</p>
       ) : (
         <div>
           <div style={S.grid2}>
             <div style={S.field}><label style={S.lbl}>Total budget ($)</label><input style={S.inp} type="number" value={budget} onChange={function (e) { setBudget(e.target.value); }} /></div>
             <div style={S.field}><label style={S.lbl}>Header tagline</label><input style={S.inp} value={tagline} onChange={function (e) { setTagline(e.target.value); }} /></div>
           </div>
-          <div style={{ marginTop: 10 }}>
-            <label style={S.lbl}>Search locations</label>
-            <LocationPicker hubs={hubs} onChange={setHubs} />
-          </div>
           <div style={{ marginTop: 12 }}>
             <label style={S.lbl}>Home base — where the car has to end up</label>
-            <select style={Object.assign({}, S.inp, { width: "100%" })} value={homeZ} onChange={function (e) { setHomeZ(e.target.value); }}>
-              <option value="">— not set —</option>
-              {hubs.filter(function (h) { return (h.z || "").trim(); }).map(function (h, i) {
-                return (<option key={i} value={h.z}>{(h.n || h.z) + " (" + h.z + ")"}</option>);
-              })}
+            <HomeBasePicker value={home} onChange={setHome} />
+            <p style={S.help}>Searches are nationwide. Distances are measured from here: cars more than {DRIVE_MAX_MI} mi away (straight line) are flagged "ship or fly", and AI scoring's "location" criterion uses it too.</p>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <label style={S.lbl}>Salt-belt dealers</label>
+            <select style={Object.assign({}, S.inp, { width: "100%" })} value={saltMode} onChange={function (e) { setSaltMode(e.target.value); }}>
+              <option value="exclude">Exclude from searches</option>
+              <option value="flag">Include, but flag them</option>
             </select>
-            <p style={S.help}>Pick which search location you actually live near. AI scoring measures the "location" criterion from here — without it, a car parked 20 miles from a travel hub scores as "local" even when it's a thousand miles from you.</p>
+            <p style={S.help}>Salt-belt states: {SALT_STATES.join(", ")}. Excluding them also saves calls (their cars don't count toward results). The dealer's state is only a hint — a car may have lived elsewhere — so flagging keeps them in view. Changing this re-runs each profile's full search on the next sync.</p>
           </div>
           <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, cursor: "pointer", fontSize: 13, color: "#c8c8d0" }}>
             <input type="checkbox" checked={franchiseOnly} onChange={function (e) { setFranchiseOnly(e.target.checked); }} />
@@ -1853,7 +1849,7 @@ export function SettingsCard({ data, save }) {
             })}
             <button style={Object.assign({}, S.smBtn, { marginTop: 6 })} onClick={addMck}>+ Add MarketCheck key</button>
           </div>
-          <p style={S.help}>Budget powers the "budget left" math; locations are where dealer inventory is searched (~100 mi radius each). Franchise-only applies to future syncs; listings already saved from independent dealers stay until you remove them. Your MarketCheck keys are stored in your synced settings and used server-side, top to bottom — the next one takes over only when the one before it has used up its monthly quota. Add any and the app's shared key is never used, even if yours run out; leave the list empty to use the shared key.</p>
+          <p style={S.help}>Budget powers the "budget left" math. Franchise-only applies to future syncs; listings already saved from independent dealers stay until you remove them. Your MarketCheck keys are stored in your synced settings and used server-side, top to bottom — the next one takes over only when the one before it has used up its monthly quota. Add any and the app's shared key is never used, even if yours run out; leave the list empty to use the shared key.</p>
           <button style={Object.assign({}, S.priBtn, { marginTop: 6 })} onClick={saveAll}>Save settings</button>
         </div>
       )}
@@ -1919,6 +1915,43 @@ function KeyCard({ keyStatus, setKeyStatus }) {
 }
 
 // ── Profiles + Global Reqs ──
+// How many cars a profile matches nationwide — what its full refresh costs (one
+// call per 50). Known from its searches at no extra cost; after an edit it's stale
+// until the next sync, or a one-call count (rows=0) on request.
+export function ProfileCount({ p, data, save }) {
+  var [busy, setBusy] = useState(false);
+  var [err, setErr] = useState("");
+  var po = planOpts(data);
+  var meta = getSettings(data).mcProfiles || {};
+  var st = profileStatus(p, meta, po);
+  async function check() {
+    setBusy(true); setErr("");
+    try {
+      var r = await postStep({ kind: "count", profile: p }, null, Object.assign({}, po, { marketcheckKeys: mcKeys(data), spentKeys: mcSpent(data) }));
+      var nowIso = new Date().toISOString();
+      var s = getSettings(data);
+      var next = Object.assign({}, s.mcProfiles || {});
+      if (r.numFound != null) next[p.id] = Object.assign({}, next[p.id] || {}, { count: r.numFound, countSig: searchSig(p, po), countAt: nowIso });
+      save(Object.assign({}, data, { settings: Object.assign({}, data.settings || {}, { mcProfiles: next, mcQuota: ingestSnaps(s.mcQuota, r.keyQuotas, nowIso) }) }));
+      if (r.errors && r.errors.length) setErr(String(r.errors[0]).slice(0, 200));
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  }
+  var n = function (v) { return Number(v).toLocaleString(); };
+  var big = st.count != null && st.count > COUNT_WARN;
+  return (
+    <div style={{ marginTop: 6, fontSize: 12, color: big && st.countCurrent ? "#e8c96a" : "#6b6b76" }}>
+      {st.count != null && st.countCurrent ? (
+        <span>{big ? "⚠ " : ""}{n(st.count)} matching cars nationwide — a full refresh is ~{n(Math.max(1, Math.ceil(st.count / MC_ROWS)))} call{st.count > MC_ROWS ? "s" : ""}{big ? ". Narrow price, miles or years to cut that." : "."}</span>
+      ) : (
+        <span>{st.count != null ? "Match count (" + n(st.count) + ") is from before your last edit." : "Match count not known yet."} Next sync measures it, or{" "}
+          <button style={Object.assign({}, S.smBtn, { fontSize: 11 })} disabled={busy} onClick={check}>{busy ? "Checking…" : "check now (1 call)"}</button></span>
+      )}
+      {err && <div style={{ color: "#c44" }}>{err}</div>}
+    </div>
+  );
+}
+
 function ProfilesTab({ data, save, keyOk, scoreModel }) {
   var [ed, setEd] = useState(null);
   var [showIO, setShowIO] = useState(false);
@@ -2056,6 +2089,7 @@ function ProfilesTab({ data, save, keyOk, scoreModel }) {
                 )}
                 {p.params.priceBaseline && <div style={{ marginTop: 4 }}><span style={{ fontSize: 11, fontWeight: 600, color: "#b89edd" }}>Price baseline:</span> {(p.params.priceBaseline.tiers || []).length} tier(s) — anchors the price score</div>}
                 {p.params.dealbreakers && <div style={{ marginTop: 4 }}><span style={{ fontSize: 11, fontWeight: 600, color: "#c44" }}>Breaks:</span> {p.params.dealbreakers}</div>}
+                {p.active && <ProfileCount p={p} data={data} save={save} />}
               </div>
             )}
           </div>
@@ -2242,7 +2276,7 @@ function Wizard({ data, onComplete }) {
   var s = getSettings(data);
   var [step, setStep] = useState(0);
   var [budget, setBudget] = useState(String(s.budget || ""));
-  var [hubs, setHubs] = useState(normalizeHubs(s.hubs));
+  var [home, setHome] = useState(s.homeBase || null);
   var [keepProfiles, setKeepProfiles] = useState(true);
   var startReqs = (data.globalReqs && data.globalReqs.length) ? data.globalReqs : DEFAULT_REQS;
   var [reqs, setReqs] = useState(startReqs.map(function (r) { return Object.assign({}, r); }));
@@ -2252,26 +2286,26 @@ function Wizard({ data, onComplete }) {
   var starterProfiles = data.profiles || [];
 
   function finish() {
-    Promise.resolve().then(loadLocations).catch(function () { return null; }).then(finishWith);
+    if (home && home.lat == null) Promise.resolve().then(loadLocations).catch(function () { return null; }).then(finishWith);
+    else finishWith(null);
   }
   function finishWith(idx) {
     var profiles = keepProfiles ? starterProfiles : [];
     var n = profiles.filter(function (p) { return p.active; }).length || profiles.length;
-    var hubNames = hubs.filter(function (h) { return h.z || h.n; }).map(function (h) { return h.n || h.z; });
     var budgetNum = parseInt(budget) || 0;
+    var hb = withHomeCoords(home, idx);
     var tagline = (n ? n + " car" + (n > 1 ? "s" : "") : "Car search")
-      + (hubNames.length ? " · " + hubNames.join(", ") : "")
+      + (hb ? " · " + String(hb.n || hb.z).replace(/,\s*[A-Z]{2}$/, "") : "")
       + (budgetNum ? " · ≤$" + Math.round(budgetNum / 1000) + "K" : "");
-    var cleanHubs = normalizeHubs(hubs, idx);
     onComplete(Object.assign({}, data, {
-      settings: Object.assign({}, s, { budget: budgetNum, hubs: cleanHubs, tagline: tagline }),
+      settings: Object.assign({}, s, { budget: budgetNum, homeBase: hb ? { n: hb.n, z: hb.z, lat: hb.lat, lon: hb.lon } : null, tagline: tagline }),
       profiles: profiles,
       globalReqs: reqs,
       onboarded: true,
     }));
   }
 
-  var steps = ["Welcome", "Budget & locations", "What you're shopping for", "Global rules", "Done"];
+  var steps = ["Welcome", "Budget & home", "What you're shopping for", "Global rules", "Done"];
   function next() { setStep(function (x) { return Math.min(x + 1, steps.length - 1); }); }
   function back() { setStep(function (x) { return Math.max(x - 1, 0); }); }
 
@@ -2294,13 +2328,13 @@ function Wizard({ data, onComplete }) {
           )}
           {step === 1 && (
             <div>
-              <p style={lbl}>What's your total budget, and where should we search? <span style={b}>ZIP is required</span> per location; the name is just a label. Each location searches ~100 mi around it.</p>
+              <p style={lbl}>What's your total budget, and where do you live? Searches are <span style={b}>nationwide</span>; your home base is where distances are measured from, so far-off cars get flagged "ship or fly".</p>
               <div style={S.grid2}>
                 <div style={S.field}><label style={S.lbl}>Total budget ($)</label><input style={S.inp} type="number" value={budget} onChange={function (e) { setBudget(e.target.value); }} placeholder="40000" /></div>
               </div>
               <div style={{ marginTop: 10 }}>
-                <label style={S.lbl}>Search locations</label>
-                <LocationPicker hubs={hubs} onChange={setHubs} />
+                <label style={S.lbl}>Home base</label>
+                <HomeBasePicker value={home} onChange={setHome} />
               </div>
             </div>
           )}
@@ -2335,7 +2369,7 @@ function Wizard({ data, onComplete }) {
             <div>
               <p style={lbl}>All set. Here's the summary:</p>
               <p style={lbl}>• Budget: <span style={b}>${(parseInt(budget) || 0).toLocaleString()}</span><br />
-                • Locations: <span style={b}>{hubs.filter(function (h) { return h.z || h.n; }).map(function (h) { return h.n || h.z; }).join(", ") || "none"}</span><br />
+                • Home base: <span style={b}>{home ? (home.n || home.z) : "not set"}</span><br />
                 • Profiles: <span style={b}>{keepProfiles ? starterProfiles.length + " starter" : "starting blank"}</span><br />
                 • Active rules: <span style={b}>{reqs.filter(function (r) { return r.active; }).length}</span></p>
               <p style={lbl}>To enable AI scoring, add your Anthropic API key in Settings afterward.</p>
@@ -2425,19 +2459,10 @@ function scoreHue(v) { return v >= 7 ? "#2d8659" : v >= 5 ? "#d4a017" : "#c44"; 
 // your own tracked/rejected data (free, offline), with an optional live
 // MarketCheck search to widen thin comps and an optional AI verdict weighted to
 // a confidence signal. Exported for render tests.
-// Where Price Check's live search looks: the home base when it's set (using the
-// matching search location's coordinates if the saved home base predates them),
-// else the first search location. null when there are no locations.
+// Where Price Check's live search looks: around the home base. null when unset.
 export function liveSearchHub(s) {
-  var hubs = (s && s.hubs) || [];
   var hb = s && s.homeBase;
-  if (hb && (hb.z || hb.n)) {
-    var match = hubs.find(function (h) { return hb.z && h.z === hb.z; });
-    if (hb.lat != null && hb.lon != null) return Object.assign({}, match || {}, hb);
-    if (match) return match;
-    if (hb.z) return hb;
-  }
-  return hubs[0] || null;
+  return hb && (hb.z || (hb.lat != null && hb.lon != null)) ? hb : null;
 }
 
 // Sortable columns for the Price Check comps table (order matches the header).
@@ -2492,7 +2517,7 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings, onQuota
   function runLive() {
     if (!result || result.error) return;
     var hub = liveSearchHub(getSettings(data));
-    if (!hub) { setLive({ error: "Add a search location in Settings to check the live market." }); return; }
+    if (!hub) { setLive({ error: "Set a home base in Settings to check the live market." }); return; }
     setLive({ busy: true });
     // One location, not all of them: each location is a separate (billed) query,
     // and comps near home are the ones that matter for a fair-price read.
@@ -2637,7 +2662,7 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings, onQuota
                 {live.rateLimited ? " (MarketCheck quota hit mid-search — results may be partial.)" : ""}
               </div>
             )}
-            <div style={{ fontSize: 11, color: "#6b6b76", marginTop: 6 }}>Searches MarketCheck around {(function () { var h = liveSearchHub(getSettings(data)); return h ? (h.n || h.z) : "your first location"; })()} (your home base, else your first search location — about 1–4 calls) and folds current asking prices into the comps above.</div>
+            <div style={{ fontSize: 11, color: "#6b6b76", marginTop: 6 }}>Searches MarketCheck around {(function () { var h = liveSearchHub(getSettings(data)); return h ? (h.n || h.z) : "your home base"; })()} (~100 mi around your home base — about 1–4 calls) and folds current asking prices into the comps above.</div>
           </div>
 
           <div style={{ marginTop: 12, borderTop: "1px solid #1e2028", paddingTop: 10 }}>
@@ -2865,7 +2890,7 @@ function HelpTab() {
       <div style={S.card}>
         <h3 style={S.cardH}>Tabs</h3>
         <p style={li}><span style={b}>Dashboard</span> — at-a-glance counts, top picks per profile, and a heads-up when watched listings are due for a re-check.</p>
-        <p style={li}><span style={b}>Profiles</span> — add/edit/enable the vehicles you're searching for. Each active profile is queried at every hub on sync.</p>
+        <p style={li}><span style={b}>Profiles</span> — add/edit/enable the vehicles you're searching for. Each active profile is one nationwide search on sync; its card shows how many cars it matches.</p>
         <p style={li}><span style={b}>Criteria</span> — the weighted factors (price, mileage, condition, etc.) behind each listing's composite score. Editing weights re-scores everything automatically.</p>
         <p style={li}><span style={b}>Results</span> — sync, review candidates, and manage your watchlist. This is where you'll spend most of your time.</p>
         <p style={li}><span style={b}>Compare</span> — side-by-side table of watchlist listings for the profiles you pick, across primary specs and each scoring criterion plus the total; best value per row is highlighted.</p>
@@ -2874,8 +2899,9 @@ function HelpTab() {
 
       <div style={S.card}>
         <h3 style={S.cardH}>Sync &amp; refresh</h3>
-        <p style={li}><span style={b}>"↻ Sync"</span> (Results tab) is also your refresh. On each run it updates prices (with a note), refreshes the last-seen date, flags listings that didn't appear this time ("may be sold"), and routes new VINs to Candidates.</p>
-        <p style={note}>It runs automatically when you open the app if it's been a while, or on demand. It only refreshes listings that came from dealer sync — manually-added ones aren't touched. When synced listings go unseen for 14+ days, a banner offers to archive them to <span style={b}>Sold</span> in one click (restorable).</p>
+        <p style={li}><span style={b}>"↻ Sync"</span> (Results tab) is also your refresh. Each active profile is one <span style={b}>nationwide</span> search (salt-belt dealers left out, or flagged — Settings). It updates prices (with a note), routes new VINs to Candidates, and looks up any watchlist car the searches didn't return by its VIN — one that's no longer listed anywhere is marked gone.</p>
+        <p style={note}>It only runs when you press it (plus a daily scheduled sync, if the server has one enabled — that one is cheaper: just new listings most days, a full refresh every {FULL_REFRESH_DAYS} days). Each profile card shows how many cars it matches — every 50 is a MarketCheck call on a full refresh. Manually-added listings aren't touched. Gone listings get a banner offering to archive them to <span style={b}>Sold</span> in one click (restorable).</p>
+        <p style={note}>Each card flags travel: miles from your home base ("ship or fly" past {DRIVE_MAX_MI}), the nearest major airport (green within {AIRPORT_NEAR_MI} mi — fly in, drive back), and 🧂 for a salt-belt dealer.</p>
       </div>
 
       <div style={S.card}>
@@ -2910,7 +2936,7 @@ function HelpTab() {
 
       <div style={S.card}>
         <h3 style={S.cardH}>Setup, backup &amp; reset</h3>
-        <p style={li}><span style={b}>Setup wizard</span> (footer) re-runs the guided setup (budget, locations, profiles, rules) without wiping data. Budget, search locations, and tagline also live in the <span style={b}>Settings</span> card on the Profiles tab.</p>
+        <p style={li}><span style={b}>Setup wizard</span> (footer) re-runs the guided setup (budget, home base, profiles, rules) without wiping data. Budget, home base, salt-belt handling, and tagline also live in the <span style={b}>Settings</span> card on the Profiles tab.</p>
         <p style={li}><span style={b}>Export Listings</span> (footer) dumps your listings as JSON to copy and back up. <span style={b}>Import</span> (Results) accepts the same shape.</p>
         <p style={li}><span style={b}>Export prices (CSV)</span> (footer) downloads every recorded price observation across <span style={b}>all</span> listings — watchlist, rejected, sold, skipped, and candidates — one row per price/date, with year/trim/mileage/dealer-type/CPO/status. Built for offline pricing analysis (e.g. uploading to Claude to reason about model/trim/mileage pricing, including private listings you're evaluating elsewhere).</p>
         <p style={li}><span style={b}>Backups</span> (footer) lists automatic server-side snapshots of your whole app state (up to 30, at most one per hour of activity) — restore any of them in two taps; the pre-restore state is snapshotted too, so a restore is undoable.</p>
@@ -3047,7 +3073,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       {unseenCount > 0 && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", background: "#2a2210", border: "1px solid #3d3218", borderRadius: 8, padding: "8px 12px", marginBottom: 12 }}>
           <span style={{ fontSize: 12, color: "#e8c96a" }}>
-            ⏳ {unseenCount} listing{unseenCount > 1 ? "s" : ""} not seen in sync for {UNSEEN_SOLD_DAYS}+ days — probably sold.
+            ⏳ {unseenCount} listing{unseenCount > 1 ? "s are" : " is"} no longer listed — probably sold.
           </span>
           <button style={S.secBtn} onClick={archiveUnseen}>Archive {unseenCount > 1 ? "all " + unseenCount : "it"} as Sold</button>
           <span style={{ fontSize: 11, color: "#8a8a96" }}>(restorable from the Sold section)</span>
@@ -3356,17 +3382,13 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
     if (s.priceUpdates) parts.push(s.priceUpdates + " price change" + (s.priceUpdates > 1 ? "s" : ""));
     if (s.refreshed) parts.push(s.refreshed + " already watched");
     if (syncMsg.skippedSeen) parts.push(syncMsg.skippedSeen + " skipped (hidden)");
-    if (s.notSeen) parts.push(s.notSeen + " not seen");
-    if (s.kept) parts.push(s.kept + " unchanged");
+    if (s.notSeen) parts.push(s.notSeen + " no longer listed");
     var detail = parts.length ? parts.join(" · ") : "no changes";
-    if (syncMsg.unchanged) detail += " · " + syncMsg.unchanged + " of " + syncMsg.searches + " search" + (syncMsg.searches === 1 ? "" : "es") + " unchanged since last sync, so their remaining pages were skipped";
-    text = (syncMsg.mock ? "Mock sync" : "Synced") + " — " + detail + " (from " + (s.fetched || 0) + " found)";
+    text = (syncMsg.mock ? "Mock sync" : "Synced") + " — " + detail + " (from " + (s.fetched || 0) + " found" + (syncMsg.calls ? ", " + syncMsg.calls + " MarketCheck call" + (syncMsg.calls === 1 ? "" : "s") : "") + ")";
     if (syncMsg.errors && syncMsg.errors.length) {
       text += " · " + syncMsg.errors.length + " query error(s): " + String(syncMsg.errors[0]).slice(0, 240);
       color = "#d4a017";
     }
-    var nat = nationalNote(syncMsg.nationalInfo);
-    if (nat) text += " · " + nat;
     if (syncMsg.notices && syncMsg.notices.length) text += " · " + syncMsg.notices.join(" ");
     if (syncMsg.rateLimited) {
       // Free-tier quota / rate limit: make it unmissable — results are partial.
@@ -3675,14 +3697,26 @@ function UpdateCard({ listing, data, onReviewed, onReject }) {
   );
 }
 
-// Miles badge: true straight-line distance from the home base when we have the
-// dealer's coordinates; otherwise the old radius-from-search-area figure, marked
-// as such so it isn't read as distance from home.
+// Travel flags (src/travel.js): straight-line miles from the home base ("ship or
+// fly" past DRIVE_MAX_MI) and the nearest major airport (fly in, drive back); the
+// salt-belt 🧂 sits by the dealer's state. Flags only — nothing is filtered on distance. Listings without
+// dealer coordinates fall back to the old radius-from-search-area figure.
 function DistBadge({ l, data }) {
-  var hm = homeMiles(l, getSettings(data).homeBase);
-  if (hm != null) return (<span title="Straight-line miles from your home base (driving is typically 20–30% longer)">📍 {hm} mi from home</span>);
-  if (l.distMi == null) return null;
-  return (<span title="Distance from the search location this turned up in — not from your home base">📍 ~{l.distMi} mi from search area</span>);
+  var t = travelFacts(l, getSettings(data).homeBase);
+  var out = [];
+  if (t.homeMi != null) {
+    out.push(<span key="home" style={t.farFromHome ? { color: "#e8c96a" } : null}
+      title={"Straight-line miles from your home base (driving is typically 20–30% longer)" + (t.farFromHome ? " — over " + DRIVE_MAX_MI + " mi, so shipping or flying in is likelier than driving" : "")}>
+      📍 {t.homeMi} mi from home{t.farFromHome ? " · ship or fly" : ""}</span>);
+  } else if (l.distMi != null) {
+    out.push(<span key="home" title="Distance from the search location this turned up in — not from your home base">📍 ~{l.distMi} mi from search area</span>);
+  }
+  if (t.airport) {
+    out.push(<span key="ap" style={t.airport.near ? { color: "#3fae74" } : { color: "#6b6b76" }}
+      title={t.airport.near ? "A major airport within " + AIRPORT_NEAR_MI + " mi — easy to fly in and drive it back" : "Nearest major airport is over " + AIRPORT_NEAR_MI + " mi away"}>
+      ✈ {t.airport.code} {t.airport.mi} mi</span>);
+  }
+  return out.length ? <Fragment>{out}</Fragment> : null;
 }
 
 // How long ago MarketCheck itself last saw this car. Our own "last seen" is the

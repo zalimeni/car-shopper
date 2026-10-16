@@ -13,7 +13,7 @@ vi.mock("../src/snapshots", () => ({ listSnapshots: async () => [], restoreSnaps
 
 const { SettingsCard } = await import("../src/App.jsx");
 
-const base = (keys) => ({ profiles: [], listings: [], settings: { budget: 40000, tagline: "t", hubs: [{ n: "Durham, NC", z: "27701", lat: 36, lon: -78.9 }], marketcheckKeys: keys } });
+const base = (keys) => ({ profiles: [], listings: [], settings: { budget: 40000, tagline: "t", homeBase: { n: "Durham, NC", z: "27701", lat: 36, lon: -78.9 }, marketcheckKeys: keys } });
 // Saving loads the location index first (to fill missing coordinates), so it's async.
 async function saveAndGet(data, edit) {
   const save = vi.fn();
@@ -44,13 +44,18 @@ describe("Settings de-duplicates MarketCheck keys on save", () => {
   });
 });
 
-describe("Settings save fills missing location coordinates", () => {
-  it("looks a bare-ZIP location up in the location list", async () => {
+describe("Settings save: home base and salt belt", () => {
+  it("a home base saved as a bare ZIP gets its coordinates from the location list", async () => {
     global.fetch = vi.fn(async () => ({ ok: true, text: async () => "MA|Boston|02108|42.3576|-71.0684\nNC|Durham|27701|35.9968|-78.8996\n" }));
     const d = base([]);
-    d.settings.hubs = [{ n: "Boston, MA", z: "02108" }, { n: "Durham, NC", z: "27701", lat: 36, lon: -78.9 }];
-    const hubs = (await saveAndGet(d)).hubs;
-    expect(hubs.find((h) => h.z === "02108")).toMatchObject({ lat: 42.3576, lon: -71.0684 });
-    expect(hubs.find((h) => h.z === "27701")).toMatchObject({ lat: 36, lon: -78.9 });
+    d.settings.homeBase = { n: "02108", z: "02108" };
+    expect((await saveAndGet(d)).homeBase).toMatchObject({ z: "02108", lat: 42.3576, lon: -71.0684 });
+  });
+  it("keeps a located home base and saves the salt-belt choice", async () => {
+    const saved = await saveAndGet(base([]), () => {
+      fireEvent.change(screen.getByDisplayValue("Exclude from searches"), { target: { value: "flag" } });
+    });
+    expect(saved.homeBase).toMatchObject({ z: "27701", lat: 36, lon: -78.9 });
+    expect(saved.saltMode).toBe("flag");
   });
 });

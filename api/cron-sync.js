@@ -23,9 +23,10 @@
 
 import { safeEqual, DEFAULT_ALLOW } from "./_auth.js";
 import { adminClient, anonClient } from "./_supabaseAdmin.js";
-import { searchListings, resolveKeys, keyId } from "./marketcheck.js";
-import { reconcile, searchFpMap, mergeSearchFps } from "../src/reconcile.js";
+import { createSession, runStep, resolveKeys, keyId } from "./marketcheck.js";
+import { reconcile } from "../src/reconcile.js";
 import { ingestSnaps, spentKeyIds } from "../src/quota.js";
+import { planSync, runSync, trackedVins, nextProfileMeta } from "../src/syncPlan.js";
 
 const PENDING_MAX = 100; // cap parked candidates so the blob stays bounded
 
@@ -87,8 +88,7 @@ export default async function handler(req, res) {
       if (!row.data || !row.data.data) { out.skipped = "no saved data"; continue; }
       const state = row.data.data;
       const profiles = (state.profiles || []).filter(function (p) { return p.active; });
-      const hubs = (state.settings && state.settings.hubs) || [];
-      if (!profiles.length || !hubs.length) { out.skipped = "no active profiles or search locations"; continue; }
+      if (!profiles.length) { out.skipped = "no active profiles"; continue; }
 
       const budgetMs = deadline - Date.now() - 2000;
       if (budgetMs < 5000) { out.skipped = "out of time this run"; continue; }
@@ -98,18 +98,23 @@ export default async function handler(req, res) {
         .map(function (k) { return (k && k.key ? k.key : k) || ""; }), apiKey);
       const keys = resolved.keys;
       if (!keys.length) { out.skipped = "no MarketCheck key (add one in Settings, or set MARKETCHECK_API_KEY)"; continue; }
-      const r = await searchListings(
-        keys[0],
-        profiles.map(function (p) { return { id: p.id, name: p.name, params: p.params }; }),
-        hubs,
-        { dealerType: dealerType, budgetMs: budgetMs, keys: keys,
-          // Nationwide first; whatever it can't cover runs per location in this same call.
-          national: true,
-          fingerprints: searchFpMap(state.settings && state.settings.mcSearches),
-          spentKeys: spentKeyIds((state.settings && state.settings.marketcheckKeys) || [], state.settings && state.settings.mcQuota), keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? apiKey : null); }) }
-      );
+      // The same plan as the in-app sync's automatic path: full refresh when due,
+      // else new listings, then the watchlist's leftover VINs (src/syncPlan.js).
+      const settings = state.settings || {};
+      const planOpts = { franchiseOnly: !!settings.franchiseOnly, excludeSalt: settings.saltMode !== "flag" };
+      const steps = planSync(profiles, settings.mcProfiles || {}, planOpts);
+      const keyIds = keys.map(function (k) { return keyId(k, resolved.shared ? apiKey : null); });
+      const spent = spentKeyIds(settings.marketcheckKeys || [], settings.mcQuota);
+      const r = await runSync(steps, trackedVins(state.listings), async function (step) {
+        // A fresh session per step (so each report is that step's alone), carrying
+        // forward the keys found spent and the shared time budget.
+        const sess = createSession(keys, { dealerType: dealerType, keyIds: keyIds, spentKeys: spent, budgetMs: Math.max(1000, deadline - Date.now() - 2000) });
+        const rep = await runStep(sess, Object.assign({}, step, { excludeSalt: planOpts.excludeSalt }));
+        (rep.keyQuotas || []).forEach(function (q) { if (q && q.exhausted && spent.indexOf(q.id) < 0) spent.push(q.id); });
+        return rep;
+      });
 
-      const rec = reconcile(state.listings || [], r.listings, todayStr, { unchangedKeys: r.unchanged });
+      const rec = reconcile(state.listings || [], r.listings, todayStr, { goneVins: r.goneVins });
 
       // Park genuinely-new candidates: drop VINs the user skipped and VINs
       // already parked by a previous cron run. (The client also dedups against
@@ -129,8 +134,9 @@ export default async function handler(req, res) {
       });
       // Same API-version bookkeeping as the in-app sync (drift banner).
       const nowIso = new Date().toISOString();
-      nextData.settings = Object.assign({}, state.settings || {}, { mcSearches: mergeSearchFps(state.settings && state.settings.mcSearches, r.fingerprints, nowIso),
-          mcQuota: ingestSnaps(state.settings && state.settings.mcQuota, r.keyQuotas, nowIso) },
+      nextData.settings = Object.assign({}, settings, {
+          mcProfiles: nextProfileMeta(settings.mcProfiles, r.results, planOpts, nowIso),
+          mcQuota: ingestSnaps(settings.mcQuota, r.keyQuotas, nowIso) },
         r.apiInfo ? { mcApi: Object.assign({}, r.apiInfo, { at: nowIso }) } : {});
       // Don't advance lastSynced on an incomplete (rate-limited) run — leave it
       // at the last good sync so the "Last synced" display isn't misleading.

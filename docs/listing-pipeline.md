@@ -39,56 +39,64 @@ automotive-listings aggregator covering US/Canada dealer inventory.
 > verified against the live API** during implementation; the normalization
 > layer (§5) is the single place that depends on them.
 
-## 3. Architecture — sync-on-open
+## 3. Architecture — nationwide sync
 
 Reconciliation runs **in the browser while the user is logged in**, so all
 writes go through the normal Supabase session + RLS. The serverless function is
-a thin proxy that holds only the MarketCheck key.
+a thin proxy that holds only the MarketCheck key. There is no sync on app open:
+the **↻ Sync** button, plus the optional daily scheduled sync (§4a).
+
+Every MarketCheck call is billed (errors and 304s too), and every 50 cars is a
+call. So the plan (`src/syncPlan.js`, shared by the browser and the scheduled
+sync) does as little as it can:
 
 ```
-App opens (user authenticated)  ──or── "Sync now" button
-   └─> GET /api/marketcheck       (Vercel serverless function, Node)
-         Merge ALL active profiles into one query (src/queryPlan.js) — make/model/
-         year AND powertrain_type take comma-separated lists (verified live:
-         powertrain_type=HEV,PHEV returns both); each row's own powertrain is
-         checked against its profile locally.
-         NATIONWIDE FIRST (2+ hubs, all with coordinates): the same query with no
-         location at all (verified live on the free plan: no `dist`, but dealer
-         lat/lon on every row). If num_found fits the 500-row ceiling and costs
-         no more pages than hubs+1, page it once and keep only the cars within
-         some hub's radius (haversine on dealer coordinates; distMi = nearest
-         hub). 1–10 calls for any number of hubs. Too big: split per profile
-         nationally; a profile still too big falls back to per-hub below. Its
-         search key includes the hub set, so editing locations starts it fresh.
-         The browser sends this as one request (national:"only"), then one
-         request per hub for the leftovers (`localProfiles`); cron does both in
-         one call.
-         Then, for the leftovers × each hub (e.g. Durham 27701 @ radius):
-           # radius = MARKETCHECK_RADIUS, default 100mi (free-tier cap); raise on a paid plan
-           ONE query MarketCheck /v2/search/car/active, car_type=used (paginate)
-             # make/model/year as comma-separated unions, widest price/miles caps;
-             # each row is attributed back to the profile whose own filters it meets.
-             # car_type=used already includes certified (no separate certified query).
-             # A merged group pages up to 200 rows per profile, never past the
-             # account's 500-row pagination ceiling; bigger groups split per profile.
-             # Sorted by last_seen desc. If page 1's fingerprint (num_found + each
-             # car's VIN/price/miles/last_seen, VIN-ordered, no day counters) matches
-             # last sync's for that search, the set is unchanged: stop after page 1.
-             # Cars carry the searches that returned them (mcQ), so reconcile keeps
-             # an unchanged search's cars as-is (seen today) instead of "not seen".
-         Keys: requests carry spentKeys (from the stored quota and from earlier
-         requests of this sync), so the server starts on the first key with
-         calls left instead of every per-hub request re-paying to find key #1
-         spent. A failover is a one-time notice, not a query error.
-         → return normalized listings (§5)        [holds MARKETCHECK_API_KEY only]
-   └─> Browser (authed) reconciles vs. stored listings (§6)
+↻ Sync button (manual)  ──or── daily scheduled sync (automatic)
+   1. Each ACTIVE profile → ONE nationwide search (no location), its own filters
+      (merging profiles widens filters nationwide: 6 merged = 7,824 cars vs 67 alone)
+      salt-belt dealers left out via state=<the other states> (src/regions.js),
+      unless Settings says to flag them instead.
+        FULL refresh — every matching car. Due when never run, 3+ days since the
+          last one, the profile's search filters (or salt/franchise settings)
+          changed, or on a manual Sync. Catches older listings that newly match
+          (a price drop under the cap). Over the 500-row ceiling the state list
+          is halved until each part fits; one state still too big reads its
+          newest 500 and says so.
+        else NEW LISTINGS — sort_by=dos_active asc (days at THIS dealer, so a
+          relisted car counts as new), stop once a page reaches cars listed more
+          than <days since the profile's last search> + 1 ago. Usually one call.
+   2. Watchlist VINs (status watch, from MarketCheck) that step 1 didn't return →
+      vin=<up to 50, comma-separated> lookups. A VIN the lookup doesn't return
+      either is no longer listed: the ONLY way a car is marked gone (goneAt), so
+      it's never a guess from a search that simply didn't include it.
+   One /api/marketcheck request per step (POST { kind, profile, since, vins, … }),
+   each its own function invocation, clear of the 60 s limit.
+   Keys: requests carry spentKeys (from the stored quota and earlier steps), so the
+   server starts on the first key with calls left. A failover is a notice.
+   → normalized listings (§5)                      [holds MARKETCHECK_API_KEY only]
+   └─> Browser (authed) reconciles vs. stored listings (§6), goneVins included
+   └─> settings.mcProfiles[id] = { fullAt, lastAt, sig, count, countSig, countAt }
    └─> Browser writes the updated app_state blob via the user's session (RLS)
 ```
 
+All verified live on the free plan (Oct 2026): no-location searches (dealer
+coordinates on every row, no `dist`), `state=` and `vin=` lists, `sort_by=dos_active`,
+and `rows=0` counts (one call, no paging — the profile card's "check now").
+
+**Cost.** A profile's match count comes back with every search, so the profile
+card shows it and warns past 300 (narrow price/miles/years). Typical: a
+new-listings pass is ~1 call per profile, the watchlist lookup ~1, and a full
+refresh one per 50 matching cars — a few calls a sync for small profiles.
+
+**Travel flags, not filters.** Nothing is filtered on distance (a far car can be
+shipped). `src/travel.js` flags each listing from the dealer's coordinates:
+straight-line miles from the home base ("ship or fly" past 500), the nearest
+major airport (`src/airports.js`, "fly-in friendly" within 50 mi), and a
+salt-belt state. Cards show them; AI scoring gets them as facts.
+
 **No service-role key anywhere.** The only server-held secret is the MarketCheck
-data key (unrelated to the user's accounts). The cost of this approach: listings
-refresh only when the app is open (plus the manual "Sync now" button) — not
-unattended. See §4 for the background-cron variant that lifts that limitation.
+data key (unrelated to the user's accounts). Unattended refreshes come from the
+optional scheduled sync (§4a), which runs the same plan server-side.
 
 ## 4. Runtime & secrets
 
@@ -143,10 +151,9 @@ app. This is the piece that *does* need elevated server credentials:
   scoped to `SYNC_USER_ID`.
 - On *newly discovered* candidates (or notable price drops), send an email
   (e.g. Resend/Postmark) summarizing the matches + links.
-- The reconcile logic from §6 is shared between the client (sync-on-open) and
-  this function, so it isn't rewritten.
-
-Shipped only after sync-on-open is solid; it's strictly additive.
+- The plan (`src/syncPlan.js`) and reconcile logic (§6) are shared between the
+  client and this function, so neither is rewritten. The scheduled sync takes the
+  automatic path (full refresh only when due).
 
 ## 5. Normalization (MarketCheck → app listing)
 
@@ -169,9 +176,10 @@ The reconciler depends only on this mapping, so API drift is contained here.
 | `color`        | `exterior_color`                         | |
 | `status`       | `"candidate"` on first discovery         | see §6 |
 
-Profile → query mapping: `make`, `model`, `year` range, `maxPrice`, `maxMiles`
-come straight from `profile.params`; hub zip → `latitude`/`longitude` (geocode
-the two fixed hubs once) + `radius=400`.
+Profile → query mapping: `make`, `model`, `year` (exact-year list), `powertrain_type`,
+`price_range`, `miles_range` come straight from `profile.params`; no location
+(nationwide), `state=` the allowed states. Dealer `latitude`/`longitude` become
+`dLat`/`dLon` for the travel flags.
 
 ## 6. Reconciliation
 
@@ -183,11 +191,11 @@ Per sync run, build a set of discovered VINs and compare to stored listings:
   (`"Price: $X → $Y on <date>"`), refresh `lastChecked`. Keep its status
   (watch/candidate) and `compositeScore` (recomputed).
 - **Known VIN, unchanged** → refresh `lastChecked` only.
-- **Watched VIN absent from results** → **non-destructive flag only** (v1):
-  `lastSeen` is left unchanged so the card shows "Last seen in sync: <date> (may
-  be sold)". No status change, no deletion. Auto-marking `sold` is deferred to
-  the §4a follow-up. Manual listings (no `source: "marketcheck"`) are never
-  touched by reconcile.
+- **Watched VIN the VIN lookup confirms gone** (`goneVins`) → **non-destructive
+  flag only**: `goneAt` is stamped and the Results banner offers to archive it to
+  Sold (restorable). A car a search merely didn't return (a new-listings pass, or
+  it left the filters) is untouched — only the direct lookup says gone. Manual
+  listings (no `source: "marketcheck"`) are never touched by reconcile.
 
 Reuses the existing `dedupInsert` (lowest-price-wins on VIN) and `daysSince`
 staleness logic. Provenance: tag pipeline-created listings with
@@ -201,12 +209,12 @@ read-modify-write of the blob and reuses all current array logic (`dedupInsert`,
 
 - **No new persisted "candidate" status.** New VINs flow into the existing
   in-memory candidate queue — the same review path as Import (`CandCard`,
-  `approveCand`/`approveAll`). Unreviewed matches aren't persisted; because
-  sync-on-open re-runs each visit, anything still on the market simply
-  re-surfaces. Only *approved* listings are written (as `watch`).
+  `approveCand`/`approveAll`). Unreviewed matches aren't persisted; a full
+  refresh re-surfaces anything still on the market. Only *approved* listings are
+  written (as `watch`).
 - New fields on synced listings: `source: "marketcheck"`, `lastSeen` (date last
-  present in a sync), and `dom` (days on market, shown in notes). A
-  `lastSynced` timestamp on the root blob drives the sync-on-open debounce.
+  present in a sync), `goneAt`, and `dom` (days at this dealer). `lastSynced` on
+  the root blob drives the "you synced recently" cost warning.
 
 Normalized per-listing tables (`listings`, `price_history`) remain a backlog
 item, justified only if the blob gets large or we want real query history.
@@ -216,17 +224,16 @@ item, justified only if the blob gets large or we want real query history.
 - Results tab: a **↻ Sync** button + a status line (`SyncStatus`) summarizing the
   last run (new / price-changes / not-seen / query errors), and "Last synced
   <ago>" when idle.
-- Sync-on-open: auto-runs once per load if it's been > `AUTO_SYNC_HOURS` (12)
-  since `lastSynced`; quiet on error for the background run.
+- No sync on app open (it spent quota on every visit); the ↻ Sync button warns
+  with the cost when the last sync was under 6 hours ago.
 - `LCard` shows the `lastSeen` line for `marketcheck` listings (amber "may be
   sold" when it's not today's date). Price changes append a note via reconcile.
 
 ## 9. Cost, limits, failure modes
 
-- **Requests/run:** active profiles (≤5) × 2 hubs × pages — low tens of requests
-  per sync. Sync-on-open could fire often, so **debounce** (skip if synced within
-  the last N hours) to stay within trial/low-tier limits. Confirm MarketCheck
-  rate limits + per-request cost.
+- **Requests/run:** see §3 — one search per active profile (one call per 50
+  matching cars on a full refresh, ~1 on a new-listings pass) plus ~1 watchlist
+  lookup. Free plan: 500 calls/month per key, 5/second, 500-row pagination ceiling.
 - **Partial failure:** if a profile query fails, skip it and continue; never
   purge based on an incomplete run (only purge VINs for profiles whose query
   succeeded this run).

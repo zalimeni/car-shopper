@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { parseLocations, searchLocations, hubKey, hubParts, normalizeHubs, addHub, hubFromZip } from "../src/locations.js";
+import { parseLocations, searchLocations, hubFromZip } from "../src/locations.js";
 
 const TXT = [
   "KY|Louisville|40202|38.255|-85.755", "KY|Louisville|40203|38.240|-85.770", "KY|Louisville|40204|38.235|-85.710",
@@ -53,39 +53,8 @@ describe("searchLocations", () => {
   });
 });
 
-describe("hub dedupe + sort", () => {
-  const D = { n: "Durham, NC", c: "Durham", st: "NC", z: "27701", lat: 35.997, lon: -78.897 };
-  const B = { n: "Boston, MA", c: "Boston", st: "MA", z: "02101" };
-  const L = { n: "Louisville, KY", c: "Louisville", st: "KY", z: "40202" };
-  it("keys by ZIP, so different labels for one ZIP collapse", () => {
-    expect(hubKey({ n: "Durham NC", z: "27701" })).toBe(hubKey(D));
-    expect(hubKey({ n: " Raleigh  NC " })).toBe(hubKey({ n: "raleigh nc" }));
-  });
-  it("sorts by state, then city", () => {
-    const out = normalizeHubs([D, B, L, { n: "Asheville, NC", c: "Asheville", st: "NC", z: "28801" }]);
-    expect(out.map((h) => h.n)).toEqual(["Louisville, KY", "Boston, MA", "Asheville, NC", "Durham, NC"]);
-  });
-  it("dedupes and keeps coordinates from whichever duplicate has them", () => {
-    const out = normalizeHubs([{ n: "Durham NC", z: "27701" }, D]);
-    expect(out.length).toBe(1);
-    expect(out[0].lat).toBe(35.997);
-  });
-  it("parses legacy labels for sorting and drops blanks", () => {
-    expect(hubParts({ n: "Boston MA", z: "02101" })).toEqual({ st: "MA", city: "Boston" });
-    expect(hubParts({ n: "", z: "27701" }, idx)).toEqual({ st: "NC", city: "Durham" });
-    const out = normalizeHubs([{ n: "Durham NC", z: "27701" }, { n: "Boston MA", z: "02101" }, { n: "", z: "" }]);
-    expect(out.map((h) => h.z)).toEqual(["02101", "27701"]);
-  });
-  it("puts entries with no known state last", () => {
-    expect(normalizeHubs([{ n: "Mystery", z: "99999" }, D]).map((h) => h.z)).toEqual(["27701", "99999"]);
-  });
-  it("addHub refuses a duplicate", () => {
-    expect(addHub([D], { n: "Durham NC", z: "27701" }).added).toBe(false);
-    const r = addHub([D], B);
-    expect(r.added).toBe(true);
-    expect(r.hubs.map((h) => h.st)).toEqual(["MA", "NC"]);
-  });
-  it("hubFromZip accepts only 5 digits", () => {
+describe("hubFromZip (fallback when the location file can't load)", () => {
+  it("accepts only 5 digits", () => {
     expect(hubFromZip("27701")).toEqual({ n: "27701", z: "27701" });
     expect(hubFromZip("2770")).toBeNull();
   });
@@ -93,58 +62,10 @@ describe("hub dedupe + sort", () => {
 
 describe("the shipped public/locations.txt", () => {
   const real = parseLocations(readFileSync(new URL("../public/locations.txt", import.meta.url), "utf8"));
-  it("covers the app's default hubs", () => {
+  it("covers the default home base and common cities", () => {
     expect(real.rows.length).toBeGreaterThan(40000);
     expect(searchLocations(real, "durham nc")[0].hub.st).toBe("NC");
     expect(real.byZip["02108"].city).toBe("Boston");
     expect(searchLocations(real, "louisville ky")[0].label).toBe("Louisville, KY");
-  });
-});
-
-import { circleOverlap, hubOverlaps } from "../src/locations.js";
-describe("search-area overlap", () => {
-  it("circle overlap: identical = 1, far apart = 0, half-radius apart ≈ 69%", () => {
-    expect(circleOverlap(0, 100, 100)).toBe(1);
-    expect(circleOverlap(250, 100, 100)).toBe(0);
-    expect(circleOverlap(100, 100, 100)).toBeCloseTo(0.391, 2);
-    expect(circleOverlap(50, 100, 100)).toBeCloseTo(0.685, 2);
-  });
-  it("a small area inside a big one counts as fully covered", () => {
-    expect(circleOverlap(20, 100, 30)).toBe(1);
-  });
-  it("flags Durham + Raleigh (about 23 mi apart) but not Durham + Boston", () => {
-    const hubs = [
-      { n: "Durham, NC", z: "27701", lat: 35.994, lon: -78.899 },
-      { n: "Raleigh, NC", z: "27601", lat: 35.772, lon: -78.638 },
-      { n: "Boston, MA", z: "02108", lat: 42.357, lon: -71.064 },
-    ];
-    const o = hubOverlaps(hubs);
-    expect(o.length).toBe(1);
-    expect([o[0].a.n, o[0].b.n]).toEqual(["Durham, NC", "Raleigh, NC"]);
-    expect(o[0].miles).toBeGreaterThan(18);
-    expect(o[0].miles).toBeLessThan(28);
-    expect(o[0].overlap).toBeGreaterThan(0.8);
-  });
-  it("uses the ZIP index for legacy locations without coordinates, skips ones it can't place", () => {
-    const o = hubOverlaps([{ n: "Durham NC", z: "27701" }, { n: "Durham", z: "27702" }, { n: "??", z: "00000" }], idx);
-    expect(o.length).toBe(1);
-  });
-  it("respects a per-location radius", () => {
-    const o = hubOverlaps([{ n: "A", lat: 35, lon: -78, r: 10 }, { n: "B", lat: 35.3, lon: -78, r: 10 }]); // ~21 mi apart, 10-mi circles
-    expect(o).toEqual([]);
-  });
-});
-
-describe("normalizeHubs fills missing coordinates by ZIP (on settings save)", () => {
-  const index = { byZip: { "27701": { lat: 35.99, lon: -78.9 } } };
-  it("fills a bare-ZIP hub from the index and leaves located / unknown ones alone", () => {
-    const out = normalizeHubs([{ n: "Durham NC", z: "27701" }, { n: "Boston MA", z: "02108", lat: 42.36, lon: -71.06 }, { n: "Nowhere", z: "00000" }], index);
-    const by = Object.fromEntries(out.map((h) => [h.z, h]));
-    expect([by["27701"].lat, by["27701"].lon]).toEqual([35.99, -78.9]);
-    expect(by["02108"].lat).toBe(42.36);
-    expect(by["00000"].lat).toBeUndefined();
-  });
-  it("without an index nothing is invented", () => {
-    expect(normalizeHubs([{ n: "Durham NC", z: "27701" }])[0].lat).toBeUndefined();
   });
 });

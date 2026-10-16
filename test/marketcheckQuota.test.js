@@ -23,7 +23,8 @@ function mockFetch(byKey) {
     return { ok: spec.status === 200, status: spec.status, headers: { get: (h) => hdr[h.toLowerCase()] ?? null }, text: async () => text, json: async () => JSON.parse(text), clone: () => ({ text: async () => text }) };
   });
 }
-const SYNC = { profiles: [{ id: "p", name: "P", params: { make: "Kia", model: "Telluride" } }], hubs: [{ n: "Durham, NC", z: "27701", lat: 36, lon: -78.9 }] };
+// One sync step as the browser sends it: a profile's full refresh.
+const SYNC = { kind: "full", profile: { id: "p", name: "P", params: { make: "Kia", model: "Telluride" } } };
 beforeEach(() => { delete process.env.MARKETCHECK_API_KEY; });
 
 describe("readQuota", () => {
@@ -118,7 +119,7 @@ describe("sync: a throttle is not a spent key", () => {
 });
 
 describe("Price Check live search follows the same key policy", () => {
-  const body = { query: { make: "Kia", model: "Telluride", year: 2024 }, hubs: SYNC.hubs };
+  const body = { query: { make: "Kia", model: "Telluride", year: 2024 }, hubs: [{ n: "Durham, NC", z: "27701", lat: 36, lon: -78.9 }] };
   it("uses only the configured keys and ignores the shared one when they're spent", async () => {
     process.env.MARKETCHECK_API_KEY = "ENVKEY99";
     mockFetch({ AAAA1111: { status: 429, q: { remaining: 0, limit: 500, reset: "R" } }, ENVKEY99: { status: 200, q: { remaining: 90, limit: 100, reset: "R" } } });
