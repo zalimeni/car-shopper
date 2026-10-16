@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
 import React from "react";
-import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within, cleanup } from "@testing-library/react";
 
 // Compare columns: 📌 pins one (saved to settings.compareCols), dragging a
 // header's grip onto another moves it, and a saved layout renders in its order.
@@ -53,14 +53,52 @@ describe("Compare column layout", () => {
     await waitFor(() => expect((writes.at(-1).settings.compareCols || {}).pinned).toEqual(["spec:price", "spec:year"]));
     expect(headers().slice(0, 2)).toEqual(["spec:price", "spec:year"]);
 
-    // drag Color's grip onto Mileage
-    const colorTh = document.querySelector('th[data-colkey="spec:color"]');
-    const mileTh = document.querySelector('th[data-colkey="spec:mileage"]');
-    document.elementFromPoint = () => mileTh;
-    fireEvent.pointerDown(within(colorTh).getByLabelText(/Drag to move/), { button: 0, pointerType: "touch", clientX: 500, clientY: 10 });
-    fireEvent.pointerMove(window, { clientX: 200, clientY: 10 });
-    fireEvent.pointerUp(window, { clientX: 200, clientY: 10 });
+    // touch: drag Color's grip onto Mileage (native touch listeners)
+    const grip = (key) => within(document.querySelector(`th[data-colkey="${key}"]`)).getByLabelText(/Drag to move/);
+    const at = (key) => document.querySelector(`th[data-colkey="${key}"]`);
+    document.elementFromPoint = () => at("spec:mileage");
+    const touch = (x) => ({ touches: [{ clientX: x, clientY: 10 }], changedTouches: [{ clientX: x, clientY: 10 }] });
+    fireEvent.touchStart(grip("spec:color"), touch(500));
+    fireEvent.touchMove(document, touch(200));
+    fireEvent.touchEnd(document, { touches: [], changedTouches: [{ clientX: 200, clientY: 10 }] });
     await waitFor(() => expect(headers().slice(0, 4)).toEqual(["spec:price", "spec:year", "spec:color", "spec:mileage"]));
     expect(writes.at(-1).settings.compareCols.pinned).toEqual(["spec:price", "spec:year"]);
+
+    // touch: tap the grip (no move) picks the column up; tapping a heading drops it there
+    fireEvent.touchStart(grip("spec:dom"), touch(300));
+    fireEvent.touchEnd(document, { touches: [], changedTouches: [{ clientX: 300, clientY: 10 }] });
+    await screen.findByText(/tap the heading it should take the place of/);
+    fireEvent.click(at("spec:color"));
+    await waitFor(() => expect(headers().slice(2, 4)).toEqual(["spec:dom", "spec:color"]));
+    expect(screen.queryByText(/tap the heading it should take the place of/)).toBeNull();
+
+    // mouse: drag a header itself onto another
+    document.elementFromPoint = () => at("spec:color");
+    fireEvent.pointerDown(at("cpo"), { button: 0, pointerType: "mouse", clientX: 600, clientY: 10 });
+    fireEvent.pointerMove(window, { pointerType: "mouse", clientX: 300, clientY: 10 });
+    fireEvent.pointerUp(window, { pointerType: "mouse", clientX: 300, clientY: 10 });
+    await waitFor(() => expect(headers().slice(2, 5)).toEqual(["spec:dom", "cpo", "spec:color"]));
+  });
+
+  it("on a narrow table, only the pins that leave room to scroll stay sticky", async () => {
+    const ow = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth");
+    const cw = Object.getOwnPropertyDescriptor(Element.prototype, "clientWidth");
+    Object.defineProperty(HTMLElement.prototype, "offsetWidth", { configurable: true, get() { return this.tagName === "TH" ? 90 : 0; } });
+    Object.defineProperty(Element.prototype, "clientWidth", { configurable: true, get() { return this.classList && this.classList.contains("cs-wide") ? 343 : 0; } });
+    try {
+      cleanup();
+      state.settings.compareCols = { pinned: ["spec:price", "spec:year"] };
+      render(React.createElement(App));
+      await screen.findByText("Car Shopper", {}, { timeout: 4000 });
+      fireEvent.click(screen.getAllByText("Compare")[0]);
+      await screen.findByTitle("Open this listing");
+      // 343 × 0.7 = 240: Listing (90) + Price (90) fit, + Year (90) doesn't
+      await waitFor(() => expect(document.querySelector('th[data-colkey="spec:price"]').style.position).toBe("sticky"));
+      expect(document.querySelector('th[data-colkey="spec:year"]').style.position).toBe("");
+      expect(headers().slice(0, 2)).toEqual(["spec:price", "spec:year"]); // still in pinned order
+    } finally {
+      if (ow) Object.defineProperty(HTMLElement.prototype, "offsetWidth", ow);
+      if (cw) Object.defineProperty(Element.prototype, "clientWidth", cw);
+    }
   });
 });
