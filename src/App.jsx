@@ -509,6 +509,7 @@ function freshData(blank) {
     criteria: DEFAULT_CRITERIA,
     globalReqs: blank ? [] : DEFAULT_REQS,
     listings: [],
+    candidates: [],
     settings: Object.assign({}, DEFAULT_SETTINGS),
     onboarded: false,
     version: VERSION,
@@ -528,23 +529,62 @@ function ssSet(key, val) {
   try { sessionStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* unavailable */ }
 }
 
-// The candidate review queue is kept on this device (localStorage), so it survives
-// closing the app — sessionStorage didn't, and an iPhone Home Screen app loses it
-// whenever iOS closes the app. Per device, not synced: a fresh sync rebuilds it
-// elsewhere. Bounded, and cars since approved/skipped are dropped on load.
+// The candidate review queue lives in the synced app state (data.candidates), like
+// everything else — so it survives closing the app and follows you across devices.
+// Bounded to the newest QUEUE_MAX. A queue the previous version kept per device
+// (localStorage / sessionStorage) is merged in once, then cleared.
 var QUEUE_KEY = "cs-candidates";
 var QUEUE_MAX = 300;
-export function loadQueue() {
+export function trimQueue(list) {
+  var q = Array.isArray(list) ? list : [];
+  return q.length > QUEUE_MAX ? q.slice(q.length - QUEUE_MAX) : q; // keep the newest
+}
+export function loadLegacyQueue() {
   try {
     var v = localStorage.getItem(QUEUE_KEY);
     if (v != null) return JSON.parse(v) || [];
   } catch (e) { /* unavailable */ }
-  return ssGet(QUEUE_KEY, []); // a queue saved before it moved to localStorage
+  return ssGet(QUEUE_KEY, []);
 }
-export function saveQueue(list) {
-  var q = Array.isArray(list) ? list : [];
-  if (q.length > QUEUE_MAX) q = q.slice(q.length - QUEUE_MAX); // keep the newest
-  try { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); } catch (e) { /* full or unavailable */ }
+function clearLegacyQueue() {
+  try { localStorage.removeItem(QUEUE_KEY); } catch (e) { /* unavailable */ }
+  try { sessionStorage.removeItem(QUEUE_KEY); } catch (e) { /* unavailable */ }
+}
+// The queue to start from when the app state loads: the saved queue minus cars
+// since decided, plus a legacy per-device queue and any candidates the old
+// scheduled sync parked in pendingCandidates (both deduped). Cars the scheduled
+// sync added (fromScheduled) are counted for a notice and unflagged.
+// -> { queue, data (with candidates set), changed, scheduled }
+export function restoreQueue(d, legacy) {
+  var saved = Array.isArray(d.candidates) ? d.candidates : [];
+  var base = pruneQueue(saved, d);
+  var seen = {};
+  base.forEach(function (c) { if (c && c.vin) seen[String(c.vin).toUpperCase()] = true; });
+  var fresh = function (list) {
+    return pruneQueue(list || [], d).filter(function (c) {
+      var k = c && c.vin ? String(c.vin).toUpperCase() : null;
+      if (!k) return true;
+      if (seen[k]) return false;
+      seen[k] = true;
+      return true;
+    });
+  };
+  var crit = d.criteria || DEFAULT_CRITERIA;
+  var legacyAdd = fresh(legacy);
+  var parked = fresh(Array.isArray(d.pendingCandidates) ? d.pendingCandidates : [])
+    .map(function (c) { return Object.assign({}, c, { compositeScore: calcScore(c.scores, crit), _candidate: true, fromScheduled: true }); });
+  var scheduled = 0;
+  var queue = trimQueue(base.concat(legacyAdd, parked).map(function (c) {
+    if (!c || !c.fromScheduled) return c;
+    scheduled++;
+    var x = Object.assign({}, c, { compositeScore: calcScore(c.scores, crit), _candidate: true });
+    delete x.fromScheduled;
+    return x;
+  }));
+  var changed = base.length !== saved.length || legacyAdd.length > 0 || parked.length > 0 || scheduled > 0 || d.pendingCandidates != null;
+  var data = Object.assign({}, d, { candidates: queue });
+  delete data.pendingCandidates;
+  return { queue: queue, data: data, changed: changed, scheduled: scheduled };
 }
 // Queue entries already decided: on the watchlist (or rejected/sold) or skipped.
 export function pruneQueue(queue, data) {
@@ -584,7 +624,7 @@ export default function App() {
   var [tab, setTab] = useState(function () { var h = tabFromHash(); return (h && h.tab) || ssGet("cs-tab", "Dashboard"); });
   var [saving, setSaving] = useState(false);
   var [edListing, setEdListing] = useState(null);
-  var [candidates, setCandidates] = useState(loadQueue);
+  var [candidates, setCandidates] = useState([]); // restored from data.candidates on load
   var [importText, setImportText] = useState("");
   var [importResult, setImportResult] = useState(null);
   var [filterProf, setFilterProf] = useState(function () { var h = tabFromHash(); return (h && h.prof) || "all"; });
@@ -615,6 +655,9 @@ export default function App() {
           var d = migrate(JSON.parse(r.value));
           d.listings = recalcAll(d.listings || [], d.criteria || DEFAULT_CRITERIA);
           revRef.current = r.rev;
+          var cq = pruneQueue(Array.isArray(d.candidates) ? d.candidates : [], d);
+          queueSavedRef.current = cq;
+          setCandidates(cq);
           setData(d);
           setConflictMsg("Your data was updated on another device, so this session reloaded the latest version. Your most recent change here wasn't saved — please redo it.");
         } catch (e) { console.error("Conflict reload:", e); }
@@ -656,7 +699,9 @@ export default function App() {
 
   // Persist the volatile bits so an app-switch reload restores them.
   useEffect(function () { ssSet("cs-tab", tab); }, [tab]);
-  useEffect(function () { saveQueue(candidates); }, [candidates]);
+  // The queue array last read from / written to the app state, so restoring it
+  // doesn't immediately write it back.
+  var queueSavedRef = useRef(null);
   useEffect(function () { ssSet("cs-rawDebug", rawDebug); }, [rawDebug]);
 
   // Mirror the current view into the URL hash (replaceState — no history spam)
@@ -699,29 +744,15 @@ export default function App() {
           var prevVersion = JSON.parse(r.value).version;
           d = migrate(JSON.parse(r.value));
           d.listings = recalcAll(d.listings || [], d.criteria || DEFAULT_CRITERIA);
-          // The scheduled background sync (api/cron-sync.js) parks new finds in
-          // pendingCandidates — drain them into this device's review queue.
-          // A queue kept from an earlier visit may hold cars since approved or
-          // skipped (here or on another device) — drop those.
-          var dLoaded = d;
-          setCandidates(function (prev) { var p = pruneQueue(prev, dLoaded); return p.length === prev.length ? prev : p; });
-          var pend = Array.isArray(d.pendingCandidates) ? d.pendingCandidates : [];
-          if (pend.length > 0) {
-            var skv = {};
-            (d.skipped || []).forEach(function (s) { if (s.vin) skv[s.vin] = true; });
-            // `candidates` here is the mount-time (restored) queue —
-            // nothing else has touched it yet, so dedup against it directly.
-            var seenV = {};
-            candidates.forEach(function (c) { if (c.vin) seenV[c.vin] = true; });
-            var add = pend.filter(function (c) { return !(c.vin && skv[c.vin]) && (!c.vin || !seenV[c.vin]); })
-              .map(function (c) { return Object.assign({}, c, { compositeScore: calcScore(c.scores, d.criteria || DEFAULT_CRITERIA), _candidate: true }); });
-            if (add.length) {
-              setCandidates(function (prev) { return prev.concat(add); });
-              setSyncMsg({ ok: true, text: "Background sync found " + add.length + " new candidate" + (add.length > 1 ? "s" : "") + " — review below." });
-            }
-            d = Object.assign({}, d, { pendingCandidates: undefined });
-            writeBack = true;
-          }
+          // The review queue (data.candidates): drop cars since decided, merge a
+          // legacy per-device queue and anything the scheduled sync parked.
+          var rq = restoreQueue(d, loadLegacyQueue());
+          d = rq.data;
+          queueSavedRef.current = rq.queue;
+          setCandidates(rq.queue);
+          clearLegacyQueue();
+          if (rq.changed) writeBack = true;
+          if (rq.scheduled) setSyncMsg({ ok: true, text: "Background sync found " + rq.scheduled + " new candidate" + (rq.scheduled > 1 ? "s" : "") + " — review below." });
           if (d.version !== prevVersion) writeBack = true; // migration changed the shape
         } else {
           d = freshData(false); // brand-new user: defaults + wizard (onboarded:false)
@@ -750,6 +781,19 @@ export default function App() {
     try { await persist(nd); } catch (e) { console.error(e); }
     setSaving(false);
   }, [persist]);
+
+  // Persist the review queue into the app state shortly after it changes (one
+  // write for a burst — a sync adds candidates as each search returns).
+  useEffect(function () {
+    if (loading || !dataRef.current || candidates === queueSavedRef.current) return;
+    var t = setTimeout(function () {
+      var d = dataRef.current;
+      if (!d) return;
+      queueSavedRef.current = candidates;
+      save(Object.assign({}, d, { candidates: trimQueue(candidates) }));
+    }, 800);
+    return function () { clearTimeout(t); };
+  }, [candidates, loading, save]);
 
   var saveRecalc = useCallback(async function (nd) {
     nd.listings = recalcAll(nd.listings, nd.criteria);

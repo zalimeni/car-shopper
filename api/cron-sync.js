@@ -7,7 +7,7 @@
 // for the accounts in CRON_SYNC_EMAILS (default: the owner). Price changes and
 // last-seen updates are written straight into the user's app_state blob
 // (flagged reviewPending, same as an in-app sync); brand-new VINs are parked
-// in data.pendingCandidates, which the client drains into its candidate review
+// in the review queue (data.candidates, flagged fromScheduled), which the client
 // queue on next open. No AI scoring here — that stays a client-initiated
 // action against the user's own key/quota.
 //
@@ -28,7 +28,7 @@ import { reconcile } from "../src/reconcile.js";
 import { ingestSnaps, spentKeyIds } from "../src/quota.js";
 import { planSync, runSync, trackedVins, nextProfileMeta, mergeColorCache } from "../src/syncPlan.js";
 
-const PENDING_MAX = 100; // cap parked candidates so the blob stays bounded
+const QUEUE_MAX = 300; // the review queue's cap (same as the app's), so the blob stays bounded
 
 export default async function handler(req, res) {
   // Keepalive: touch the database on every daily cron run so a free-tier
@@ -116,22 +116,24 @@ export default async function handler(req, res) {
 
       const rec = reconcile(state.listings || [], r.listings, todayStr, { goneVins: r.goneVins });
 
-      // Park genuinely-new candidates: drop VINs the user skipped and VINs
-      // already parked by a previous cron run. (The client also dedups against
-      // its live queue when it drains these.)
+      // Add genuinely-new candidates to the review queue (data.candidates — the
+      // same synced queue the app uses): drop VINs the user skipped and VINs
+      // already queued. Flagged fromScheduled so the app can say how many arrived.
       const skip = {};
       (state.skipped || []).forEach(function (s) { if (s.vin) skip[s.vin] = true; });
-      const pending = Array.isArray(state.pendingCandidates) ? state.pendingCandidates.slice() : [];
-      const pendVins = {};
-      pending.forEach(function (c) { if (c.vin) pendVins[c.vin] = true; });
-      const fresh = rec.candidates.filter(function (c) { return c.vin && !skip[c.vin] && !pendVins[c.vin]; });
-      let newPending = pending.concat(fresh);
-      if (newPending.length > PENDING_MAX) newPending = newPending.slice(newPending.length - PENDING_MAX);
+      const queue = (Array.isArray(state.candidates) ? state.candidates : []).concat(Array.isArray(state.pendingCandidates) ? state.pendingCandidates : []);
+      const queued = {};
+      queue.forEach(function (c) { if (c && c.vin) queued[c.vin] = true; });
+      const fresh = rec.candidates.filter(function (c) { return c.vin && !skip[c.vin] && !queued[c.vin]; })
+        .map(function (c) { return Object.assign({}, c, { _candidate: true, fromScheduled: true }); });
+      let newQueue = queue.concat(fresh);
+      if (newQueue.length > QUEUE_MAX) newQueue = newQueue.slice(newQueue.length - QUEUE_MAX);
 
       const nextData = Object.assign({}, state, {
         listings: rec.listings,
-        pendingCandidates: newPending,
+        candidates: newQueue,
       });
+      delete nextData.pendingCandidates;
       // Same API-version bookkeeping as the in-app sync (drift banner).
       const nowIso = new Date().toISOString();
       nextData.settings = Object.assign({}, settings, {
