@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import storage from "./storage";
 import { signOut } from "./Auth";
 import { fetchListings, postStep, fetchPriceComps, fetchRawSample, reconcile } from "./sync";
-import { planSync, trackedVins, nextProfileMeta, estimateCost, profileStatus, searchSig, COUNT_WARN, ROWS as MC_ROWS, FULL_REFRESH_DAYS } from "./syncPlan";
+import { planSync, trackedVins, nextProfileMeta, estimateCost, profileStatus, searchSig, mergeColorCache, COUNT_WARN, ROWS as MC_ROWS, FULL_REFRESH_DAYS, DECODE_MAX } from "./syncPlan";
 import { travelFacts, DRIVE_MAX_MI, AIRPORT_NEAR_MI } from "./travel";
 import { SALT_STATES, isSaltState } from "./regions";
 import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBaseline, generatePriceAssessment, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
@@ -95,7 +95,8 @@ var DEFAULT_SETTINGS = {
   defaultExcludeColors: [], // exterior colors new profiles start out hiding (src/colors.js)
   mcQuota: null, // latest MarketCheck quota snapshot per key + last sync cost (see src/quota.js)
   mcApi: null, // MarketCheck API version + deprecation/sunset headers from the last response (drift banner)
-  mcProfiles: null, // { profileId: { fullAt, lastAt, sig, count, countSig, countAt } } — src/syncPlan.js
+  mcProfiles: null, // { profileId: { fullAt, lastAt, sig, count, countSig, countAt, colors } } — src/syncPlan.js
+  mcColors: null, // { VIN: { color, baseColor, at } } colors decoded from VINs (NeoVIN), so none is decoded twice
 };
 function getSettings(data) { return Object.assign({}, DEFAULT_SETTINGS, (data && data.settings) || {}); }
 // Ordered list of the user's MarketCheck key strings (empty -> server uses its shared key).
@@ -853,7 +854,7 @@ export default function App() {
       }
       var po = planOpts(data);
       var steps = planSync(active, getSettings(data).mcProfiles || {}, Object.assign({ manual: !auto }, po));
-      var res = await fetchListings(steps, trackedVins(data.listings), opts, { franchiseOnly: po.franchiseOnly, excludeSalt: po.excludeSalt, marketcheckKeys: mcKeys(data), spentKeys: mcSpent(data) }, onSyncProgress);
+      var res = await fetchListings(steps, trackedVins(data.listings), opts, { franchiseOnly: po.franchiseOnly, excludeSalt: po.excludeSalt, marketcheckKeys: mcKeys(data), spentKeys: mcSpent(data), colorCache: getSettings(data).mcColors || {} }, onSyncProgress);
       // Reconcile + save against the LATEST state, not the `data` snapshot from
       // when the sync started — the fetches take a while and the UI stays live,
       // so approvals/edits/scores landed mid-sync must survive the final save.
@@ -897,7 +898,7 @@ export default function App() {
           mq1 = recordSyncCalls(mq1, res.calls, nowIso);
           mq1.lastSync = Object.assign({}, mq1.lastSync, { full: steps.filter(function (x) { return x.kind === "full"; }).length, searches: steps.length });
         }
-        syncPatch.settings = Object.assign({}, base.settings || {}, { mcQuota: mq1, mcProfiles: nextProfileMeta(getSettings(base).mcProfiles, res.results, po, nowIso) }, res.apiInfo ? { mcApi: Object.assign({}, res.apiInfo, { at: nowIso }) } : {});
+        syncPatch.settings = Object.assign({}, base.settings || {}, { mcQuota: mq1, mcProfiles: nextProfileMeta(getSettings(base).mcProfiles, res.results, po, nowIso), mcColors: mergeColorCache(getSettings(base).mcColors, res.decoded, nowIso) }, res.apiInfo ? { mcApi: Object.assign({}, res.apiInfo, { at: nowIso }) } : {});
       }
       await save(Object.assign({}, base, syncPatch));
       // Report the count actually added to the queue (reconcile's newCount also
@@ -1629,6 +1630,7 @@ export function QuotaModal({ data, summary, onClose }) {
                 ["↻ Sync (full refresh of every active profile)", range(cost.min, cost.max)],
                 ["New-listings pass (scheduled sync, most days)", n(dailyNew) + " or so"],
                 ["Check a profile's match count", "1"],
+                ["Color for a listing that has none (VIN decode, per sync)", "1 each, at most " + DECODE_MAX],
                 ["Price Check → live market", "1–4"],
                 ["Debug raw VIN lookup", "1"],
                 ["Debug raw sample (+ up to 4 diagnosis re-runs if empty)", "1–5"],
@@ -3046,7 +3048,7 @@ function HelpTab() {
         <h3 style={S.cardH}>Listings &amp; scores</h3>
         <p style={li}>The big number on a card is the <span style={b}>composite score</span> (your weighted criteria). AI per-criterion scores feed into it; the <span style={b}>✨ AI assessment</span> box shows the summary and a per-criterion breakdown.</p>
         <p style={li}><span style={b}>Notes</span> — every listing card has <span style={b}>📝 Add notes</span> for free-form notes in Markdown (headings, <span style={b}>**bold**</span>, lists, <span style={b}>- [ ]</span> checklists, links), up to 4,000 characters — about a page. They're separate from the rejection reason and from the price-change log sync keeps. AI scoring reads them as first-hand information about that car (a test drive, a dealer call) whenever it next scores that listing. Editing notes never triggers or flags a re-score — use ✨ Re-score on the card when a note matters.</p>
-        <p style={li}><span style={b}>Colors</span> — each profile's editor lists the colors its matches actually come in, with counts (measured when you save the profile with new search filters — one MarketCheck call — and kept current by every full refresh at no extra cost). Tap a color to hide those cars; "Include cars with no color listed" (on by default) keeps listings MarketCheck has no color for. Hiding happens on your device, so a color you didn't expect still shows up. Hidden candidates sit under "Hidden by trim or color filter", one tap to show them again. Settings sets which colors new profiles start out hiding.</p>
+        <p style={li}><span style={b}>Colors</span> — each profile's editor lists the colors its matches actually come in, with counts (measured when you save the profile with new search filters — one MarketCheck call — and kept current by every full refresh at no extra cost). Tap a color to hide those cars; "Include cars with no color listed" (on by default) keeps listings MarketCheck has no color for. Hiding happens on your device, so a color you didn't expect still shows up. When a listing has no color, sync looks it up from the car's VIN (its factory build data — one MarketCheck call per car, at most {DECODE_MAX} a sync, never twice for the same car); those colors are marked ⓥ. Hidden candidates sit under "Hidden by trim or color filter", one tap to show them again. Settings sets which colors new profiles start out hiding.</p>
         <p style={li}><span style={b}>Tags</span> — tap <span style={b}>+ tag</span> on a watchlist card to label it however you like ("called dealer", "test drive booked", "waiting on Carfax"). Tags you've used before are suggested, so spellings stay consistent. Filter by tag on Results and Compare (or "No tags" to see what's untouched). AI scoring sees them too; like notes, editing tags never flags a re-score.</p>
         <p style={li}><span style={b}>Statuses</span>: Watchlist (active), Rejected (with a reason, restorable), and <span style={b}>Sold</span> (no longer available — archived, restorable). Stale watched listings surface under "Needs check" — confirm with <span style={b}>Still avail</span>.</p>
         <p style={li}><span style={b}>Title note</span>: "✓ Carfax clean title" means confirmed; "ⓘ Title not Carfax-confirmed" just means the dealer didn't state it (verify yourself) — it's not a salvage flag and doesn't affect the score.</p>
@@ -3868,7 +3870,7 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, color: "#8a8a96", marginBottom: 6, lineHeight: 1.8 }}>
         <span>${(cand.price || 0).toLocaleString()}{cand.fees > 0 && <span style={{ color: "#6b6b76", fontSize: 11 }}> +${cand.fees.toLocaleString()} fees</span>}</span>
         <span>{(cand.mileage || 0).toLocaleString()} mi</span>
-        {cand.color ? <span>{cand.color}</span> : <span style={{ color: "#6b6b76" }} title="MarketCheck has no color for this listing (common for marketplace-relayed ones) — check the photos">Color not listed</span>}
+        {cand.color ? <span title={cand.colorSource === "neovin" ? "From the car's factory build data (decoded from its VIN) — the listing itself has no color" : undefined}>{cand.color}{cand.colorSource === "neovin" ? " ⓥ" : ""}</span> : <span style={{ color: "#6b6b76" }} title="MarketCheck has no color for this listing (common for marketplace-relayed ones) — check the photos">Color not listed</span>}
         {cand.dealer && <span>{cand.dealer} ({cand.dealerType || "?"})</span>}
         {cand.location && <span>{cand.location}, {cand.state} {isSalt(cand.state) ? "🧂" : ""}</span>}
         <DistBadge l={cand} data={data} />
@@ -4045,7 +4047,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, color: "#8a8a96", marginBottom: 6, lineHeight: 1.8 }}>
         <span>${(l.price || 0).toLocaleString()}{l.fees > 0 && <span style={{ color: "#6b6b76", fontSize: 11 }}> +${l.fees.toLocaleString()} fees</span>}</span>
         <span>{(l.mileage || 0).toLocaleString()} mi</span>
-        {l.color ? <span>{l.color}</span> : l.source === "marketcheck" ? <span style={{ color: "#6b6b76" }} title="MarketCheck has no color for this listing (common for marketplace-relayed ones) — check the photos">Color not listed</span> : null}
+        {l.color ? <span title={l.colorSource === "neovin" ? "From the car's factory build data (decoded from its VIN) — the listing itself has no color" : undefined}>{l.color}{l.colorSource === "neovin" ? " ⓥ" : ""}</span> : l.source === "marketcheck" ? <span style={{ color: "#6b6b76" }} title="MarketCheck has no color for this listing (common for marketplace-relayed ones) — check the photos">Color not listed</span> : null}
         <span>{l.dealer} ({l.dealerType})</span>
         <span>{l.location}, {l.state} {salt ? "🧂" : ""}</span>
         <DistBadge l={l} data={data} />

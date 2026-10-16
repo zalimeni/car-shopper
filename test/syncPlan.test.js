@@ -121,3 +121,15 @@ describe("full refresh colors reach the profile's meta", () => {
     expect(n.bolt.colors.at).toBe(now); // a new-listings pass leaves it alone
   });
 });
+
+describe("mergeColorCache", async () => {
+  const { mergeColorCache } = await import("../src/syncPlan.js");
+  it("remembers decoded colors and 'none found', newest first, dropping 90-day-old entries", () => {
+    const now = "2026-10-16T12:00:00.000Z";
+    const c = mergeColorCache({ OLD: { color: "Red", baseColor: "Red", at: "2026-06-01T00:00:00Z" }, KEEP: { color: null, at: "2026-10-01T00:00:00Z" } },
+      { A: { color: "Shimmering Silver Metallic", baseColor: "Silver" }, B: null }, now);
+    expect(Object.keys(c).sort()).toEqual(["A", "B", "KEEP"]);
+    expect(c.A).toEqual({ color: "Shimmering Silver Metallic", baseColor: "Silver", at: now });
+    expect(c.B).toEqual({ color: null, at: now });
+  });
+});

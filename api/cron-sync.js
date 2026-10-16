@@ -26,7 +26,7 @@ import { adminClient, anonClient } from "./_supabaseAdmin.js";
 import { createSession, runStep, resolveKeys, keyId } from "./marketcheck.js";
 import { reconcile } from "../src/reconcile.js";
 import { ingestSnaps, spentKeyIds } from "../src/quota.js";
-import { planSync, runSync, trackedVins, nextProfileMeta } from "../src/syncPlan.js";
+import { planSync, runSync, trackedVins, nextProfileMeta, mergeColorCache } from "../src/syncPlan.js";
 
 const PENDING_MAX = 100; // cap parked candidates so the blob stays bounded
 
@@ -112,7 +112,7 @@ export default async function handler(req, res) {
         const rep = await runStep(sess, Object.assign({}, step, { excludeSalt: planOpts.excludeSalt }));
         (rep.keyQuotas || []).forEach(function (q) { if (q && q.exhausted && spent.indexOf(q.id) < 0) spent.push(q.id); });
         return rep;
-      });
+      }, null, { colorCache: settings.mcColors || {} });
 
       const rec = reconcile(state.listings || [], r.listings, todayStr, { goneVins: r.goneVins });
 
@@ -136,6 +136,7 @@ export default async function handler(req, res) {
       const nowIso = new Date().toISOString();
       nextData.settings = Object.assign({}, settings, {
           mcProfiles: nextProfileMeta(settings.mcProfiles, r.results, planOpts, nowIso),
+          mcColors: mergeColorCache(settings.mcColors, r.decoded, nowIso),
           mcQuota: ingestSnaps(settings.mcQuota, r.keyQuotas, nowIso) },
         r.apiInfo ? { mcApi: Object.assign({}, r.apiInfo, { at: nowIso }) } : {});
       // Don't advance lastSynced on an incomplete (rate-limited) run — leave it
