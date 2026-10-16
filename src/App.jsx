@@ -6,6 +6,7 @@ import { planSync, trackedVins, nextProfileMeta, estimateCost, profileStatus, se
 import { travelFacts, DRIVE_MAX_MI, AIRPORT_NEAR_MI } from "./travel";
 import { SALT_STATES, isSaltState } from "./regions";
 import { layoutColumns, moveColumn, togglePin } from "./compareCols";
+import { trimHideReason, trimState, setTrimState, nextTrimState, facetChoices, legacyTrimChips } from "./trims";
 import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBaseline, generatePriceAssessment, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
 import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
 import { listSnapshots, restoreSnapshot } from "./snapshots";
@@ -401,15 +402,6 @@ function parseProfiles(text) {
 // Fuzzy (case-insensitive substring) trim filter. `trimText` is matched against
 // comma-separated include/exclude terms: excluded if it contains any exclude
 // term; if any include terms are set, kept only if it contains one of them.
-function trimAllowed(trimText, includeStr, excludeStr) {
-  var t = String(trimText || "").toLowerCase();
-  var terms = function (s) { return String(s || "").split(",").map(function (x) { return x.trim().toLowerCase(); }).filter(Boolean); };
-  var exc = terms(excludeStr);
-  if (exc.some(function (e) { return t.indexOf(e) > -1; })) return false;
-  var inc = terms(includeStr);
-  if (inc.length && !inc.some(function (e) { return t.indexOf(e) > -1; })) return false;
-  return true;
-}
 
 // Give queued candidates a color they're missing: the fresh copy of the same car
 // from a sync (its listing color, or one decoded from its VIN), else a remembered
@@ -428,15 +420,13 @@ export function fillQueueColors(queue, fresh, colorCache) {
   });
 }
 
-// Why a profile's own filters hide a candidate (trim include/exclude, then exterior
-// color — both applied on our side after the search), or null when it shows.
+// Why a profile's own filters hide a candidate (trim / drivetrain chips — or the
+// old trim text filters — then exterior color; all applied on our side after the
+// search), or null when it shows. -> { kind: "trim" | "drivetrain" | "color", text }
 function candHideReason(c, p) {
   if (!p || !p.params) return null;
-  var t = ((c.trim || "") + " " + (c.vehicle || "")).toLowerCase();
-  if (!trimAllowed(t, p.params.trimInclude, p.params.trimExclude)) {
-    var m = (p.params.trimExclude || "").split(",").map(function (x) { return x.trim(); }).filter(Boolean).filter(function (e) { return t.indexOf(e.toLowerCase()) > -1; });
-    return { kind: "trim", text: m.length ? "matches trim exclude: " + m.join(", ") : "trim not in include list" };
-  }
+  var tr = trimHideReason(c, p.params);
+  if (tr) return tr;
   var cr = colorHideReason(c, p.params);
   return cr ? { kind: "color", text: cr } : null;
 }
@@ -1135,37 +1125,34 @@ export default function App() {
     save(Object.assign({}, data, { skipped: (data.skipped || []).concat([entry]) }));
   }, [data, save]);
 
-  // Append a fuzzy trim term to a profile's include/exclude list (dedup).
-  var addTrimTerm = useCallback(function (profileId, field, term) {
-    term = String(term || "").trim();
-    if (!term || !data) return;
+  // Patch one profile's params (src/trims.js chip actions from the review queue).
+  var patchProfileParams = useCallback(function (profileId, fn) {
+    if (!data) return;
     save(Object.assign({}, data, { profiles: data.profiles.map(function (p) {
-      if (p.id !== profileId) return p;
-      var terms = ((p.params && p.params[field]) || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
-      if (terms.map(function (s) { return s.toLowerCase(); }).indexOf(term.toLowerCase()) === -1) terms.push(term);
-      return Object.assign({}, p, { params: Object.assign({}, p.params, { [field]: terms.join(", ") }) });
+      return p.id === profileId && p.params ? Object.assign({}, p, { params: Object.assign({}, p.params, fn(p.params)) }) : p;
     }) }));
   }, [data, save]);
 
-  // Exclude a shown candidate's trim (hides it + similar from candidates).
-  var excludeTrim = useCallback(function (cand) { addTrimTerm(cand.profileId, "trimExclude", cand.trim); }, [addTrimTerm]);
+  // Hide a shown candidate's trim (exactly that trim) for its profile.
+  var excludeTrim = useCallback(function (cand) {
+    if (cand.trim) patchProfileParams(cand.profileId, function (pp) { return setTrimState(pp, cand.trim, "hide"); });
+  }, [patchProfileParams]);
 
-  // "Show" a trim-hidden candidate: drop the exclude term(s) that caught it, or
-  // (if it failed an include allowlist) add its trim to the include list.
+  // "Show" a trim- or drivetrain-hidden candidate: un-hide its trim chip, or drop
+  // the old text-filter term(s) that caught it (or, if it failed an include list,
+  // add its trim to that list), or un-hide its drivetrain.
   var showTrim = useCallback(function (cand) {
-    if (!data) return;
-    var p = (data.profiles || []).find(function (x) { return x.id === cand.profileId; });
-    if (!p || !p.params) return;
-    var t = ((cand.trim || "") + " " + (cand.vehicle || "")).toLowerCase();
-    var exc = (p.params.trimExclude || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
-    var matched = exc.filter(function (e) { return t.indexOf(e.toLowerCase()) > -1; });
-    if (matched.length) {
+    patchProfileParams(cand.profileId, function (pp) {
+      if (cand.trim && trimState(pp, cand.trim) === "hide") return setTrimState(pp, cand.trim, null);
+      var t = ((cand.trim || "") + " " + (cand.vehicle || "")).toLowerCase();
+      var exc = (pp.trimExclude || "").split(",").map(function (x) { return x.trim(); }).filter(Boolean);
       var kept = exc.filter(function (e) { return t.indexOf(e.toLowerCase()) === -1; });
-      save(Object.assign({}, data, { profiles: data.profiles.map(function (x) { return x.id === p.id ? Object.assign({}, x, { params: Object.assign({}, x.params, { trimExclude: kept.join(", ") }) }) : x; }) }));
-    } else {
-      addTrimTerm(cand.profileId, "trimInclude", cand.trim);
-    }
-  }, [data, save, addTrimTerm]);
+      if (kept.length < exc.length) return { trimExclude: kept.join(", ") };
+      if ((pp.trimInclude || "").trim() && cand.trim) return { trimInclude: pp.trimInclude + ", " + cand.trim };
+      if (cand.drivetrain) return { excludeDrivetrains: (pp.excludeDrivetrains || []).filter(function (d) { return String(d).toLowerCase() !== String(cand.drivetrain).toLowerCase(); }) };
+      return {};
+    });
+  }, [patchProfileParams]);
 
   // Un-hide a color-hidden candidate: drop its color from the profile's excludes
   // (or, for a car with no color listed, turn "include no color listed" back on).
@@ -1196,7 +1183,9 @@ export default function App() {
     var meta = Object.assign({}, st.mcProfiles || {});
     if (r.numFound != null) {
       meta[profile.id] = Object.assign({}, meta[profile.id] || {}, { count: r.numFound, countSig: searchSig(profile, po), countAt: nowIso },
-        r.colors ? { colors: Object.assign({}, r.colors, { at: nowIso }) } : {});
+        r.colors ? { colors: Object.assign({}, r.colors, { at: nowIso }) } : {},
+        r.trims ? { trims: Object.assign({}, r.trims, { at: nowIso }) } : {},
+        r.drivetrains ? { drivetrains: Object.assign({}, r.drivetrains, { at: nowIso }) } : {});
     }
     await save(Object.assign({}, d, { settings: Object.assign({}, d.settings || {}, { mcProfiles: meta, mcQuota: ingestSnaps(st.mcQuota, r.keyQuotas, nowIso) }) }));
     return r;
@@ -2126,6 +2115,60 @@ export function ProfileCount({ p, data, refresh, busy }) {
   );
 }
 
+// Per-profile trim chips (src/trims.js): the trims this profile's matches come in
+// (its facet, with counts, plus any seen on its synced cars). A tap cycles
+// neutral → ★ preferred (a floor for AI scoring) → hidden → neutral.
+export function TrimChips({ choices, params, onChange, measuredAt, converted }) {
+  var look = {
+    prefer: { border: "1px solid #6b5a1f", color: "#e8c96a" },
+    hide: { border: "1px solid #5a2a2a", color: "#e07a7a", textDecoration: "line-through" },
+    none: { border: "1px solid #2a3554", color: "#c8c8d0" },
+  };
+  return (
+    <div>
+      <label style={S.lbl}>Trims — tap: ★ prefer, then hide, then neutral</label>
+      {choices.length === 0 ? (
+        <p style={Object.assign({}, S.help, { margin: "4px 0 0" })}>Trims show up here once the profile is counted (save it with a make and model) or synced.</p>
+      ) : (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 4 }}>
+          {choices.map(function (ch) {
+            var st = trimState(params, ch.value);
+            return (<button key={ch.value} type="button" aria-label={ch.value + (st === "prefer" ? " (preferred)" : st === "hide" ? " (hidden)" : "")}
+              title={st === "prefer" ? "Preferred — tap to hide" : st === "hide" ? "Hidden — tap to reset" : "Tap to prefer"}
+              style={Object.assign({}, S.smBtn, { fontSize: 12, borderRadius: 12, padding: "2px 10px" }, look[st || "none"])}
+              onClick={function () { onChange(setTrimState(params, ch.value, nextTrimState(st))); }}>
+              <Swap labels={["☆", "★", "⊘"]} show={st === "prefer" ? 1 : st === "hide" ? 2 : 0} /> {ch.value}{ch.count != null ? " · " + ch.count.toLocaleString() : ""}</button>);
+          })}
+        </div>
+      )}
+      {choices.length > 0 && <p style={Object.assign({}, S.help, { margin: "4px 0 0" })}>
+        {converted ? "Converted from your old trim text filters — check them, then Save. " : ""}
+        {measuredAt ? "Counts are this profile's nationwide matches, measured " + fmtResetTs(measuredAt) + "; trims without a count were seen on your synced cars." : "From your synced cars — counts appear after the next count or full refresh."}
+        {" "}A trim nobody has seen yet still shows until you hide it.</p>}
+    </div>
+  );
+}
+
+// Per-profile drivetrain chips — hide-only. Shown when a profile's matches come in
+// more than one. MarketCheck calls AWD "4WD".
+function DrivetrainChips({ choices, excluded, onChange }) {
+  var isExc = function (v) { return excluded.some(function (x) { return String(x).toLowerCase() === v.toLowerCase(); }); };
+  return (
+    <div>
+      <label style={S.lbl}>Drivetrain — tap to hide (4WD includes AWD)</label>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 4 }}>
+        {choices.map(function (ch) {
+          var off = isExc(ch.value);
+          return (<button key={ch.value} type="button" aria-pressed={off}
+            style={Object.assign({}, S.smBtn, { fontSize: 12, borderRadius: 12, padding: "2px 10px", border: "1px solid " + (off ? "#5a2a2a" : "#2a3554"), color: off ? "#e07a7a" : "#c8c8d0", textDecoration: off ? "line-through" : "none" })}
+            onClick={function () { onChange(off ? excluded.filter(function (x) { return String(x).toLowerCase() !== ch.value.toLowerCase(); }) : excluded.concat([ch.value])); }}>
+            {ch.value}{ch.count != null ? " · " + ch.count.toLocaleString() : ""}</button>);
+        })}
+      </div>
+    </div>
+  );
+}
+
 // Per-profile exterior-color filter (src/colors.js): the colors this profile's
 // matches actually come in (from its facet, with counts), each toggling "hide";
 // plus whether to keep cars with no color listed. Applied on our side.
@@ -2292,14 +2335,17 @@ function ProfilesTab({ data, save, keyOk, scoreModel, refreshFacets }) {
                 <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { delProf(p.id); }}>Del</button>
               </div>
             </div>
-            {ed === p.id ? (<ProfEd profile={p} onSave={function (upd) { updProf(p.id, upd); }} colorFacet={((getSettings(data).mcProfiles || {})[p.id] || {}).colors}
-              listings={data.listings.filter(function (l) { return l.profileId === p.id; })} keyOk={keyOk} model={scoreModel} />) : (
+            {ed === p.id ? (<ProfEd profile={p} onSave={function (upd) { updProf(p.id, upd); }} facets={(getSettings(data).mcProfiles || {})[p.id] || {}}
+              listings={data.listings.filter(function (l) { return l.profileId === p.id; })}
+              queued={(data.candidates || []).filter(function (c) { return c.profileId === p.id; })} keyOk={keyOk} model={scoreModel} />) : (
               <div style={{ fontSize: 13, color: "#8a8a96", lineHeight: 1.6 }}>
                 <div>{p.params.make} {p.params.model} · {p.params.years} · {p.params.trims}</div>
                 <div>≤${p.params.maxPrice.toLocaleString()} · ≤{p.params.maxMiles.toLocaleString()} mi</div>
                 {p.params.mustHave && <div style={{ marginTop: 4 }}><span style={{ fontSize: 11, fontWeight: 600, color: "#2d8659" }}>Must:</span> {p.params.mustHave}</div>}
-                {(p.params.trimInclude || p.params.trimExclude) && (
+                {(p.params.trimInclude || p.params.trimExclude || (p.params.excludeTrims || []).length > 0 || (p.params.excludeDrivetrains || []).length > 0) && (
                   <div style={{ marginTop: 4, fontSize: 12 }}>
+                    {(p.params.excludeTrims || []).length > 0 && <span><span style={{ fontSize: 11, fontWeight: 600, color: "#d4a017" }}>Hidden trims:</span> {p.params.excludeTrims.join(", ")} </span>}
+                    {(p.params.excludeDrivetrains || []).length > 0 && <span><span style={{ fontSize: 11, fontWeight: 600, color: "#d4a017" }}>Hidden drivetrains:</span> {p.params.excludeDrivetrains.join(", ")} </span>}
                     {p.params.trimInclude && <span><span style={{ fontSize: 11, fontWeight: 600, color: "#2d8659" }}>Only trims:</span> {p.params.trimInclude} </span>}
                     {p.params.trimExclude && <span><span style={{ fontSize: 11, fontWeight: 600, color: "#d4a017" }}>Exclude trims:</span> {p.params.trimExclude}</span>}
                   </div>
@@ -2316,30 +2362,53 @@ function ProfilesTab({ data, save, keyOk, scoreModel, refreshFacets }) {
   );
 }
 
-function ProfEd({ profile, onSave, listings, keyOk, model, colorFacet }) {
-  var [p, setP] = useState(Object.assign({}, profile.params));
+function ProfEd({ profile, onSave, listings, queued, keyOk, model, facets }) {
+  var f = facets || {};
+  var cars = (listings || []).concat(queued || []);
+  var seenOf = function (k) { var o = {}; cars.forEach(function (c) { if (c[k]) o[c[k]] = true; }); return Object.keys(o); };
+  var trimSeen = seenOf("trim"), dtSeen = seenOf("drivetrain");
+  // Old trim text filters become chip states the first time the editor opens
+  // with trims to show them against; Save keeps the conversion.
+  var [conv] = useState(function () {
+    var vals = facetChoices(f.trims, trimSeen, []).map(function (c) { return c.value; });
+    return vals.length ? legacyTrimChips(profile.params, vals) : null;
+  });
+  var [p, setP] = useState(Object.assign({}, profile.params, conv || {}));
+  var trimChoices = facetChoices(f.trims, trimSeen, (p.preferTrims || []).concat(p.excludeTrims || []));
+  var dtChoices = facetChoices(f.drivetrains, dtSeen, p.excludeDrivetrains || []);
   var [name, setName] = useState(profile.name || "");
   var [role, setRole] = useState(profile.role || "");
   return (
     <div style={S.grid2}>
       <div style={S.field}><label style={S.lbl}>Name</label><input style={S.inp} value={name} onChange={function (e) { setName(e.target.value); }} /></div>
       <div style={S.field}><label style={S.lbl}>Category / role (optional)</label><input style={S.inp} value={role} onChange={function (e) { setRole(e.target.value); }} placeholder="e.g. SUV, Daily, Truck" /></div>
-      {[["make", "Make"], ["model", "Model"], ["powertrain", "Powertrain (Hybrid/PHEV/Electric)"], ["years", "Years"], ["trims", "Preferred trims (scoring only — higher trims count as a plus)"]].map(function (pair) {
+      {[["make", "Make"], ["model", "Model"], ["powertrain", "Powertrain (Hybrid/PHEV/Electric)"], ["years", "Years"]].concat(trimChoices.length ? [] : [["trims", "Preferred trims (scoring only — higher trims count as a plus)"]]).map(function (pair) {
         return (<div key={pair[0]} style={S.field}><label style={S.lbl}>{pair[1]}</label><input style={S.inp} value={p[pair[0]] || ""} onChange={function (e) { setP(Object.assign({}, p, { [pair[0]]: e.target.value })); }} /></div>);
       })}
       <div style={S.field}><label style={S.lbl}>Max Price</label><input style={S.inp} type="number" value={p.maxPrice} onChange={function (e) { setP(Object.assign({}, p, { maxPrice: parseInt(e.target.value) || 0 })); }} /></div>
       <div style={S.field}><label style={S.lbl}>Max Miles</label><input style={S.inp} type="number" value={p.maxMiles} onChange={function (e) { setP(Object.assign({}, p, { maxMiles: parseInt(e.target.value) || 0 })); }} /></div>
-      {[["trimInclude", "Trim include (fuzzy, comma-sep)"], ["trimExclude", "Trim exclude (fuzzy, comma-sep)"]].map(function (pair) {
-        return (<div key={pair[0]} style={S.field}><label style={S.lbl}>{pair[1]}</label><input style={S.inp} value={p[pair[0]] || ""} onChange={function (e) { setP(Object.assign({}, p, { [pair[0]]: e.target.value })); }} placeholder={pair[0] === "trimExclude" ? "XT, Turbo, Wilderness" : "e.g. Premium, Limited"} /></div>);
+      {/* The old fuzzy text filters: shown only while they hold something the chips couldn't take over yet. */}
+      {[["trimInclude", "Trim include (fuzzy, comma-sep)"], ["trimExclude", "Trim exclude (fuzzy, comma-sep)"]].filter(function (pair) { return (p[pair[0]] || "").trim(); }).map(function (pair) {
+        return (<div key={pair[0]} style={S.field}><label style={S.lbl}>{pair[1]}</label><input style={S.inp} value={p[pair[0]] || ""} onChange={function (e) { setP(Object.assign({}, p, { [pair[0]]: e.target.value })); }} /></div>);
       })}
       <div style={Object.assign({}, S.field, { gridColumn: "1/-1" })}>
-        <ColorFilter facet={colorFacet} excluded={p.excludeColors} includeUnlisted={p.includeUnlistedColor}
+        <TrimChips choices={trimChoices} params={p} measuredAt={f.trims && f.trims.at} converted={!!conv}
+          onChange={function (patch) { setP(Object.assign({}, p, patch)); }} />
+      </div>
+      {(dtChoices.length > 1 || (p.excludeDrivetrains || []).length > 0) && (
+        <div style={Object.assign({}, S.field, { gridColumn: "1/-1" })}>
+          <DrivetrainChips choices={dtChoices} excluded={p.excludeDrivetrains || []}
+            onChange={function (list) { setP(Object.assign({}, p, { excludeDrivetrains: list })); }} />
+        </div>
+      )}
+      <div style={Object.assign({}, S.field, { gridColumn: "1/-1" })}>
+        <ColorFilter facet={f.colors} excluded={p.excludeColors} includeUnlisted={p.includeUnlistedColor}
           onChange={function (c) { setP(Object.assign({}, p, c)); }} />
       </div>
       {[["mustHave", "Must-have (scoring only)"], ["niceToHave", "Nice-to-have (scoring only)"], ["dealbreakers", "Dealbreakers (scoring only)"]].map(function (pair) {
         return (<div key={pair[0]} style={Object.assign({}, S.field, { gridColumn: "1/-1" })}><label style={S.lbl}>{pair[1]}</label><textarea style={S.ta} value={p[pair[0]] || ""} onChange={function (e) { setP(Object.assign({}, p, { [pair[0]]: e.target.value })); }} rows={2} /></div>);
       })}
-      <p style={Object.assign({}, S.help, { gridColumn: "1/-1", margin: 0 })}>Make / model / powertrain / years / max price / max miles filter the search. Trim include/exclude (fuzzy, substring) and hidden colors are applied to candidates on your device. Trims, must/nice-to-have, and dealbreakers only guide AI scoring.</p>
+      <p style={Object.assign({}, S.help, { gridColumn: "1/-1", margin: 0 })}>Make / model / powertrain / years / max price / max miles filter the search. Hidden trims, drivetrains and colors are applied to candidates on your device, so anything new still shows. Preferred (★) trims, must/nice-to-have, and dealbreakers only guide AI scoring.</p>
       <div style={{ gridColumn: "1/-1" }}>
         <BaselineSection baseline={p.priceBaseline} onChange={function (b) { setP(Object.assign({}, p, { priceBaseline: b })); }}
           profileForGen={{ name: name, params: p }} listings={listings || []} keyOk={keyOk} model={model} />
@@ -3233,7 +3302,7 @@ function HelpTab() {
         <p style={li}>The Results tab keeps "needs a look" separate from "saved": <span style={b}>Candidates</span> (brand-new matches, full cards) and <span style={b}>Updated — review</span> (saved listings whose price changed this sync, shown as compact cards with a link) sit up top. Your <span style={b}>Watchlist</span> below is the stuff you've already saved and reviewed.</p>
         <p style={li}><span style={b}>Approve</span> moves a candidate to the watchlist; <span style={b}>Skip</span> sets it aside (collapsible <span style={b}>Skipped</span> list; won't reappear on future syncs, and is never auto-scored). On an Updated card, <span style={b}>✓ Reviewed</span> returns it to the watchlist; <span style={b}>Reject</span> drops it.</p>
         <p style={li}>From Skipped you can <span style={b}>Restore to queue</span>, send straight to <span style={b}>Watchlist</span>, or <span style={b}>Remove</span> the record.</p>
-        <p style={li}><span style={b}>Trim filters</span> (Profiles tab, per profile): fuzzy include/exclude terms applied to candidates on your device, since the search can't filter trims. Candidates that fail land in <span style={b}>Hidden by trim</span> — tap <span style={b}>🚫 Exclude trim</span> on a candidate to hide its trim, or <span style={b}>✓ Show this trim</span> in the hidden list to bring it back.</p>
+        <p style={li}><span style={b}>Trims &amp; drivetrains</span> (Profiles tab → Edit): chips for the trims this profile's matches actually come in (MarketCheck's full trim names, like "Limited XT" or "SEL Convenience HEV AWD"), with counts — measured with the colors, at no extra cost. Tap a trim to ★ prefer it (a floor for AI scoring — richer trims still count as a plus), tap again to hide it, again to reset. When a profile's cars come in more than one drivetrain, those get chips too (MarketCheck calls AWD "4WD"). Hiding happens on your device, so a trim nobody has seen yet still shows. Hidden candidates land under <span style={b}>Hidden by your … filters</span> — tap <span style={b}>🚫 Exclude trim</span> on a candidate to hide its trim, or <span style={b}>✓ Show this trim</span> in the hidden list to bring it back. Older free-text trim filters convert to chips the first time you open the profile's editor.</p>
       </div>
 
       <div style={S.card}>
@@ -3336,7 +3405,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   // Partition candidates by each one's profile trim + color filters.
   function hideOf(c) { return candHideReason(c, data.profiles.find(function (x) { return x.id === c.profileId; })); }
   function candTrimPass(c) { return !hideOf(c); }
-  function trimHideReason(c) { var h = hideOf(c); return h ? h.text : "filtered"; }
+  function hideText(c) { var h = hideOf(c); return h ? h.text : "filtered"; }
   var shownCands = candidates.filter(candTrimPass).slice().sort(sortFn);
   var hiddenCands = candidates.filter(function (c) { return !candTrimPass(c); }).slice().sort(sortFn);
 
@@ -3478,17 +3547,17 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
         <div style={S.card}>
           <h3 style={Object.assign({}, S.cardH, { cursor: "pointer", margin: 0, display: "flex", alignItems: "center", gap: 6 })}
             onClick={function () { setShowTrimHidden(!showTrimHidden); }}>
-            {showTrimHidden ? "▾" : "▸"} Hidden by trim or color filter ({hiddenCands.length})
+            {showTrimHidden ? "▾" : "▸"} Hidden by your trim, drivetrain or color filters ({hiddenCands.length})
           </h3>
           {showTrimHidden && hiddenCands.map(function (c, i) {
             return (
               <div key={(c.vin || "") + i} style={{ borderTop: "1px solid #1e2028", paddingTop: 8, marginTop: 8 }}>
                 <div style={{ fontSize: 13, color: "#c8c8d0" }}>{c.year} {c.vehicle}{c.trim ? " · " + c.trim : ""}</div>
-                <div style={{ fontSize: 11, color: "#8a8a96", margin: "2px 0 6px" }}>${(c.price || 0).toLocaleString()} · {(c.mileage || 0).toLocaleString()} mi — {trimHideReason(c)}</div>
+                <div style={{ fontSize: 11, color: "#8a8a96", margin: "2px 0 6px" }}>${(c.price || 0).toLocaleString()} · {(c.mileage || 0).toLocaleString()} mi — {hideText(c)}</div>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                   {(hideOf(c) || {}).kind === "color"
                     ? <button style={Object.assign({}, S.smBtn, { color: "#2d8659" })} onClick={function () { showColor(c); }}>✓ Show {baseColorOf(c) ? baseColorOf(c).toLowerCase() + " cars" : "cars with no color listed"}</button>
-                    : <button style={Object.assign({}, S.smBtn, { color: "#2d8659" })} onClick={function () { showTrim(c); }}>✓ Show this trim</button>}
+                    : <button style={Object.assign({}, S.smBtn, { color: "#2d8659" })} onClick={function () { showTrim(c); }}>{(hideOf(c) || {}).kind === "drivetrain" ? "✓ Show " + c.drivetrain + " cars" : "✓ Show this trim"}</button>}
                   <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { dismissCand(c); }}>Skip</button>
                 </div>
               </div>
