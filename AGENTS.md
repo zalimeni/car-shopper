@@ -264,6 +264,14 @@ Supabase-idiomatic route is a dedicated password user via
   `DEFAULT_CRITERIA` near the top of `App.jsx` (and bump `VERSION` + add a
   `migrate()` step if the blob shape changes).
 
+## Merging
+
+`main` has a ruleset requiring the **`test`** check (the `npm test` + `npm run
+build` workflow), and the repo allows **auto-merge**. Open the PR, enable
+auto-merge (squash) on it, and move on — GitHub merges once `test` passes, and
+red CI can't merge. Don't make the migrations `validate` check required: it only
+runs on some PRs, so others would wait on it forever.
+
 ## Deploy
 
 Vercel builds from `main` (`npm run build` → `dist/`). The SPA rewrite in
