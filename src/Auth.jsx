@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
 
-// Gates the app behind Supabase email magic-link auth. Renders a sign-in
+// Gates the app behind Supabase email auth (magic link or one-time code). Renders a sign-in
 // screen until there's a session, then renders children. Signing in with the
 // same email on any device gives you the same synced data.
 export default function AuthGate({ children }) {
@@ -93,9 +93,17 @@ function NotAuthorized({ email }) {
   );
 }
 
+// Two ways in from one email: the link (opens in the browser) or the code typed
+// here. The code matters on an iPhone Home Screen web app — it has its own
+// storage, separate from Safari, and email links always open in Safari, so the
+// link would sign Safari in and leave the Home Screen app signed out. Typing the
+// code signs in whichever window it's typed into. (The Supabase "Magic Link"
+// email template must include {{ .Token }} — see supabase/templates/.)
 function SignIn() {
   const [email, setEmail] = useState("");
-  const [status, setStatus] = useState("idle"); // idle | sending | sent | error
+  const [code, setCode] = useState("");
+  const [sent, setSent] = useState(false); // email sent -> show the code step
+  const [status, setStatus] = useState("idle"); // idle | sending | verifying | error
   const [error, setError] = useState("");
 
   async function send(e) {
@@ -111,7 +119,22 @@ function SignIn() {
       setError(error.message);
       setStatus("error");
     } else {
-      setStatus("sent");
+      setSent(true);
+      setStatus("idle");
+    }
+  }
+
+  async function verify(e) {
+    e.preventDefault();
+    const token = code.replace(/\s+/g, "");
+    if (!token) return;
+    setStatus("verifying");
+    setError("");
+    const { error } = await supabase.auth.verifyOtp({ email: email.trim(), token: token, type: "email" });
+    // On success onAuthStateChange swaps this screen for the app.
+    if (error) {
+      setError(/expired|invalid/i.test(error.message) ? "That code didn't work — it may have expired. Check you used the newest email, or send a new one." : error.message);
+      setStatus("error");
     }
   }
 
@@ -120,10 +143,28 @@ function SignIn() {
       <div style={S.card}>
         <h1 style={S.title}>Car Shopper</h1>
         <p style={S.sub}>Sign in to load your synced data.</p>
-        {status === "sent" ? (
-          <p style={S.sent}>
-            Check <strong>{email}</strong> for a sign-in link, then return here.
-          </p>
+        {sent ? (
+          <form onSubmit={verify}>
+            <p style={S.sent}>
+              We emailed <strong>{email}</strong> a sign-in link and a code. Tap the link, or type the code here
+              {isStandalone() ? " (the link would open in Safari, not this app)" : ""}:
+            </p>
+            <input
+              style={Object.assign({}, S.input, S.code)}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="123456"
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 10))}
+              aria-label="Sign-in code"
+            />
+            <button style={S.button} type="submit" disabled={status === "verifying" || code.length < 6}>
+              {status === "verifying" ? "Signing in…" : "Sign in with code"}
+            </button>
+            <button type="button" style={S.link} onClick={() => { setSent(false); setStatus("idle"); setCode(""); setError(""); }}>
+              Use a different email or send a new code
+            </button>
+          </form>
         ) : (
           <form onSubmit={send}>
             <input
@@ -136,7 +177,7 @@ function SignIn() {
               required
             />
             <button style={S.button} type="submit" disabled={status === "sending"}>
-              {status === "sending" ? "Sending…" : "Email me a sign-in link"}
+              {status === "sending" ? "Sending…" : "Email me a sign-in link & code"}
             </button>
           </form>
         )}
@@ -144,6 +185,13 @@ function SignIn() {
       </div>
     </div>
   );
+}
+
+// Running as an installed Home Screen web app (not a Safari tab)?
+function isStandalone() {
+  try {
+    return window.navigator.standalone === true || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+  } catch (e) { return false; }
 }
 
 export async function signOut() {
@@ -195,6 +243,8 @@ const S = {
     cursor: "pointer",
     fontFamily: "inherit",
   },
-  sent: { fontSize: 14, color: "#2d8659", lineHeight: 1.6 },
+  sent: { fontSize: 14, color: "#2d8659", lineHeight: 1.6, marginTop: 0 },
+  code: { fontSize: 22, letterSpacing: "0.3em", textAlign: "center", fontFamily: "'IBM Plex Mono',monospace" },
+  link: { background: "none", border: "none", color: "#6b9bf2", fontSize: 12, marginTop: 10, padding: 0, cursor: "pointer", fontFamily: "inherit" },
   error: { fontSize: 13, color: "#c44", marginTop: 10 },
 };

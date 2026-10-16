@@ -53,3 +53,18 @@ The DB password (inside that URL) is the right credential for migrations — it
 authenticates the direct Postgres connection that runs the DDL. API keys
 (`anon`/`service_role`, `sb_publishable_*`/`sb_secret_*`) are data-API
 credentials and cannot run migrations.
+
+## Sign-in email template (one-time code)
+
+The sign-in screen accepts either the emailed link or a typed one-time code. The
+code is what makes an iPhone **Home Screen** bookmark work: iOS gives a Home Screen
+web app its own storage, separate from Safari, and email links always open in
+Safari, so a link signs Safari in and leaves the Home Screen app signed out.
+
+Hosted projects don't read templates from this repo — set it once in the dashboard:
+
+1. Supabase Dashboard → **Authentication → Emails → Magic Link**.
+2. Paste the body of [`templates/magic_link.html`](templates/magic_link.html) (it
+   keeps the `{{ .ConfirmationURL }}` link and adds `{{ .Token }}`, the code).
+3. Save. Code length follows **Authentication → Providers → Email → Email OTP
+   length** (default 6; the app accepts 6–10 digits).
