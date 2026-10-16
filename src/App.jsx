@@ -7,7 +7,8 @@ import { travelFacts, DRIVE_MAX_MI, AIRPORT_NEAR_MI } from "./travel";
 import { SALT_STATES, isSaltState } from "./regions";
 import { layoutColumns, moveColumn, togglePin } from "./compareCols";
 import { trimHideReason, trimState, setTrimState, nextTrimState, facetChoices } from "./trims";
-import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBaseline, generatePriceAssessment, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
+import { shareUnder, capChoices, estimateMatches, toggleYear, yearChoices, yearList, formatYears, defaultName } from "./profileWizard";
+import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBaseline, generatePriceAssessment, suggestProfile, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
 import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
 import { listSnapshots, restoreSnapshot } from "./snapshots";
 import { buildPriceHistoryCsv } from "./priceExport";
@@ -1180,7 +1181,9 @@ export default function App() {
   // facet). Fetched when a profile is saved with new search filters, or on request.
   // Saves into the LATEST state — the call takes a moment and the edit that
   // triggered it has just been saved.
-  var refreshProfileFacets = useCallback(async function (profile) {
+  // opts.quotaOnly: the profile wizard's explore — the profile isn't saved yet, so
+  // only the quota snapshot is kept (the wizard stores the facets on create).
+  var refreshProfileFacets = useCallback(async function (profile, opts) {
     var d0 = dataRef.current;
     if (!d0 || !profile || !profile.params || !(profile.params.make || profile.params.model)) return null;
     var po = planOpts(d0);
@@ -1189,7 +1192,7 @@ export default function App() {
     var st = getSettings(d);
     var nowIso = new Date().toISOString();
     var meta = Object.assign({}, st.mcProfiles || {});
-    if (r.numFound != null) {
+    if (r.numFound != null && !(opts && opts.quotaOnly)) {
       meta[profile.id] = Object.assign({}, meta[profile.id] || {}, { count: r.numFound, countSig: searchSig(profile, po), countAt: nowIso },
         r.colors ? { colors: Object.assign({}, r.colors, { at: nowIso }) } : {},
         r.trims ? { trims: Object.assign({}, r.trims, { at: nowIso }) } : {},
@@ -2233,6 +2236,24 @@ function ProfilesTab({ data, save, keyOk, scoreModel, refreshFacets }) {
   }
   function toggleActive(id) { save(Object.assign({}, data, { profiles: data.profiles.map(function (p) { return p.id === id ? Object.assign({}, p, { active: !p.active }) : p; }) })); }
   function delProf(id) { save(Object.assign({}, data, { profiles: data.profiles.filter(function (p) { return p.id !== id; }) })); }
+  var [wizard, setWizard] = useState(false);
+  // The wizard's profile: prepended, active, with the explore's facets stored so
+  // the editor has chips at once. Its caps differ from the explore (which had
+  // none), so the exact count is one more call, as for any edit of the search.
+  function createProf(prof, market) {
+    var nowIso = new Date().toISOString();
+    var st = getSettings(data);
+    var meta = Object.assign({}, st.mcProfiles || {});
+    var m = {};
+    ["colors", "trims", "drivetrains"].forEach(function (k) { if (market && market[k]) m[k] = Object.assign({}, market[k], { at: nowIso }); });
+    meta[prof.id] = m;
+    save(Object.assign({}, data, { profiles: [prof].concat(data.profiles || []), settings: Object.assign({}, data.settings || {}, { mcProfiles: meta }) }));
+    setWizard(false);
+    if (refreshFacets) {
+      setFacetBusy(prof.id);
+      refreshFacets(prof).catch(function () { /* the card offers a retry */ }).then(function () { setFacetBusy(null); });
+    }
+  }
   function addProf() {
     var n = { id: "p-" + Date.now(), name: "New Profile", role: "", active: true,
       params: { make: "", model: "", years: "", trims: "", preferTrims: [], excludeTrims: [], excludeDrivetrains: [], maxPrice: 20000, maxMiles: 80000, mustHave: "", niceToHave: "", dealbreakers: "",
@@ -2313,9 +2334,12 @@ function ProfilesTab({ data, save, keyOk, scoreModel, refreshFacets }) {
         <h2 style={S.secT}>Vehicle Profiles</h2>
         <div style={{ display: "flex", gap: 6 }}>
           <button style={S.secBtn} onClick={function () { setShowIO(!showIO); setImpMsg(null); }}>{showIO ? "Close" : "Import / export"}</button>
-          <button style={S.priBtn} onClick={addProf}>+ Add</button>
+          <button style={S.priBtn} onClick={function () { setWizard(true); }}>+ Add</button>
         </div>
       </div>
+      {wizard && <ProfileWizard data={data} keyOk={keyOk} onClose={function () { setWizard(false); }}
+        onExplore={function (prof) { return refreshFacets(prof, { quotaOnly: true }); }}
+        onCreate={createProf} onBlank={function () { setWizard(false); addProf(); }} />}
       {showIO && (
         <div style={S.card}>
           <p style={S.help}>Paste a JSON array of profiles to add. Existing profiles (same make + model + powertrain, or id) are skipped — only missing ones are added.</p>
@@ -2365,6 +2389,209 @@ function ProfilesTab({ data, save, keyOk, scoreModel, refreshFacets }) {
       })}
     </div>
   );
+}
+
+// New-profile wizard (src/profileWizard.js): make / model / years / powertrain →
+// one Explore call (count, trim / drivetrain / color / year facets, price +
+// mileage percentiles) → pick caps (quick picks + an estimate, no calls), years,
+// chips → optional AI suggestions (the user's Anthropic key) → name and create.
+export function ProfileWizard({ data, keyOk, onExplore, onCreate, onBlank, onClose }) {
+  useEffect(function () {
+    function onKey(e) { if (e.key === "Escape") onClose(); }
+    window.addEventListener("keydown", onKey);
+    return function () { window.removeEventListener("keydown", onKey); };
+  }, [onClose]);
+  var st = getSettings(data);
+  var [p, setP] = useState({ make: "", model: "", powertrain: "", years: "", maxPrice: 0, maxMiles: 0, trims: "", preferTrims: [], excludeTrims: [], excludeDrivetrains: [],
+    excludeColors: (st.defaultExcludeColors || []).slice(), includeUnlistedColor: true, mustHave: "", niceToHave: "", dealbreakers: "" });
+  var [name, setName] = useState("");
+  var [role, setRole] = useState("");
+  var [market, setMarket] = useState(null); // the explore answer + the search it was for
+  var [busy, setBusy] = useState(false);
+  var [err, setErr] = useState("");
+  var [ai, setAi] = useState(null); // { busy } | { s: suggestion } | { error }
+  function set(patch) { setP(function (prev) { return Object.assign({}, prev, patch); }); }
+
+  // Suggestions: makes/models already in your profiles and listings.
+  var makes = {}, models = {};
+  (data.profiles || []).forEach(function (x) { if (x.params && x.params.make) makes[x.params.make] = true; if (x.params && x.params.model) models[x.params.model] = true; });
+  (data.listings || []).forEach(function (l) { var w = String(l.vehicle || "").split(" "); if (w[0]) makes[w[0]] = true; if (w.length > 1) models[w.slice(1).join(" ")] = true; });
+
+  var searchKey = [p.make, p.model, p.powertrain, p.years].map(function (x) { return String(x || "").trim().toLowerCase(); }).join("|");
+  var stale = market && market.key !== searchKey;
+  async function explore() {
+    if (!p.make.trim() || !p.model.trim()) { setErr("Enter a make and a model first."); return; }
+    setBusy(true); setErr("");
+    try {
+      var r = await onExplore({ id: "wizard", name: defaultName(p), params: { make: p.make.trim(), model: p.model.trim(), powertrain: p.powertrain, years: p.years } });
+      if (!r || r.numFound == null) throw new Error(((r && r.errors) || [])[0] || "MarketCheck didn't answer — try again");
+      setMarket({ key: searchKey, count: r.numFound, colors: r.colors, trims: r.trims, drivetrains: r.drivetrains, years: r.years, stats: r.stats });
+      var pc = capChoices(r.stats && r.stats.price, 500), mc = capChoices(r.stats && r.stats.miles, 5000);
+      set({ maxPrice: p.maxPrice || (pc[1] || {}).value || 0, maxMiles: p.maxMiles || (mc[2] || {}).value || 0 });
+      if (!name) setName(defaultName(p));
+    } catch (e) { setErr((e && e.message) || "Explore failed"); }
+    setBusy(false);
+  }
+  function askAi() {
+    setAi({ busy: true });
+    suggestProfile({ params: p }, { count: market.count, trims: market.trims, years: market.years, stats: market.stats, homeBase: st.homeBase ? st.homeBase.n : null })
+      .then(function (s) {
+        setAi({ s: s });
+        set({ mustHave: p.mustHave || s.mustHave, niceToHave: p.niceToHave || s.niceToHave, dealbreakers: p.dealbreakers || s.dealbreakers });
+      })
+      .catch(function (e) { setAi({ error: e.code === "no_key" ? "Add your Anthropic key in Settings first." : (e.message || "Suggestion failed") }); });
+  }
+  function create() {
+    var params = Object.assign({}, p, { make: p.make.trim(), model: p.model.trim(), years: p.years.trim() });
+    onCreate({ id: "p-" + Date.now(), name: name.trim() || defaultName(params) || "Profile", role: role.trim(), active: true, params: params }, market);
+  }
+
+  // Year chips: an empty years box means "any", so every facet year counts as on.
+  var facetYears = Object.keys((market && market.years && market.years.counts) || {}).map(Number);
+  var yearsOrAll = p.years.trim() ? p.years : formatYears(facetYears);
+  var yChoices = market ? yearChoices(market.years, yearsOrAll) : [];
+  var yearTotal = yChoices.length ? yChoices.filter(function (y) { return y.on; }).reduce(function (a, y) { return a + y.count; }, 0) : (market ? market.count : null);
+  var est = market ? estimateMatches(yearTotal, market.stats, p.maxPrice, p.maxMiles) : null;
+  var priceStat = market && market.stats && market.stats.price, milesStat = market && market.stats && market.stats.miles;
+  var pct = function (v) { return v == null ? "" : Math.round(v * 100) + "%"; };
+  var money = function (n) { return "$" + Number(n || 0).toLocaleString(); };
+  var sec = { borderTop: "1px solid #1e2028", marginTop: 12, paddingTop: 10 };
+  var h = { fontSize: 13, fontWeight: 600, color: "#f0f0f3", margin: "0 0 6px" };
+  var pick = function (on) { return Object.assign({}, S.smBtn, { fontSize: 12, borderRadius: 12, padding: "2px 10px", border: "1px solid " + (on ? "#2563eb" : "#2a3554"), color: on ? "#fff" : "#c8c8d0" }); };
+
+  return (
+    <div onMouseDown={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.62)", zIndex: 200, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "6vh 12px 12px", overflowY: "auto" }}>
+      <div role="dialog" aria-modal="true" aria-label="New profile" onMouseDown={function (e) { e.stopPropagation(); }}
+        style={Object.assign({}, S.card, { width: "100%", maxWidth: 640, margin: 0, background: "#161820", boxShadow: "0 16px 48px rgba(0,0,0,0.6)" })}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <h3 style={{ fontSize: 16, fontWeight: 600, margin: 0, color: "#f0f0f3", flex: 1 }}>New profile</h3>
+          <button style={S.smBtn} onClick={onClose}>Close</button>
+        </div>
+
+        <p style={Object.assign({}, S.help, { margin: "6px 0 8px" })}>Pick the car, then <b>Explore</b> — one MarketCheck call shows what's out there nationwide (how many, which trims, what they cost), so the caps and filters you set mean something.</p>
+        <div style={S.grid2}>
+          <div style={S.field}><label style={S.lbl}>Make</label><input style={S.inp} list="wiz-makes" value={p.make} onChange={function (e) { set({ make: e.target.value }); }} placeholder="Subaru" /></div>
+          <div style={S.field}><label style={S.lbl}>Model</label><input style={S.inp} list="wiz-models" value={p.model} onChange={function (e) { set({ model: e.target.value }); }} placeholder="Outback" /></div>
+          <div style={S.field}><label style={S.lbl}>Years (blank = any)</label><input style={S.inp} value={p.years} onChange={function (e) { set({ years: e.target.value }); }} placeholder="2020-2022" /></div>
+          <div style={S.field}><label style={S.lbl}>Powertrain</label>
+            <select style={S.inp} value={p.powertrain} onChange={function (e) { set({ powertrain: e.target.value }); }}>
+              {[["", "Any"], ["Hybrid", "Hybrid"], ["PHEV", "Plug-in hybrid"], ["Electric", "Electric"], ["Gas", "Gas"]].map(function (o) { return (<option key={o[0]} value={o[0]}>{o[1]}</option>); })}
+            </select>
+          </div>
+        </div>
+        <datalist id="wiz-makes">{Object.keys(makes).sort().map(function (m) { return (<option key={m} value={m} />); })}</datalist>
+        <datalist id="wiz-models">{Object.keys(models).sort().map(function (m) { return (<option key={m} value={m} />); })}</datalist>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
+          <button style={Object.assign({}, S.priBtn, busy ? { opacity: 0.6 } : {})} disabled={busy} onClick={explore}>{busy ? "Exploring…" : market ? "↻ Explore again (1 call)" : "Explore (1 call)"}</button>
+          <button style={S.linkBtn} onClick={onBlank}>Or start from a blank profile</button>
+        </div>
+        {err && <div style={{ fontSize: 12, color: "#c44", marginTop: 6 }}>{err}</div>}
+
+        {market && (
+          <div>
+            <div style={sec}>
+              <p style={h}>{market.count.toLocaleString()} {[p.make, p.model].join(" ")} for sale nationwide{st.saltMode !== "flag" ? " (salt belt left out)" : ""}</p>
+              {stale && <p style={{ fontSize: 12, color: "#e8c96a", margin: "0 0 6px" }}>You changed the car since exploring — Explore again for numbers that match.</p>}
+              {yChoices.length > 0 && (
+                <div>
+                  <label style={S.lbl}>Years — tap to include or leave out</label>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 4 }}>
+                    {yChoices.map(function (y) {
+                      return (<button key={y.year} type="button" aria-pressed={y.on} style={pick(y.on)} onClick={function () { set({ years: toggleYear(yearsOrAll, y.year) }); }}>
+                        <Check on={y.on} />{y.year} · {y.count.toLocaleString()}</button>);
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div style={sec}>
+              <p style={h}>Caps</p>
+              <div style={S.grid2}>
+                {[["maxPrice", "Max price", priceStat, 500, money], ["maxMiles", "Max miles", milesStat, 5000, function (v) { return Number(v).toLocaleString() + " mi"; }]].map(function (c) {
+                  var share = shareUnder(c[2], p[c[0]]);
+                  return (
+                    <div key={c[0]} style={S.field}>
+                      <label style={S.lbl}>{c[1]}{share != null && p[c[0]] ? " — about " + pct(share) + " of these cars" : ""}</label>
+                      <input style={S.inp} type="number" value={p[c[0]] || ""} onChange={function (e) { set({ [c[0]]: parseInt(e.target.value, 10) || 0 }); }} />
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+                        {capChoices(c[2], c[3]).map(function (o) {
+                          return (<button key={o.value} type="button" style={pick(p[c[0]] === o.value)} onClick={function () { set({ [c[0]]: o.value }); }}>{c[4](o.value)} · {pct(o.share)}</button>);
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {c2Median(priceStat, milesStat, money)}
+            </div>
+
+            <div style={sec}>
+              <TrimChips choices={facetChoices(market.trims, [], p.preferTrims.concat(p.excludeTrims))} params={p} measuredAt={new Date().toISOString()}
+                onChange={function (patch) { set(patch); }} />
+              {facetChoices(market.drivetrains, [], p.excludeDrivetrains).length > 1 && (
+                <div style={{ marginTop: 10 }}>
+                  <DrivetrainChips choices={facetChoices(market.drivetrains, [], p.excludeDrivetrains)} excluded={p.excludeDrivetrains} onChange={function (list) { set({ excludeDrivetrains: list }); }} />
+                </div>
+              )}
+              <div style={{ marginTop: 10 }}>
+                <ColorFilter facet={market.colors ? Object.assign({}, market.colors, { at: new Date().toISOString() }) : null} excluded={p.excludeColors} includeUnlisted={p.includeUnlistedColor} onChange={function (c) { set(c); }} />
+              </div>
+            </div>
+
+            <div style={sec}>
+              <p style={h}>What matters (guides AI scoring)</p>
+              {keyOk ? (
+                <div style={{ marginBottom: 8 }}>
+                  <button style={Object.assign({}, S.secBtn, { color: "#b89edd" }, ai && ai.busy ? { opacity: 0.6 } : {})} disabled={ai && ai.busy} onClick={askAi}>
+                    {ai && ai.busy ? "Thinking…" : ai && ai.s ? "✨ Suggest again" : "✨ Suggest must-haves and years to avoid"}</button>
+                  {ai && ai.error && <div style={{ fontSize: 12, color: "#c44", marginTop: 6 }}>{ai.error}</div>}
+                  {ai && ai.s && (
+                    <div style={{ fontSize: 12, color: "#c8c8d0", marginTop: 8, lineHeight: 1.5 }}>
+                      {ai.s.summary && <div style={{ marginBottom: 4 }}>{ai.s.summary}</div>}
+                      {ai.s.avoidYears.map(function (a) {
+                        var on = yearList(yearsOrAll).indexOf(a.year) > -1;
+                        return (<div key={a.year} style={{ display: "flex", gap: 6, alignItems: "baseline", marginTop: 3 }}>
+                          <button type="button" style={Object.assign({}, S.smBtn, { fontSize: 11, color: on ? "#e8c96a" : "#6b6b76" })} disabled={!on}
+                            onClick={function () { set({ years: toggleYear(yearsOrAll, a.year) }); }}>{on ? "Leave out " + a.year : a.year + " left out"}</button>
+                          <span>{a.reason}</span></div>);
+                      })}
+                      {ai.s.trimNotes.length > 0 && <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>{ai.s.trimNotes.map(function (t) { return (<li key={t.trim}><b>{t.trim}</b> — {t.note}</li>); })}</ul>}
+                      <div style={{ fontSize: 11, color: "#6b6b76", marginTop: 4 }}>Filled in below where empty — edit freely. Nothing else changes unless you tap it.</div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p style={Object.assign({}, S.help, { margin: "0 0 6px" })}>With an Anthropic key in Settings, AI can suggest these from the model's known strengths and problem years.</p>
+              )}
+              {[["mustHave", "Must-have"], ["niceToHave", "Nice-to-have"], ["dealbreakers", "Dealbreakers"]].map(function (f) {
+                return (<div key={f[0]} style={S.field}><label style={S.lbl}>{f[1]}</label><textarea style={S.ta} rows={2} value={p[f[0]]} onChange={function (e) { set({ [f[0]]: e.target.value }); }} /></div>);
+              })}
+            </div>
+
+            <div style={sec}>
+              <div style={S.grid2}>
+                <div style={S.field}><label style={S.lbl}>Name</label><input style={S.inp} value={name} onChange={function (e) { setName(e.target.value); }} placeholder={defaultName(p)} /></div>
+                <div style={S.field}><label style={S.lbl}>Category / role (optional)</label><input style={S.inp} value={role} onChange={function (e) { setRole(e.target.value); }} placeholder="e.g. SUV, Daily" /></div>
+              </div>
+              {est != null && (
+                <p style={{ fontSize: 12, color: est > COUNT_WARN ? "#e8c96a" : "#c8c8d0", margin: "8px 0 0" }}>
+                  Roughly {est.toLocaleString()} cars at these caps and years{est > COUNT_WARN ? " — that's a lot to review (and about " + Math.ceil(est / MC_ROWS) + " calls per full refresh); a lower cap or fewer years narrows it" : " — about " + Math.max(1, Math.ceil(est / MC_ROWS)) + " call" + (Math.ceil(est / MC_ROWS) > 1 ? "s" : "") + " per full refresh"}. Creating it checks the exact count (1 call).
+                </p>
+              )}
+              <button style={Object.assign({}, S.priBtn, { marginTop: 10, width: "100%" })} onClick={create}>Create profile</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// "Typical: $28,178 · 35,832 mi" under the wizard's caps.
+function c2Median(price, miles, money) {
+  if (!price && !miles) return null;
+  return (<p style={Object.assign({}, S.help, { margin: "6px 0 0" })}>Typical car: {price && price.median != null ? money(price.median) : "?"}{miles && miles.median != null ? " · " + Math.round(miles.median).toLocaleString() + " mi" : ""}. The quick picks are the price/mileage that 25%, half, 75% and 90% of these cars come in under.</p>);
 }
 
 function ProfEd({ profile, onSave, listings, queued, keyOk, model, facets }) {
@@ -3269,7 +3496,7 @@ function HelpTab() {
 
       <div style={S.card}>
         <h3 style={S.cardH}>The basic flow</h3>
-        <p style={li}><span style={b}>1. Profiles</span> — define the cars you're hunting (make/model/years/trims, price &amp; mileage caps, must-haves, dealbreakers). Active profiles drive every search.</p>
+        <p style={li}><span style={b}>1. Profiles</span> — define the cars you're hunting (make/model/years/trims, price &amp; mileage caps, must-haves, dealbreakers). Active profiles drive every search. <span style={b}>+ Add</span> opens a wizard: pick the make, model, years and powertrain, then <span style={b}>Explore</span> (one MarketCheck call) shows how many are for sale nationwide, by year and trim, and what they cost — quick picks set the price and mileage caps by what share of cars they keep (no extra calls), and with an Anthropic key, AI suggests must-haves, dealbreakers and years to avoid. Creating the profile checks its exact count (one more call).</p>
         <p style={li}><span style={b}>2. Sync</span> — pulls matching dealer inventory and reconciles it with what you're already tracking.</p>
         <p style={li}><span style={b}>3. Candidates</span> — brand-new matches land in a review queue. Approve the good ones to your watchlist, skip the rest.</p>
         <p style={li}><span style={b}>4. Watchlist</span> — your tracked listings, scored and sortable, with price-change and still-available tracking.</p>
