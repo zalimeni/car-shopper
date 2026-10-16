@@ -41,7 +41,8 @@ otherwise have to spend calls rediscovering:
   call). `facets` takes a list — one call returns `base_exterior_color`,
   `version` and `drivetrain` together — and `stats=price,miles` returns min/max/
   mean/median and percentiles (5…99) of the match set on the free plan (for the
-  planned profile wizard's suggested caps). Each facet lists at most 20 values.
+  profile wizard's quick-pick caps). The `count` step asks for both, plus a
+  `year` facet: the wizard's Explore is one count call. Each facet lists at most 20 values.
   No location at all = nationwide (rows still carry dealer lat/lon; no
   `dist`). Radius > 100 mi is rejected on the free plan.
 - **Trim fields:** `build.trim` is the clean grade ("Limited", 7 for Outback

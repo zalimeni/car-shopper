@@ -124,7 +124,8 @@ describe("count step returns the color breakdown", () => {
   it("reads the base_exterior_color facet and how many cars list no color", async () => {
     mockFetch(() => ({ num_found: 1001, listings: [], facets: { base_exterior_color: [{ item: "Black", count: 261 }, { item: "Gray", count: 204 }, { item: "White", count: 186 }, { item: "Silver", count: 168 }, { item: "Blue", count: 148 }] } }));
     const r = await step({ kind: "count", profile: tucson });
-    expect(calls[0].facets).toBe("base_exterior_color,version,drivetrain");
+    expect(calls[0].facets).toBe("base_exterior_color,version,drivetrain,year");
+    expect(calls[0].stats).toBe("price,miles");
     expect(r.numFound).toBe(1001);
     expect(r.colors).toEqual({ counts: { Black: 261, Gray: 204, White: 186, Silver: 168, Blue: 148 }, unlisted: 34 });
   });
@@ -136,6 +137,14 @@ describe("count step returns the color breakdown", () => {
     expect(calls.length).toBe(1);
     expect(r.trims.counts).toEqual({ Limited: 1125, "Touring XT": 356, "-": 113 });
     expect(r.drivetrains).toEqual({ counts: { "4WD": 3916 }, unlisted: 0 });
+  });
+  it("returns the year facet and trimmed price/miles stats (the profile wizard)", async () => {
+    mockFetch(() => ({ num_found: 1001, listings: [], facets: { year: [{ item: "2023", count: 600 }, { item: "2022", count: 401 }] },
+      stats: { price: { min: 11799, max: 41497, median: 28178, sum: 1, sum_of_squares: 2, percentiles: { "25.0": 25514, "50.0": 28178 } }, miles: { min: 12, max: 175137 } } }));
+    const r = await step({ kind: "count", profile: tucson });
+    expect(r.years.counts).toEqual({ 2023: 600, 2022: 401 });
+    expect(r.stats.price).toEqual({ min: 11799, max: 41497, mean: null, median: 28178, count: null, missing: null, percentiles: { "25.0": 25514, "50.0": 28178 } });
+    expect(r.stats.miles.max).toBe(175137);
   });
   it("normalize: version as the trim ('-' falls back to the plain trim), drivetrain kept", async () => {
     mockFetch(() => ({ num_found: 2, listings: [car("A", { build: { make: "Subaru", model: "Outback", year: 2021, trim: "Base", version: "-", drivetrain: "4WD" } }),

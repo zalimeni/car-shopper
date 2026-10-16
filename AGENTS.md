@@ -53,6 +53,7 @@ over architecture.
 | `src/trims.js` | Per-profile trim + drivetrain chips — same model as colors, from the same facet call. Trims are MarketCheck's `version` (what cards show; tells "Limited XT" from "Limited"), three states: ☆ neutral / ★ preferred (`params.preferTrims`, mirrored into `params.trims` for the scorer) / hidden (`params.excludeTrims`); drivetrains hide-only (`params.excludeDrivetrains`). Choices = facet ∪ trims seen on synced cars. (Replaced the old fuzzy `trimInclude`/`trimExclude` text; migrate v9 dropped it.) Pure, tested. |
 | `src/tags.js` | Freeform listing tags (`listing.tags`): add/remove (case-insensitive, adopts an existing tag's spelling), `allTags` for suggestions + the Results/Compare tag filter. AI scoring sees them; editing never marks a score stale. Pure, tested. |
 | `src/compareCols.js` | Compare table column layout: user order (drag a header) + pins (sticky on the left), stored in `settings.compareCols`. `layoutColumns`/`moveColumn`/`togglePin`. Pure, tested. |
+| `src/profileWizard.js` | The new-profile wizard's arithmetic over one Explore answer (a `count` step: facets + `stats=price,miles` percentiles): `shareUnder` (≈ share of cars under a cap), `capChoices` (25/50/75/90th-percentile quick picks), `estimateMatches`, year chips (`yearChoices`/`toggleYear`/`formatYears`). UI: `ProfileWizard` in `App.jsx`. Pure, tested. |
 | `src/markdown.js` | Safe Markdown parser for listing notes (text → typed tree, never HTML; http(s)-only links) + the `MEMO_MAX` (4,000-char) limit. Pure, tested. Rendered by `MarkdownView` / `ListingMemo` in `App.jsx`. |
 | `src/quota.js` | MarketCheck quota bookkeeping for the header gauge + modal: per-key snapshots (from syncs / live searches — never its own calls), capacity across keys (used in order), sync-cost estimates. Pure, tested. |
 | `public/locations.txt` | Flat file (`ST|City|ZIP|lat|lon`, ~41k rows) behind the location picker; lazy-loaded, not bundled. Built by `scripts/build-locations.mjs` from GeoNames (CC BY 4.0). |
@@ -66,6 +67,7 @@ over architecture.
 | `api/snapshots.js` | List/restore the automatic app-state backups (`app_state_history`). |
 | `api/cron-sync.js` | Scheduled background sync (Vercel Cron; `CRON_SECRET`-gated, `CRON_SYNC_EMAILS` accounts). |
 | `api/score.js` | Batch listing scoring with the user's decrypted key. |
+| `api/profile-suggest.js`, `api/_suggest.js` | The wizard's optional AI step (user's key): must-haves / dealbreakers / years to avoid / trim notes from the vehicle + Explore's market snapshot. Prompt, schema, `coerceSuggestion` in `_suggest.js` (tested). Same model plumbing as `api/baseline.js`. |
 | `supabase/migrations/*.sql` | DB schema (baseline + allowlist + anthropic-key vault). |
 | `supabase/ci/shim.sql`, `supabase/config.toml` | CI migration testing + CLI config. |
 | `.github/workflows/migrations.yml` | Validate + apply migrations. |
@@ -224,6 +226,10 @@ per environment (Preview vs Production) — set keys in the env you're testing.
   conditional "✓ ", and `<Swap labels={["On", "Off"]} show={i} />` instead of a
   conditional label (it sizes to the longest), so nothing beside the button
   shifts; keep border widths constant between states.
+- **New profiles** go through `ProfileWizard` ("+ Add"; "start from a blank
+  profile" keeps the old path). Its Explore is `refreshProfileFacets(p,
+  { quotaOnly: true })`; create stores the facets in `mcProfiles` and then runs
+  the normal count (caps changed).
 - **Sortable tables:** `sortRows` / `nextSort` / `sortIndicator` + the `cs-sort`
   class (Compare, Price Check comps).
 - **Touch / iOS Home Screen:** the owner uses it as an iPhone web app. Inputs are
@@ -257,7 +263,15 @@ Every call is billed against the key's 500/month free quota — errors, 404s and
 `rows=0` counts included — and there is no free endpoint that reports the
 quota (it's only learned from the `quota-*` headers of real calls). Ask the
 owner before spending calls, keep probes to one or two, and never commit a key.
-`?mock=1` costs nothing. What's already verified live is listed in
+`?mock=1` costs nothing.
+
+### Serverless function count
+Every non-underscore file in `api/` is its own Vercel function (11 today).
+Vercel's Hobby plan has capped deployments at 12 functions — check the current
+limit before adding more. Put shared code in `api/_*.js`, and prefer a new mode
+on an existing endpoint over a new file once that's close. Functions
+that call Anthropic or page MarketCheck need a `maxDuration` entry in
+`vercel.json`. What's already verified live is listed in
 `docs/listing-pipeline.md` §2–3 — check there before re-probing.
 
 ### Headless / agent debugging (no email login)

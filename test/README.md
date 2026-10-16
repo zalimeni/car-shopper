@@ -12,7 +12,7 @@ npx vitest run test/foo.test.js  # one file
 - **`<module>.test.js`** — one per pure module, named after it: `marketcheck`
   (`buildUrl`/`normalize`/`parseYears`…), `searchSteps` (the proxy's `runStep`
   kinds), `syncPlan`, `sync` (`reconcile`), `quota`, `colors`, `tags`,
-  `compareCols`, `geo`, `locations`, `markdown`, `priceCheck`,
+  `compareCols`, `profileWizard`, `suggest` (`api/_suggest.js`), `geo`, `locations`, `markdown`, `priceCheck`,
   `scoring`, `crypto`, `authLink`, `tableSort`, `migrate` (`.jsx`: imports `App.jsx`)…
 - **`*.render.test.jsx`** — jsdom render tests (first line
   `// @vitest-environment jsdom`, Testing Library). Two kinds:

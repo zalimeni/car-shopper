@@ -54,6 +54,21 @@ export async function generateBaseline(profile, listings, model) {
   return j.baseline;
 }
 
+// The profile wizard's AI step: must-haves / dealbreakers / years to avoid for a
+// vehicle, given the explore call's market snapshot. Uses the user's own key.
+export async function suggestProfile(profile, market) {
+  const res = await fetch("/api/profile-suggest", {
+    method: "POST", headers: await authHeaders(),
+    body: JSON.stringify({ profile: profile, market: market || {} }),
+  });
+  const j = await res.json().catch(function () { return {}; });
+  if (res.status === 401 || (j && (j.error === "key_rejected" || j.error === "no_key" || j.error === "key_unreadable"))) {
+    const e = new Error(j.message || j.error || "Not authorized"); e.code = j.error || "key_rejected"; throw e;
+  }
+  if (!res.ok) throw new Error(j.error || ("HTTP " + res.status));
+  return j.suggestion;
+}
+
 // Default scoring system prompt + per-criterion guidance, for the prompt editor.
 export async function getScorePrompt() {
   try {

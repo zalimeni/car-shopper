@@ -460,7 +460,7 @@ async function getPage(s, makeUrl, label, opts) {
     if (!Array.isArray(json.listings) && json.num_found == null) s.shapeless = true;
     const rows = Array.isArray(json.listings) ? json.listings : [];
     rows.forEach(function (row) { s.rowsSeen++; if (!row || !row.vin || !row.build || !row.build.make || !row.build.model) s.malformed++; });
-    return { rows: rows, numFound: typeof json.num_found === "number" ? json.num_found : null, facets: json.facets || null };
+    return { rows: rows, numFound: typeof json.num_found === "number" ? json.num_found : null, facets: json.facets || null, stats: json.stats || null };
   }
 }
 
@@ -514,12 +514,22 @@ export const PROFILE_FACETS = "base_exterior_color,version,drivetrain";
 function profileFacetsOf(pg) {
   return { colors: colorsOf(pg), trims: facetOf(pg, "version"), drivetrains: facetOf(pg, "drivetrain") };
 }
+// A stats block (stats=price,miles) trimmed to what the profile wizard uses:
+// { min, max, mean, median, count, missing, percentiles: { "5.0": …, "99.0": … } }.
+function statOf(st) {
+  if (!st || typeof st !== "object") return null;
+  const n = function (v) { const x = Number(v); return isFinite(x) ? x : null; };
+  const pc = {};
+  Object.keys(st.percentiles || {}).forEach(function (k) { const v = n(st.percentiles[k]); if (v != null) pc[k] = v; });
+  return { min: n(st.min), max: n(st.max), mean: n(st.mean), median: n(st.median), count: n(st.count), missing: n(st.missing), percentiles: pc };
+}
 
 export async function runStep(s, step) {
   step = step || {};
   const profile = step.profile && step.profile.params ? step.profile : null;
   const seen = {};
   let numFound = null;
+  let years = null, stats = null; // count step only: the year facet + price/miles stats (the profile wizard)
   let facets = { colors: null, trims: null, drivetrains: null }; // count / full page 1: { counts: { Black: 261, … }, unlisted: 34 } each
   const keep = function (row) {
     const norm = normalize(row, profile ? profile.id : null);
@@ -602,13 +612,16 @@ export async function runStep(s, step) {
   } else if (!profile) {
     s.errors.push("No profile to search");
   } else if (step.kind === "count") {
-    // Plus the color / trim / drivetrain breakdown across the whole match set
-    // (facets: same call, no paging). Verified live to list every base color (11
-    // for Outback, Purple: 1).
-    const pg = await getPage(s, function (k) { return nat({ state: states.join(","), rows: "0", facets: PROFILE_FACETS })(k, 0); }, label);
+    // Plus the color / trim / drivetrain / year breakdown across the whole match
+    // set and its price + mileage spread (facets + stats: same call, no paging).
+    // Verified live to list every base color (11 for Outback, Purple: 1) and to
+    // return percentiles on the free plan.
+    const pg = await getPage(s, function (k) { return nat({ state: states.join(","), rows: "0", facets: PROFILE_FACETS + ",year", stats: "price,miles" })(k, 0); }, label);
     if (pg) {
       numFound = pg.numFound;
       facets = profileFacetsOf(pg);
+      years = facetOf(pg, "year");
+      stats = pg.stats ? { price: statOf(pg.stats.price), miles: statOf(pg.stats.miles) } : null;
     }
   } else if (step.kind === "new") {
     const since = Math.max(1, Number(step.since) || 1);
@@ -631,7 +644,7 @@ export async function runStep(s, step) {
   } else {
     numFound = await fullOver(states);
   }
-  return Object.assign(sessionReport(s), { listings: Object.values(seen), numFound: numFound, colors: facets.colors, trims: facets.trims, drivetrains: facets.drivetrains });
+  return Object.assign(sessionReport(s), { listings: Object.values(seen), numFound: numFound, colors: facets.colors, trims: facets.trims, drivetrains: facets.drivetrains, years: years, stats: stats });
 }
 
 // ── MarketCheck query construction ──
