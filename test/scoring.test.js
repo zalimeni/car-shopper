@@ -147,8 +147,9 @@ describe("home base anchors the location criterion", () => {
     expect(withHome).toContain("BUYER'S HOME BASE: Durham NC 27701");
     expect(withHome).toContain("ONLY anchor");
   });
-  it("warns that proximity to a travel hub is not proximity to home", () => {
-    expect(withHome).toContain("is NOT nearby");
+  it("says searches are nationwide and weighs airports and shipping", () => {
+    expect(withHome).toContain("Searches are nationwide");
+    expect(withHome).toContain("near a major airport");
   });
   it("labels the search-radius distance so it can't read as distance from home", () => {
     expect(withHome).toContain("Distance from the search area it was found in (NOT from home): 22 mi");
@@ -162,9 +163,8 @@ describe("home base anchors the location criterion", () => {
     expect(noHome).toContain("BUYER'S HOME BASE: not set");
     expect(noHome).toContain("home base is unknown");
   });
-  it("scores location against home base, not the search area", () => {
-    expect(withHome).toContain("HOME BASE");
-    expect(withHome).toContain("from whichever search area the listing turned up in");
+  it("scores location against home base", () => {
+    expect(withHome).toContain("close to the buyer's HOME BASE");
   });
 });
 
@@ -174,9 +174,14 @@ describe("computed distance and fees reach the scorer", () => {
   const car = { year: 2024, vehicle: "Hyundai Tucson", price: 25988, fees: 695, location: "Sheffield", state: "AL", distMi: 40, dLat: 34.772847, dLon: -87.669898 };
   const withHome = buildUserPrompt(car, { criteria: crit, homeBase: home });
 
-  it("states a real straight-line distance from home, separate from the search-area radius", () => {
+  it("states a real straight-line distance from home (and drops a legacy search-area radius then)", () => {
     expect(withHome).toMatch(/Straight-line distance from the buyer's HOME BASE: \d{3} mi/);
-    expect(withHome).toContain("Distance from the search area it was found in (NOT from home): 40 mi");
+    expect(withHome).not.toContain("Distance from the search area");
+  });
+  it("names the nearest major airport and flags a salt-belt dealer", () => {
+    expect(withHome).toMatch(/Nearest major airport to the dealer: [A-Z]{3}, \d+ mi/);
+    const ohio = buildUserPrompt(Object.assign({}, car, { state: "OH" }), { criteria: crit, homeBase: home });
+    expect(ohio).toContain("Dealer is in a salt-belt state (OH)");
   });
   it("tells the model to use the stated figure", () => {
     expect(withHome).toContain("use the \"Straight-line distance from the buyer's HOME BASE\" figure");

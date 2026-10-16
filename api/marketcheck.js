@@ -4,8 +4,14 @@
 // vehicle profiles into MarketCheck queries, returning listings normalized to
 // the app's shape. The browser never sees the key.
 //
-// Request:  POST { profiles: [{ id, name, params }], hubs: [{ n, z }] }
-// Response: { listings: [<normalized>], errors: [<string>], mock?: true }
+// Request:  POST one sync step (see src/syncPlan.js):
+//           { kind: "full" | "new" | "count" | "vins", profile: { id, name, params },
+//             since, vins, excludeSalt, franchiseOnly, marketcheckKeys, spentKeys }
+// Response: { listings: [<normalized>], numFound, errors, notices, calls, keyQuotas, ... }
+//
+// Searches are nationwide, one profile at a time, with salt-belt states left out
+// via `state=` (src/regions.js). Verified live (Oct 2026, free plan): no-location
+// searches, `state=` and `vin=` lists, `sort_by=dos_active`, and rows=0 counts.
 //
 // Param/response field names follow the MarketCheck Cars API v2
 // (GET /v2/search/car/active) and are isolated in buildUrl()/normalize() so any
@@ -16,27 +22,23 @@
 // maps it, for confirming live field names (API key redacted from the echo).
 
 import { authorize } from "./_auth.js";
-import { mapPowertrain, parseYears, groupProfiles, mergedProfile, attributeRow } from "../src/queryPlan.js";
-import { haversineMi } from "../src/geo.js";
+import { mapPowertrain, parseYears } from "../src/queryPlan.js";
+import { searchStates } from "../src/regions.js";
 
 export { mapPowertrain, parseYears };
 
 const HOST = process.env.MARKETCHECK_HOST || "https://api.marketcheck.com";
 const ENDPOINT = "/v2/search/car/active";
-// Free tier caps radius at 100mi; override with MARKETCHECK_RADIUS on a paid
-// plan. A hub may also carry its own `r` to override per-location.
+// Radius for the one location-based search left (Price Check's live comps around
+// the home base). Free tier caps it at 100mi; override with MARKETCHECK_RADIUS.
 const RADIUS_MI = Number(process.env.MARKETCHECK_RADIUS) || 100;
 const ROWS = 50; // page size per request
-// Paginate up to this many rows per profile×hub, so a dense query (e.g. a
-// popular model in a big metro) doesn't silently drop everything past the first
-// page and flag still-active listings as "not seen". Bounded to keep free-tier
-// API usage in check; override with MARKETCHECK_MAX_ROWS on a paid plan.
+// Rows Price Check's live comps search pages up to (override: MARKETCHECK_MAX_ROWS).
 const MAX_ROWS = Number(process.env.MARKETCHECK_MAX_ROWS) || 200;
 // Only car_type=used is queried: it already includes certified pre-owned. Verified
 // against the live API (Oct 2026, 2021-22 RAV4 within 100 mi of Durham): used=167,
 // used+exclude_certified=156, certified=11 — so a separate certified query just
 // paid again for the same 11 cars. CPO is still detected per row (isCpo).
-const CAR_TYPES = ["used"];
 // The account's pagination ceiling (start + rows); beyond it MarketCheck answers
 // 422 "Subscribed package pagination limit of 500 rows exceeded" — and still
 // charges the call.
@@ -46,10 +48,6 @@ const THROTTLE_MS = Number(process.env.MARKETCHECK_THROTTLE_MS) || 500;
 const MAX_RETRIES = 3;
 // No single MarketCheck call may hang the function: past this it's abandoned.
 const CALL_TIMEOUT_MS = Number(process.env.MARKETCHECK_CALL_TIMEOUT_MS) || 15000;
-// The nationwide pass gets its own short budget, so a slow one (each nationwide
-// page can take seconds) hands its unfinished profiles to per-location search
-// instead of running into the 60 s function / browser limit ("Load failed").
-const NATIONAL_BUDGET_MS = Number(process.env.MARKETCHECK_NATIONAL_BUDGET_MS) || 25000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -209,7 +207,7 @@ export default async function handler(req, res) {
   const raw = req.query && (req.query.raw === "1" || req.query.raw === "true");
 
   if (mock) {
-    res.status(200).json({ listings: mockListings(profiles, hubs), errors: [], mock: true });
+    res.status(200).json({ listings: body.kind === "vins" ? [] : mockListings(body.profile ? [body.profile] : profiles, hubs), errors: [], mock: true });
     return;
   }
 
@@ -259,10 +257,10 @@ export default async function handler(req, res) {
   }
 
   if (raw) {
-    const pr = profiles[0];
-    const hub = hubs[0];
-    if (!pr || !hub) {
-      res.status(400).json({ error: "raw mode needs at least one profile and one hub" });
+    const pr = profiles[0] || body.profile;
+    const hub = hubs[0] || { national: true }; // nationwide unless a hub is given
+    if (!pr) {
+      res.status(400).json({ error: "raw mode needs a profile" });
       return;
     }
     const ring = keyRing(keys);
@@ -340,47 +338,13 @@ export default async function handler(req, res) {
     return;
   }
 
-  const r = await searchListings(apiKey, profiles, hubs, { dealerType: dealerType, keys: keys, fingerprints: body.fingerprints, spentKeys: body.spentKeys, national: body.national === "only" ? "only" : !!body.national, keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? envKey : null); }) });
-  res.status(200).json({ listings: r.listings, errors: r.errors, notices: r.notices, rateLimited: !!r.rateLimited, rateLimitInfo: r.rateLimitInfo || null, quota: r.quota || null, keysUsed: r.keysUsed, keyQuotas: r.keyQuotas || [], calls: r.calls || 0, apiInfo: r.apiInfo, formatSuspect: !!r.formatSuspect, fingerprints: r.fingerprints, unchanged: r.unchanged, queries: r.queries, localProfiles: r.localProfiles, nationalInfo: r.nationalInfo || null });
-}
-
-// Core active-inventory search for a set of profiles × hubs — shared by the
-// HTTP handler above and the scheduled background sync (api/cron-sync.js).
-// opts: { dealerType, budgetMs }. Returns { listings: [<normalized>], errors }.
-// ── Unchanged-search short-circuit ──
-// Every call is billed (a 304 too), so page 1 is always fetched. But with results
-// sorted by last_seen desc, an identical page 1 (num_found + its cars) means the
-// whole result set is unchanged, so pages 2+ can be skipped. We fingerprint page 1
-// ourselves rather than use the ETag, to leave out fields that drift without any
-// real change (days-on-market counters, etc.); rows are ordered by VIN first, so a
-// reshuffle of tied timestamps can't look like a change.
-function fnv(s) {
-  let h1 = 0x811c9dc5, h2 = 0xc2b2ae35;
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i);
-    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
-    h2 = Math.imul(h2 ^ c, 0x85ebca6b) >>> 0;
-  }
-  return h1.toString(36) + h2.toString(36);
-}
-// Stable id for one search (everything but the key and page offset, plus the
-// pinned API version), so editing a profile or location starts a fresh one.
-export function searchKey(profile, hub, carType, dealerType) {
-  const q = new URLSearchParams(buildUrl("", profile, hub, 0, carType, dealerType).split("?")[1]);
-  q.delete("api_key"); q.delete("start");
-  const parts = [];
-  q.forEach(function (v, k) { parts.push(k + "=" + v); });
-  // A nationwide search keeps only the cars near your locations, so which
-  // locations (and radii) is part of what it returns.
-  if (hub && hub.national) parts.push("hubs=" + (hub.sig || ""));
-  return "q" + fnv(parts.sort().join("&") + "|" + API_VERSION);
-}
-export function pageFingerprint(numFound, rows) {
-  const items = (rows || []).map(function (r) {
-    r = r || {};
-    return [r.vin || "", r.price != null ? r.price : "", r.miles != null ? r.miles : "", r.last_seen_at != null ? r.last_seen_at : ""].join(":");
-  }).sort();
-  return fnv(String(numFound) + "|" + items.join(","));
+  // One sync step (src/syncPlan.js): a profile's full refresh / new-listings pass,
+  // a count, or a watchlist VIN lookup. The browser sends steps one per request.
+  const session = createSession(keys, { dealerType: dealerType, spentKeys: body.spentKeys, keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? envKey : null); }) });
+  const r = await runStep(session, {
+    kind: body.kind, profile: body.profile, since: body.since, vins: body.vins, excludeSalt: body.excludeSalt !== false,
+  });
+  res.status(200).json(r);
 }
 
 // Index of the first key whose id isn't in `spent`. If every key is known spent we
@@ -392,303 +356,222 @@ export function firstLiveKey(ids, spent) {
   return Math.max(0, ids.length - 1);
 }
 
-// ── Nationwide search ──
-// Per-location searches cost at least one call per location. When a search's
-// whole nationwide result fits in the pagination ceiling it's cheaper to page it
-// once with no location and keep the cars within a location's radius by dealer
-// coordinates: at most 10 pages for any number of locations. Only possible when
-// every location has coordinates.
-export function hubsSig(hubs) {
-  return (hubs || []).map(function (h) { return [h.lat, h.lon, h.r || RADIUS_MI].join(":"); }).sort().join(";");
-}
-export function geoHubs(hubs) {
-  return (hubs || []).length > 0 && hubs.every(function (h) { return isFinite(parseFloat(h && h.lat)) && isFinite(parseFloat(h && h.lon)); });
-}
-// Nearest location whose radius covers the dealer -> whole miles, or null (outside
-// every location, or the row has no dealer coordinates).
-export function nearestHubMi(lat, lon, hubs) {
-  if (lat == null || lon == null) return null;
-  let best = null;
-  (hubs || []).forEach(function (h) {
-    const d = haversineMi(parseFloat(h.lat), parseFloat(h.lon), lat, lon);
-    if (d <= (Number(h.r) || RADIUS_MI) && (best == null || d < best)) best = d;
-  });
-  return best == null ? null : Math.round(best);
-}
-
-export async function searchListings(apiKey, profiles, hubs, opts) {
+// ── Search session ──
+// Shared state for the calls one request (or one scheduled-sync account) makes:
+// the ordered keys (each its own account, moved past only when one's monthly
+// quota is spent), the call meter, quota snapshots, the time budget, errors.
+// opts: { keyIds, spentKeys, dealerType, budgetMs }
+export function createSession(keys, opts) {
   opts = opts || {};
-  const dealerType = opts.dealerType || null;
-  // Ordered keys (each its own MarketCheck account, so each its own monthly
-  // quota); we move to the next only when one's monthly quota is spent.
-  const keys = (Array.isArray(opts.keys) && opts.keys.length) ? opts.keys : [apiKey];
-  const meter = { calls: 0 }; // HTTP requests actually sent — the true quota cost
-  const snaps = {}; // key index -> latest { id, remaining, limit, reset, exhausted }
   const ids = Array.isArray(opts.keyIds) && opts.keyIds.length === keys.length ? opts.keyIds : keys.map(function (k) { return keyId(k, null); });
-  // Start on the first key not already known to be spent (opts.spentKeys = ids, from
-  // earlier requests of this sync or the stored quota) — otherwise every request of
-  // a per-location sync would pay one call to rediscover that key #1 is used up.
-  let keyIdx = firstLiveKey(ids, opts.spentKeys);
-  let keysUsed = keyIdx + 1; // how many keys we ended up drawing on (for reporting)
-  const notices = []; // informational (key failover), not errors
-  const note = function (idx, r, bodyText) { const q = readQuota(r, bodyText); if (q) snaps[idx] = Object.assign({ id: ids[idx] }, q); };
-  const seen = {}; // vin -> normalized listing (dedup across hubs, keep lowest price)
-  const errors = [];
-  let queries = 0, splits = 0;
-  // Unchanged-search short-circuit: page-1 fingerprints from the last sync, the
-  // ones we record this time, the searches found unchanged, and which searches
-  // returned each car (so reconcile can leave an unchanged search's cars alone).
-  const prior = opts.fingerprints && typeof opts.fingerprints === "object" ? opts.fingerprints : {};
-  const fingerprints = {}, unchanged = [], tags = {};
-  // Drift guard: rows missing the fields every listing must have. A burst of these
-  // means MarketCheck's response shape changed under us (e.g. a new major version),
-  // which would otherwise just drop listings silently.
-  let rowsSeen = 0, malformed = 0, shapeless = false;
+  // Start on the first key not already known to be spent (from the stored quota or
+  // earlier requests of this sync), instead of paying a call to rediscover it.
+  const idx = firstLiveKey(ids, opts.spentKeys);
+  return {
+    keys: keys, ids: ids, keyIdx: idx, keysUsed: idx + 1, meter: { calls: 0 }, snaps: {},
+    errors: [], notices: [], rateLimited: false, rateLimitInfo: null, quota: null,
+    dealerType: opts.dealerType || null, first: true, timeUp: false,
+    // Stop issuing new calls before the 60 s function limit, returning what we have.
+    deadline: Date.now() + (Number(opts.budgetMs) || Number(process.env.MARKETCHECK_BUDGET_MS) || 50000),
+    rowsSeen: 0, malformed: 0, shapeless: false,
+  };
+}
 
-  // Stop issuing new queries before the function wall so we return partial
-  // results instead of a 504. The client already splits by hub, so this is a
-  // backstop for a single dense hub (nationwide radius × many profiles/pages).
-  const deadline = Date.now() + (Number(opts.budgetMs) || Number(process.env.MARKETCHECK_BUDGET_MS) || 50000);
-  const num = function (v) { const n = parseFloat(v); return isFinite(n) ? n : null; };
-  let timeUp = false;
-  let natDeadline = 0, natTimedOut = false; // the nationwide pass's own budget
-  let rateLimited = false; // set on a 429/503/402 so the caller can warn clearly
-  let rateLimitInfo = null; // reset/remaining headers from MarketCheck, when present
-  let quota = null; // monthly quota snapshot from response headers (for a low-quota warning)
-  let first = true;
-
-  // One query (group × hub × car type), paged. onRow gets each raw row.
-  // A merged group may page up to MAX_ROWS per profile (never past the account's
-  // pagination ceiling). Merging can't cost more than separate queries —
-  // ceil((a+b)/50) <= ceil(a/50) + ceil(b/50) — unless it has to be split: when a
-  // merged group matches more than its cap we return "split" and the caller
-  // re-runs its profiles one by one (each then capped at MAX_ROWS, as before).
-  // Returns { s, key, fp, numFound } where s is done | split | unchanged |
-  // unchanged-split | error | stop.
-  async function runQuery(group, hub, carType, onRow) {
-    const pr = mergedProfile(group);
-    const label = (pr.name || pr.id || "?") + " @ " + (hub.national ? "nationwide" : (hub.n || hub.z || "?")) + " [" + carType + "]";
-    // Nationwide pages the whole result (that's the point); per location it's capped.
-    const cap = hub.national ? PAGE_LIMIT : Math.min(PAGE_LIMIT, MAX_ROWS * group.length);
-    const key = searchKey(pr, hub, carType, dealerType);
-    const res = function (s, extra) { return Object.assign({ s: s, key: key }, extra || {}); };
-    let fp = null;
-    queries++;
-    let start = 0;
-    while (start < cap) {
-      if (hub.national && Date.now() > natDeadline) {
-        natTimedOut = true;
-        return res("local"); // out of nationwide time: search this one per location
-      }
-      if (Date.now() > deadline) {
-        errors.push("Stopped early to avoid a timeout — some results may be missing. Use fewer locations, a smaller radius, or narrower filters.");
-        timeUp = true;
-        return res("stop");
-      }
-      if (!first) await sleep(THROTTLE_MS); // stay under the burst rate limit
-      first = false;
-      try {
-        const url = buildUrl(keys[keyIdx], pr, hub, start, carType, dealerType);
-        const r = await fetchWithRetry(url, {}, undefined, meter);
-        if (!r.ok) {
-          let body = "";
-          try { body = (await r.text()).slice(0, 300); } catch (e) { /* ignore */ }
-          note(keyIdx, r, body);
-          // Rate limit / quota. Move to the next key ONLY when this one's monthly
-          // quota is spent; a throttle was already
-          // retried with backoff on THIS key, so reaching here means it persisted.
-          if (r.status === 429 || r.status === 503 || r.status === 402) {
-            const monthlySpent = r.status === 402 || !!(snaps[keyIdx] && snaps[keyIdx].exhausted);
-            if (monthlySpent && keyIdx + 1 < keys.length) {
-              const spent = keyIdx + 1; // 1-based index of the key whose quota is used up
-              keyIdx++;
-              keysUsed = Math.max(keysUsed, keyIdx + 1);
-              notices.push("Key #" + spent + " is out of monthly quota; continuing on key #" + (keyIdx + 1) + ".");
-              continue; // retry same page with the next key (no start advance)
-            }
-            rateLimited = true;
-            timeUp = true;
-            rateLimitInfo = {
-              status: r.status,
-              retryAfter: num(r.headers.get("retry-after")),
-              rateReset: r.headers.get("ratelimit-reset-time") || null,
-              quotaReset: r.headers.get("quota-reset-time") || null,
-              rateRemaining: num(r.headers.get("ratelimit-remaining")),
-              quotaRemaining: num(r.headers.get("quota-remaining")),
-            };
-            const whose = keys.length === 1 ? "your key" : "all " + keys.length + " keys";
-            errors.push(monthlySpent
-              ? "MarketCheck monthly quota is used up on " + whose + " (HTTP " + r.status + ") — results are incomplete; it resets with the month." + (body ? " [" + body.slice(0, 120) + "]" : "")
-              : "MarketCheck is rate-limiting requests (HTTP " + r.status + ") — results are incomplete; wait a bit and sync again." + (body ? " [" + body.slice(0, 120) + "]" : ""));
-            return res("stop");
-          }
-          // Auto-debug: 4xx bodies name the offending param. Echo it (+ the
-          // sent query, key redacted) so the error itself is actionable.
-          const sent = url.split("?")[1] ? url.split("?")[1].replace(/api_key=[^&]*&?/, "") : "";
-          errors.push(label + ": MarketCheck HTTP " + r.status + (body ? " — " + body : "") + (r.status >= 400 && r.status < 500 ? " [sent: " + sent + "]" : ""));
-          return res("error");
-        }
-        note(keyIdx, r, "");
-        const qrem = num(r.headers.get("quota-remaining"));
-        if (qrem != null) quota = { remaining: qrem, limit: num(r.headers.get("quota-limit")), reset: r.headers.get("quota-reset-time") || null };
-        const json = await r.json();
-        const numFound = typeof json.num_found === "number" ? json.num_found : null;
-        if (!Array.isArray(json.listings) && json.num_found == null) shapeless = true;
-        const rows = Array.isArray(json.listings) ? json.listings : [];
-        rows.forEach(function (row) { rowsSeen++; if (!row || !row.vin || !row.build || !row.build.make || !row.build.model) malformed++; });
-        rows.forEach(function (row) { onRow(row, key); });
-        if (hub.national && start === 0) {
-          // Worth it only when it all fits AND costs no more than the per-location
-          // floor (one call per location, plus this page we've already paid for).
-          const big = numFound == null || numFound > PAGE_LIMIT || Math.ceil(numFound / ROWS) > hubs.length + 1;
-          fp = pageFingerprint(numFound, rows);
-          if (!big && prior[key] && prior[key] === fp) return res("unchanged", { fp: fp });
-          if (big) return res(group.length > 1 ? "split" : "local", { fp: fp });
-        }
-        const tooBig = !hub.national && group.length > 1 && numFound != null && numFound > cap;
-        if (start === 0 && !hub.national) {
-          fp = pageFingerprint(numFound, rows);
-          // Same page 1 as last time -> the whole result set is unchanged: stop here.
-          if (prior[key] && prior[key] === fp) return res(tooBig ? "unchanged-split" : "unchanged", { fp: fp });
-        }
-        // A merged query too big to page completely: run its profiles separately
-        // (this page's rows are already kept — dedupe handles the overlap).
-        if (start === 0 && tooBig) return res("split", { fp: fp });
-        if (rows.length < ROWS || (numFound != null && start + ROWS >= numFound)) return res("done", { fp: fp });
-        start += ROWS;
-      } catch (e) {
-        errors.push(label + ": " + (e && e.message ? e.message : "fetch failed"));
-        return res("error");
-      }
-    }
-    return res("done", { fp: fp });
-  }
-
-  function keep(row, group, key, national) {
-    const p = attributeRow(row, group);
-    if (!p) return null; // matched only the merged union of filters, not any one profile
-    const norm = normalize(row, p.id);
-    if (!norm || !norm.vin) return null;
-    if (national) {
-      // Nationwide rows: keep only cars within one of your locations' radius.
-      const mi = nearestHubMi(norm.dLat, norm.dLon, hubs);
-      if (mi == null) return null;
-      norm.distMi = mi;
-    }
-    // Backstop the dealer_type filter in case the API returns extras.
-    if (dealerType === "franchise" && norm.dealerType !== "franchise") return null;
-    const prev = seen[norm.vin];
-    // Lowest REAL price wins — a priced row always beats an unpriced one.
-    if (!prev || (norm.price && (!prev.price || norm.price < prev.price))) seen[norm.vin] = norm;
-    if (key) (tags[norm.vin] = tags[norm.vin] || {})[key] = true; // which searches returned this car
-    return norm;
-  }
-
-  // One search (and any per-profile splits of it). Profiles a nationwide search
-  // can't cover go to `local`. Returns false when the run must stop.
-  async function runPlan(group, hub, carType, local) {
-    const queue = [{ g: group, parent: null }];
-    while (queue.length) {
-      const item = queue.shift();
-      const g = item.g;
-      const out = await runQuery(g, hub, carType, function (row, key) { keep(row, g, key, !!hub.national); });
-      const parent = item.parent;
-      // Nationwide couldn't cover it (too big, out of time, or a failed call):
-      // per-location search picks it up.
-      if (out.s === "local" || (hub.national && out.s === "error")) g.forEach(function (p) { local[p.id] = p; });
-      // ...so a failed nationwide call isn't a lost search — say so, not "error".
-      if (hub.national && out.s === "error" && errors.length) notices.push(errors.pop() + " — searched per location instead.");
-      if (out.s === "done" || out.s === "unchanged") fingerprints[out.key] = out.fp;
-      if (out.s === "unchanged") unchanged.push(out.key);
-      if (out.s === "unchanged-split") {
-        // The whole merged set is unchanged, so its per-profile searches are too.
-        fingerprints[out.key] = out.fp;
-        unchanged.push(out.key);
-        g.forEach(function (p) {
-          const k = searchKey(mergedProfile([p]), hub, carType, dealerType);
-          unchanged.push(k);
-          if (prior[k]) fingerprints[k] = prior[k];
-        });
-      }
-      // A split's own fingerprint only counts once every per-profile search finished.
-      if (out.s === "split") {
-        splits++;
-        const rec = { key: out.key, fp: out.fp, left: g.length, failed: false };
-        g.forEach(function (p) { queue.push({ g: [p], parent: rec }); });
-      }
-      if (parent) {
-        if (out.s !== "done" && out.s !== "unchanged") parent.failed = true;
-        if (--parent.left === 0 && !parent.failed) fingerprints[parent.key] = parent.fp;
-      }
-      if (out.s === "stop") return false;
-    }
-    return !timeUp;
-  }
-
-  // Nationwide first (when asked and possible), then per location for whatever it
-  // couldn't cover. opts.national === "only" stops after the nationwide pass and
-  // reports the rest in `localProfiles`, so the browser can run them one location
-  // per request (each its own function invocation, clear of the timeout).
-  let local = {};
-  let national = 0;
-  let go = true;
-  const natStart = Date.now(), natCalls0 = meter.calls;
-  // What the nationwide pass did, for the status line: skipped (and why) or how much it covered.
-  const nationalInfo = !opts.national ? null
-    : hubs.length < 2 ? { skipped: "one-location" }
-    : !geoHubs(hubs) ? { skipped: "no-coords", missing: hubs.filter(function (h) { return !(isFinite(parseFloat(h && h.lat)) && isFinite(parseFloat(h && h.lon))); }).length }
-    : { skipped: null };
-  if (opts.national && hubs.length > 1 && geoHubs(hubs)) {
-    const nat = { national: true, sig: hubsSig(hubs) };
-    natDeadline = Math.min(deadline, natStart + NATIONAL_BUDGET_MS);
-    for (const group of groupProfiles(profiles)) {
-      for (const carType of CAR_TYPES) {
-        national++;
-        if (!(go = await runPlan(group, nat, carType, local))) break;
-      }
-      if (!go) break;
-    }
-  } else {
-    (profiles || []).forEach(function (p) { if (p) local[p.id] = p; });
-  }
-  if (natTimedOut) notices.push("Nationwide search ran out of time after " + Math.round((Date.now() - natStart) / 1000) + " s (" + (meter.calls - natCalls0) + " calls); the rest is searched per location.");
-  const localList = (profiles || []).filter(function (p) { return p && local[p.id]; });
-  if (nationalInfo && !nationalInfo.skipped) Object.assign(nationalInfo, { covered: (profiles || []).length - localList.length, profiles: (profiles || []).length, calls: meter.calls - natCalls0, ms: Date.now() - natStart, timedOut: natTimedOut });
-  if (go && opts.national !== "only") {
-    outer:
-    for (const group of groupProfiles(localList)) {
-      for (const hub of hubs) {
-        for (const carType of CAR_TYPES) {
-          if (!(await runPlan(group, hub, carType, {}))) break outer;
-        }
-      }
-    }
-  }
-
-  const formatSuspect = shapeless || (rowsSeen >= 10 && malformed / rowsSeen >= 0.5);
+// The session's report (what the proxy returns for a step, minus its listings).
+export function sessionReport(s) {
+  const formatSuspect = s.shapeless || (s.rowsSeen >= 10 && s.malformed / s.rowsSeen >= 0.5);
+  const errors = s.errors.slice();
   if (formatSuspect) {
-    errors.unshift("⚠ MarketCheck's response format looks changed (" + (shapeless ? "no listings array" : malformed + " of " + rowsSeen + " rows missing VIN/make/model")
-      + ", served by " + ((meter.api && meter.api.served) || "an unknown API version") + ") — listings may be missing or wrong. Check Debug raw.");
+    errors.unshift("⚠ MarketCheck's response format looks changed (" + (s.shapeless ? "no listings array" : s.malformed + " of " + s.rowsSeen + " rows missing VIN/make/model")
+      + ", served by " + ((s.meter.api && s.meter.api.served) || "an unknown API version") + ") — listings may be missing or wrong. Check Debug raw.");
   }
   return {
+    errors: errors, notices: s.notices.slice(), rateLimited: s.rateLimited, rateLimitInfo: s.rateLimitInfo, quota: s.quota,
+    keysUsed: s.keysUsed, keyQuotas: Object.keys(s.snaps).map(function (i) { return s.snaps[i]; }), calls: s.meter.calls,
+    apiInfo: Object.assign({ pinned: API_VERSION || null, pinRejected: !!s.meter.pinRejected }, s.meter.api || {}),
     formatSuspect: formatSuspect,
-    apiInfo: Object.assign({ pinned: API_VERSION || null, pinRejected: !!meter.pinRejected }, meter.api || {}),
-    listings: Object.values(seen).map(function (l) { return Object.assign(l, { mcQ: Object.keys(tags[l.vin] || {}) }); }), errors: errors, notices: notices,
-    fingerprints: fingerprints, unchanged: unchanged, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota,
-    keysUsed: keysUsed, keyQuotas: Object.keys(snaps).map(function (i) { return snaps[i]; }), calls: meter.calls,
-    queries: queries, splits: splits, national: national, nationalInfo: nationalInfo,
-    // Profiles still needing per-location searches (only reported for national "only").
-    localProfiles: opts.national === "only" ? localList.map(function (p) { return p.id; }) : [],
   };
+}
+
+const num = function (v) { const n = parseFloat(v); return isFinite(n) ? n : null; };
+
+// One page. makeUrl(key) builds the request. -> { rows, numFound } or null when the
+// call failed (recorded on the session; s.timeUp / s.rateLimited say to stop).
+async function getPage(s, makeUrl, label) {
+  while (true) {
+    if (Date.now() > s.deadline) {
+      if (!s.timeUp) s.errors.push("Stopped early to avoid a timeout — some results may be missing.");
+      s.timeUp = true;
+      return null;
+    }
+    if (!s.first) await sleep(THROTTLE_MS); // stay under the per-second rate limit
+    s.first = false;
+    const url = makeUrl(s.keys[s.keyIdx]);
+    let r;
+    try {
+      r = await fetchWithRetry(url, {}, undefined, s.meter);
+    } catch (e) {
+      s.errors.push(label + ": " + (e && e.message ? e.message : "fetch failed"));
+      return null;
+    }
+    if (!r.ok) {
+      let body = "";
+      try { body = (await r.text()).slice(0, 300); } catch (e) { /* ignore */ }
+      const q = readQuota(r, body);
+      if (q) s.snaps[s.keyIdx] = Object.assign({ id: s.ids[s.keyIdx] }, q);
+      // Rate limit / quota: move to the next key ONLY when this one's monthly quota
+      // is spent; a throttle was already retried with backoff on this key.
+      if (r.status === 429 || r.status === 503 || r.status === 402) {
+        const monthlySpent = r.status === 402 || !!(s.snaps[s.keyIdx] && s.snaps[s.keyIdx].exhausted);
+        if (monthlySpent && s.keyIdx + 1 < s.keys.length) {
+          const spent = s.keyIdx + 1;
+          s.keyIdx++;
+          s.keysUsed = Math.max(s.keysUsed, s.keyIdx + 1);
+          s.notices.push("Key #" + spent + " is out of monthly quota; continuing on key #" + (s.keyIdx + 1) + ".");
+          continue; // same page, next key
+        }
+        s.rateLimited = true;
+        s.timeUp = true;
+        s.rateLimitInfo = {
+          status: r.status, retryAfter: num(r.headers.get("retry-after")),
+          rateReset: r.headers.get("ratelimit-reset-time") || null, quotaReset: r.headers.get("quota-reset-time") || null,
+          rateRemaining: num(r.headers.get("ratelimit-remaining")), quotaRemaining: num(r.headers.get("quota-remaining")),
+        };
+        const whose = s.keys.length === 1 ? "your key" : "all " + s.keys.length + " keys";
+        s.errors.push(monthlySpent
+          ? "MarketCheck monthly quota is used up on " + whose + " (HTTP " + r.status + ") — results are incomplete; it resets with the month." + (body ? " [" + body.slice(0, 120) + "]" : "")
+          : "MarketCheck is rate-limiting requests (HTTP " + r.status + ") — results are incomplete; wait a bit and sync again." + (body ? " [" + body.slice(0, 120) + "]" : ""));
+        return null;
+      }
+      // 4xx bodies name the offending param: echo it (and the query, key redacted).
+      const sent = url.split("?")[1] ? url.split("?")[1].replace(/api_key=[^&]*&?/, "") : "";
+      s.errors.push(label + ": MarketCheck HTTP " + r.status + (body ? " — " + body : "") + (r.status >= 400 && r.status < 500 ? " [sent: " + sent + "]" : ""));
+      return null;
+    }
+    const q = readQuota(r, "");
+    if (q) s.snaps[s.keyIdx] = Object.assign({ id: s.ids[s.keyIdx] }, q);
+    const qrem = num(r.headers.get("quota-remaining"));
+    if (qrem != null) s.quota = { remaining: qrem, limit: num(r.headers.get("quota-limit")), reset: r.headers.get("quota-reset-time") || null };
+    let json;
+    try { json = await r.json(); } catch (e) { s.errors.push(label + ": unreadable response"); return null; }
+    if (!Array.isArray(json.listings) && json.num_found == null) s.shapeless = true;
+    const rows = Array.isArray(json.listings) ? json.listings : [];
+    rows.forEach(function (row) { s.rowsSeen++; if (!row || !row.vin || !row.build || !row.build.make || !row.build.model) s.malformed++; });
+    return { rows: rows, numFound: typeof json.num_found === "number" ? json.num_found : null };
+  }
+}
+
+// One step -> the session report plus { listings, numFound }.
+// step: { kind: "full" | "new" | "count" | "vins" | "local", profile, since, vins, excludeSalt, hub }
+//   full  — every car matching the profile nationwide (salt states excluded unless
+//           excludeSalt === false). Over the 500-row ceiling the state list is
+//           halved until each part fits; a single state still too big pages to the
+//           ceiling and says so.
+//   new   — newest at this dealer first (dos_active asc), stopping once a page
+//           reaches cars listed more than `since` days ago.
+//   count — just num_found (rows=0): one call, no paging.
+//   vins  — the listed rows for up to 50 VINs (vin= takes a list), every page.
+//   local — the old radius search around one hub (Price Check's live comps).
+export async function runStep(s, step) {
+  step = step || {};
+  const profile = step.profile && step.profile.params ? step.profile : null;
+  const seen = {};
+  let numFound = null;
+  const keep = function (row) {
+    const norm = normalize(row, profile ? profile.id : null);
+    if (!norm || !norm.vin) return;
+    if (s.dealerType === "franchise" && norm.dealerType !== "franchise") return; // backstop the filter
+    const prev = seen[norm.vin];
+    if (!prev || (norm.price && (!prev.price || norm.price < prev.price))) seen[norm.vin] = norm;
+  };
+  const label = (profile ? (profile.name || profile.id) : "watchlist") + " [" + (step.kind || "?") + "]";
+  const states = searchStates(step.excludeSalt !== false);
+  const nat = function (extra) {
+    return function (k, start) { return buildUrl(k, profile, { national: true }, start, "used", s.dealerType, extra); };
+  };
+
+  // Page a query to the end (or the ceiling). Returns numFound or null on failure.
+  async function pageAll(make, maxRows) {
+    let start = 0, found = null;
+    while (start < maxRows) {
+      const pg = await getPage(s, function (k) { return make(k, start); }, label);
+      if (!pg) return null;
+      if (found == null) found = pg.numFound;
+      pg.rows.forEach(keep);
+      if (pg.rows.length < ROWS || (pg.numFound != null && start + ROWS >= pg.numFound)) break;
+      start += ROWS;
+    }
+    return found;
+  }
+  // Full refresh over a list of states, halving it while the result is too big.
+  async function fullOver(list) {
+    const make = nat({ state: list.join(",") });
+    const p1 = await getPage(s, function (k) { return make(k, 0); }, label);
+    if (!p1) return null;
+    p1.rows.forEach(keep);
+    const n = p1.numFound;
+    if (n != null && n > PAGE_LIMIT && list.length > 1) {
+      const half = Math.ceil(list.length / 2);
+      const a = await fullOver(list.slice(0, half));
+      if (a == null) return null;
+      const b = await fullOver(list.slice(half));
+      return b == null ? null : n;
+    }
+    if (n != null && n > PAGE_LIMIT) s.notices.push(label + ": " + n + " cars in " + list[0] + " alone — only the newest " + PAGE_LIMIT + " were read. Narrow the profile (price, miles or years).");
+    if (p1.rows.length >= ROWS && (n == null || n > ROWS)) {
+      let start = ROWS;
+      while (start < Math.min(PAGE_LIMIT, n == null ? PAGE_LIMIT : n)) {
+        const pg = await getPage(s, function (k) { return make(k, start); }, label);
+        if (!pg) return null;
+        pg.rows.forEach(keep);
+        if (pg.rows.length < ROWS) break;
+        start += ROWS;
+      }
+    }
+    return n;
+  }
+
+  if (step.kind === "vins") {
+    const vins = (Array.isArray(step.vins) ? step.vins : []).map(function (v) { return String(v || "").trim().toUpperCase(); }).filter(Boolean).slice(0, 50);
+    if (vins.length) await pageAll(function (k, start) { return buildVinUrl(k, vins.join(","), start); }, PAGE_LIMIT);
+  } else if (!profile) {
+    s.errors.push("No profile to search");
+  } else if (step.kind === "count") {
+    const pg = await getPage(s, function (k) { return nat({ state: states.join(","), rows: "0" })(k, 0); }, label);
+    if (pg) numFound = pg.numFound;
+  } else if (step.kind === "new") {
+    const since = Math.max(1, Number(step.since) || 1);
+    const make = nat({ state: states.join(","), sort_by: "dos_active", sort_order: "asc" });
+    let start = 0;
+    while (start < PAGE_LIMIT) {
+      const pg = await getPage(s, function (k) { return make(k, start); }, label);
+      if (!pg) break;
+      if (numFound == null) numFound = pg.numFound;
+      pg.rows.forEach(keep);
+      const last = pg.rows[pg.rows.length - 1];
+      const lastDays = last && last.dos_active != null ? Number(last.dos_active) : null;
+      if (pg.rows.length < ROWS || (pg.numFound != null && start + ROWS >= pg.numFound)) break;
+      if (lastDays == null || lastDays > since) break; // past the cars new since the last search
+      start += ROWS;
+    }
+  } else if (step.kind === "local") {
+    const hub = step.hub || {};
+    numFound = await pageAll(function (k, start) { return buildUrl(k, profile, hub, start, "used", s.dealerType); }, Math.min(PAGE_LIMIT, MAX_ROWS));
+  } else {
+    numFound = await fullOver(states);
+  }
+  return Object.assign(sessionReport(s), { listings: Object.values(seen), numFound: numFound });
 }
 
 // ── MarketCheck query construction ──
 // One VIN, any car_type (a VIN may be listed under more than one).
-export function buildVinUrl(apiKey, vin) {
+// `vin` may be a comma-separated list (verified live): the watchlist lookup.
+export function buildVinUrl(apiKey, vin, start) {
   const q = new URLSearchParams();
   q.set("api_key", apiKey);
   q.set("vin", vin);
-  q.set("rows", "10");
+  q.set("rows", String(ROWS));
+  if (start) q.set("start", String(start));
   return HOST + ENDPOINT + "?" + q.toString();
 }
 
@@ -711,11 +594,12 @@ export function priceFacts(row) {
     vdp_url: row.vdp_url || null,
   };
 }
-export function buildUrl(apiKey, profile, hub, start, carType, dealerType) {
+// `extra` sets or overrides params (state, sort_by/sort_order, rows).
+export function buildUrl(apiKey, profile, hub, start, carType, dealerType, extra) {
   const p = profile.params || {};
   const q = new URLSearchParams();
   q.set("api_key", apiKey);
-  // car_type=used includes certified pre-owned (see CAR_TYPES).
+  // car_type=used includes certified pre-owned (see the car_type note up top).
   q.set("car_type", carType || "used");
   // Optional dealer-type narrowing (e.g. "franchise" to exclude independents).
   if (dealerType) q.set("dealer_type", dealerType);
@@ -732,6 +616,7 @@ export function buildUrl(apiKey, profile, hub, start, carType, dealerType) {
   // like 02101 are "not found"); fall back to zip.
   // A nationwide search (hub.national) sends no location at all — verified live:
   // the free plan answers it, with dealer coordinates on every row but no `dist`.
+  hub = hub || { national: true };
   if (!hub.national) {
     if (hub.lat != null && hub.lon != null) {
       q.set("latitude", String(hub.lat));
@@ -743,11 +628,11 @@ export function buildUrl(apiKey, profile, hub, start, carType, dealerType) {
   }
   q.set("rows", String(ROWS));
   q.set("start", String(start || 0));
-  // Most recently (re)crawled first. Any change to a result set then shows on
-  // page 1 — a re-priced or new car jumps to the top, a removed one lowers
-  // num_found — which is what lets an unchanged search stop after one page.
+  // Most recently (re)crawled first: the newest data, so a search cut off at the
+  // pagination ceiling keeps the freshest cars.
   q.set("sort_by", "last_seen");
   q.set("sort_order", "desc");
+  Object.keys(extra || {}).forEach(function (k) { if (extra[k] != null) q.set(k, String(extra[k])); });
   return HOST + ENDPOINT + "?" + q.toString();
 }
 

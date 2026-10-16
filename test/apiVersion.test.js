@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 process.env.MARKETCHECK_THROTTLE_MS = "1";
 vi.mock("../api/_auth.js", () => ({ authorize: async () => ({ user: { id: "u1" } }), safeEqual: () => true, DEFAULT_ALLOW: "" }));
-const { searchListings, readApiInfo, API_VERSION } = await import("../api/marketcheck.js");
+const { createSession, runStep, readApiInfo, API_VERSION } = await import("../api/marketcheck.js");
+// One full-refresh step for the first profile (the old searchListings shape).
+const searchListings = (key, profiles) => runStep(createSession([key]), { kind: "full", profile: profiles[0] });
 
 // Headers MarketCheck actually sent (Oct 2026).
 const LIVE = { "served-by-version": "v4.8.0", "requested-from-version": "default", "auto-upgraded-version": "false",
@@ -61,7 +63,7 @@ describe("version + lifecycle headers come back with every sync", () => {
     expect(readApiInfo({ headers: { get: (h) => LIVE[h] ?? null } })).toMatchObject({ served: "v4.8.0", sunset: LIVE.sunset, deprecation: LIVE.deprecation });
     expect(readApiInfo({ headers: { get: () => null } })).toBeNull();
   });
-  it("searchListings returns them with the pinned version", async () => {
+  it("a sync step returns them with the pinned version", async () => {
     mockFetch(() => ({}));
     const r = await searchListings("K", P, H, {});
     expect(r.apiInfo).toMatchObject({ pinned: "v4.8.0", pinRejected: false, served: "v4.8.0", sunset: LIVE.sunset });

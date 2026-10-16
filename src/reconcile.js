@@ -3,21 +3,18 @@
 // background sync). Keep it that way.
 //
 // Known VINs get price-change + last-seen updates; brand-new VINs come back as
-// `candidates` for the human-approval queue. Non-destructive: a listing that
-// vanishes from results is only flagged, never deleted or auto-rejected.
+// `candidates` for the human-approval queue. Non-destructive: a listing is only
+// ever flagged gone, never deleted or auto-rejected.
 
 // Cap the per-listing price history so the single-blob state stays bounded.
 var PRICE_HISTORY_MAX = 40;
 
-// opts.unchangedKeys: searches whose page 1 matched last sync's fingerprint, so
-// their remaining pages were deliberately skipped. A stored listing that one of
-// those searches returned last time is still listed — it's left exactly as is
-// (no price/note/flag changes), just marked seen today — instead of being counted
-// as missing because it wasn't in this sync's results.
+// opts.goneVins: watchlist VINs a direct VIN lookup came back without — no longer
+// listed anywhere. Only those are counted "not seen" (and stamped goneAt); a car a
+// search simply didn't return (a new-listings pass, a filter it left) is untouched.
 export function reconcile(existing, fetched, todayStr, opts) {
-  const unchanged = {};
-  ((opts && opts.unchangedKeys) || []).forEach(function (k) { unchanged[k] = true; });
-  const inUnchanged = function (l) { return Array.isArray(l.mcQ) && l.mcQ.some(function (k) { return unchanged[k]; }); };
+  const gone = {};
+  ((opts && opts.goneVins) || []).forEach(function (v) { const k = vinKey(v); if (k) gone[k] = true; });
   const byVin = {};
   (fetched || []).forEach(function (f) {
     const k = vinKey(f.vin);
@@ -28,7 +25,7 @@ export function reconcile(existing, fetched, todayStr, opts) {
   });
 
   const matched = {};
-  const summary = { fetched: (fetched || []).length, priceUpdates: 0, refreshed: 0, newCount: 0, notSeen: 0, kept: 0 };
+  const summary = { fetched: (fetched || []).length, priceUpdates: 0, refreshed: 0, newCount: 0, notSeen: 0 };
 
   const listings = (existing || []).map(function (l) {
     // Match on a normalized VIN (case/whitespace-insensitive) so a stored
@@ -36,31 +33,23 @@ export function reconcile(existing, fetched, todayStr, opts) {
     const k = vinKey(l.vin);
     const f = k ? byVin[k] : null;
     if (!f) {
-      // Skipped on purpose (its search was unchanged): still listed, untouched.
-      if (inUnchanged(l)) {
-        summary.kept++;
-        return Object.assign({}, l, { lastSeen: todayStr, lastChecked: todayStr });
-      }
-      // A previously-synced listing that's missing this run — flag only.
-      if (l.source === "marketcheck" && l.status === "watch" && l.lastSeen && l.lastSeen !== todayStr) {
+      // Confirmed no longer listed — flag only (the Sold banner offers to archive).
+      if (k && gone[k] && l.source === "marketcheck" && l.status === "watch") {
         summary.notSeen++;
+        return l.goneAt ? l : Object.assign({}, l, { goneAt: todayStr });
       }
       return l;
     }
     matched[k] = true;
     const next = Object.assign({}, l, { lastSeen: todayStr, lastChecked: todayStr });
+    if (next.goneAt) delete next.goneAt; // relisted
     // Keep the market facts that drift over time current on every sighting.
     if (f.dom != null) next.dom = f.dom;
     if (f.distMi != null) next.distMi = f.distMi;
     if (f.fees != null) next.fees = f.fees;
     if (f.dLat != null && f.dLon != null) { next.dLat = f.dLat; next.dLon = f.dLon; }
     if (f.mcSeen) next.mcSeen = f.mcSeen;
-    // Which searches return this car: this sync's, plus any unchanged (skipped)
-    // search that returned it before — it's still in that one too.
-    if (Array.isArray(f.mcQ)) {
-      const keep = (Array.isArray(l.mcQ) ? l.mcQ : []).filter(function (k) { return unchanged[k] && f.mcQ.indexOf(k) === -1; });
-      next.mcQ = f.mcQ.concat(keep);
-    }
+    if (next.mcQ) delete next.mcQ; // per-search tags from the old unchanged-search shortcut
     // One-time basis correction: listings synced before we stored prices
     // pre-fee carry the fee inside `price`. When the new price differs by exactly
     // that fee it isn't a price move — fix the stored price (and its history)
@@ -130,26 +119,4 @@ function appendNote(existing, note) {
   if (!e) return note;
   if (e.indexOf(note) > -1) return e; // idempotent across re-syncs in one day
   return e + " · " + note;
-}
-
-// ── Search fingerprints (stored in settings.mcSearches as { key: { fp, at } }) ──
-const SEARCH_FP_MAX_AGE_DAYS = 30; // drop searches not run for a month (edited profiles etc.)
-
-// -> { key: fp } to send with a sync.
-export function searchFpMap(store) {
-  const out = {};
-  Object.keys(store || {}).forEach(function (k) { if (store[k] && store[k].fp) out[k] = store[k].fp; });
-  return out;
-}
-
-// Fold this sync's fingerprints into the store, dropping stale entries.
-export function mergeSearchFps(store, fps, nowIso) {
-  const out = {};
-  const cutoff = Date.parse(nowIso) - SEARCH_FP_MAX_AGE_DAYS * 86400000;
-  Object.keys(store || {}).forEach(function (k) {
-    const v = store[k];
-    if (v && v.fp && !(Date.parse(v.at) < cutoff)) out[k] = v;
-  });
-  Object.keys(fps || {}).forEach(function (k) { if (fps[k]) out[k] = { fp: fps[k], at: nowIso }; });
-  return out;
 }

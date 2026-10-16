@@ -1,11 +1,8 @@
-// Search-location helpers: parse the flat file, suggest matches, and keep the
-// saved list deduped + sorted. Pure (no DOM / network) apart from loadLocations,
-// so the rules are unit-testable.
+// Location helpers for the home-base picker: parse the flat file and suggest
+// matches. Pure (no DOM / network) apart from loadLocations, so they're unit-testable.
 //
 // The flat file is public/locations.txt, built by scripts/build-locations.mjs
 // from GeoNames postal codes (CC BY 4.0). One line per ZIP: ST|City|ZIP|lat|lon.
-
-import { haversineMi } from "./geo.js";
 
 let loading = null;
 
@@ -88,61 +85,6 @@ export function searchLocations(index, query, limit) {
   });
 }
 
-// Identity for dedupe: the ZIP when there is one, else the normalized label.
-export function hubKey(h) {
-  const z = String((h && h.z) || "").trim();
-  if (z) return "z" + z;
-  return "n" + String((h && h.n) || "").trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-// { st, city } for sorting and display. Prefers the stored fields, then parses a
-// legacy "Boston MA" / "Boston, MA" label, then looks the ZIP up if we can.
-export function hubParts(h, index) {
-  if (h && h.st) return { st: h.st, city: h.c || h.n || "" };
-  const n = String((h && h.n) || "").trim();
-  const m = n.match(/^(.+?)[,\s]+([A-Za-z]{2})$/);
-  if (m) return { st: m[2].toUpperCase(), city: m[1] };
-  const r = index && h && index.byZip[String(h.z || "").trim()];
-  if (r) return { st: r.st, city: r.city };
-  return { st: "", city: n };
-}
-
-// Drop blanks, dedupe by hubKey (first wins, but fill in missing coordinates from
-// a later duplicate), fill any still-missing coordinates by ZIP from the location
-// index when given (the nationwide search needs every hub's), and sort by state
-// then city then ZIP. Entries whose state can't be determined sort last, by label.
-export function normalizeHubs(list, index) {
-  const seen = {};
-  const out = [];
-  (list || []).forEach(function (h) {
-    if (!h || (!String(h.z || "").trim() && !String(h.n || "").trim())) return;
-    const k = hubKey(h);
-    if (seen[k] != null) {
-      const prev = out[seen[k]];
-      if (prev.lat == null && h.lat != null) { prev.lat = h.lat; prev.lon = h.lon; }
-      return;
-    }
-    seen[k] = out.length;
-    out.push(Object.assign({}, h, { n: String(h.n || "").trim(), z: String(h.z || "").trim() }));
-  });
-  out.forEach(function (h) {
-    if (h.lat != null && h.lon != null) return;
-    const r = index && index.byZip && index.byZip[h.z];
-    if (r) { h.lat = r.lat; h.lon = r.lon; }
-  });
-  return out.map(function (h) { return { h: h, p: hubParts(h, index) }; }).sort(function (a, b) {
-    if (!a.p.st !== !b.p.st) return a.p.st ? -1 : 1;
-    return a.p.st.localeCompare(b.p.st) || a.p.city.localeCompare(b.p.city, undefined, { sensitivity: "base" }) || String(a.h.z).localeCompare(String(b.h.z));
-  }).map(function (x) { return x.h; });
-}
-
-// Add a hub unless it's already listed. -> { hubs, added }
-export function addHub(list, hub, index) {
-  const k = hubKey(hub);
-  if ((list || []).some(function (h) { return hubKey(h) === k; })) return { hubs: normalizeHubs(list, index), added: false };
-  return { hubs: normalizeHubs((list || []).concat([hub]), index), added: true };
-}
-
 // Fallback when the location file can't load: accept a bare 5-digit ZIP.
 export function hubFromZip(text) {
   const z = String(text || "").trim();
@@ -154,34 +96,3 @@ export function hubFromZip(text) {
 // circles mostly overlap pay twice for largely the same cars.
 
 const DEFAULT_RADIUS_MI = 100; // api/marketcheck.js default (free tier max)
-
-// Share of the SMALLER circle covered by the other (0..1).
-export function circleOverlap(d, r1, r2) {
-  if (d >= r1 + r2) return 0;
-  if (d <= Math.abs(r1 - r2)) return 1;
-  const a = r1 * r1 * Math.acos((d * d + r1 * r1 - r2 * r2) / (2 * d * r1));
-  const b = r2 * r2 * Math.acos((d * d + r2 * r2 - r1 * r1) / (2 * d * r2));
-  const c = 0.5 * Math.sqrt(Math.max(0, (-d + r1 + r2) * (d + r1 - r2) * (d - r1 + r2) * (d + r1 + r2)));
-  return Math.min(1, (a + b - c) / (Math.PI * Math.min(r1, r2) * Math.min(r1, r2)));
-}
-
-// Pairs of locations whose search areas overlap at least `threshold` (default
-// half), most-overlapping first. Coordinates come from the hub, else the ZIP index.
-export function hubOverlaps(hubs, index, threshold) {
-  const min = threshold != null ? threshold : 0.5;
-  const pts = (hubs || []).map(function (h) {
-    const r = index && index.byZip && index.byZip[String(h.z || "").trim()];
-    const lat = h.lat != null ? Number(h.lat) : r ? r.lat : null;
-    const lon = h.lon != null ? Number(h.lon) : r ? r.lon : null;
-    return { h: h, lat: lat, lon: lon, r: Number(h.r) || DEFAULT_RADIUS_MI };
-  }).filter(function (p) { return p.lat != null && p.lon != null && isFinite(p.lat) && isFinite(p.lon); });
-  const out = [];
-  for (let i = 0; i < pts.length; i++) {
-    for (let j = i + 1; j < pts.length; j++) {
-      const d = haversineMi(pts[i].lat, pts[i].lon, pts[j].lat, pts[j].lon);
-      const f = circleOverlap(d, pts[i].r, pts[j].r);
-      if (f >= min) out.push({ a: pts[i].h, b: pts[j].h, miles: Math.round(d), overlap: f });
-    }
-  }
-  return out.sort(function (x, y) { return y.overlap - x.overlap; });
-}

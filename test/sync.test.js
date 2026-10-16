@@ -29,10 +29,11 @@ describe("reconcile", () => {
     { vin: "VIN_NEW", vehicle: "Toyota RAV4 Hybrid", year: 2022, price: 24000, source: "marketcheck", profileId: "rav4-hybrid", dom: 9 },
   ];
 
-  const result = reconcile(existing, fetched, TODAY);
+  // VIN_GONE's direct VIN lookup came back empty this sync.
+  const result = reconcile(existing, fetched, TODAY, { goneVins: ["vin_gone"] });
 
   it("summarizes the run", () => {
-    expect(result.summary).toEqual({ fetched: 2, priceUpdates: 1, refreshed: 0, newCount: 1, notSeen: 1, kept: 0 });
+    expect(result.summary).toEqual({ fetched: 2, priceUpdates: 1, refreshed: 0, newCount: 1, notSeen: 1 });
   });
 
   it("records the price drop with a note + refreshes lastSeen", () => {
@@ -65,11 +66,23 @@ describe("reconcile", () => {
     expect(result.listings.find((l) => l.id === "b2").reviewPending).toBeFalsy();
   });
 
-  it("flags a vanished listing non-destructively", () => {
+  it("flags a listing the VIN lookup confirmed gone, non-destructively", () => {
     const gone = result.listings.find((l) => l.id === "b2");
     expect(gone).toBeTruthy();
     expect(gone.status).toBe("watch");
-    expect(gone.lastSeen).toBe("2026-06-05"); // unchanged -> stale = "may be sold"
+    expect(gone.goneAt).toBe(TODAY);
+    expect(gone.lastSeen).toBe("2026-06-05");
+  });
+
+  it("a car the searches simply didn't return is untouched — only the VIN lookup says gone", () => {
+    const r = reconcile(existing, fetched, TODAY);
+    expect(r.summary.notSeen).toBe(0);
+    expect(r.listings.find((l) => l.id === "b2")).toEqual(existing[1]);
+  });
+
+  it("a relisted car loses its gone mark", () => {
+    const ex = [{ id: "g", vin: "G1", price: 1, status: "watch", source: "marketcheck", goneAt: "2026-06-01" }];
+    expect(reconcile(ex, [{ vin: "G1", price: 1 }], TODAY).listings[0].goneAt).toBeUndefined();
   });
 
   it("never touches manual listings", () => {

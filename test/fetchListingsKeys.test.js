@@ -4,79 +4,68 @@ vi.mock("../src/supabaseClient", () => ({ supabase: { auth: { getSession: async 
 const { fetchListings } = await import("../src/sync.js");
 const { spentKeyIds } = await import("../src/quota.js");
 
-// One request per location: once a location reports key #1 spent, the rest must
-// start on key #2 — not each pay a call to rediscover it (and each log an "error").
-describe("fetchListings carries spent keys across its per-location requests", () => {
-  it("sends spent ids forward and reports the failover once", async () => {
+const P = (id) => ({ id, name: id, params: { make: "M", model: id } });
+const ok = (json) => ({ ok: true, status: 200, json: async () => json });
+
+// One request per step: once a step reports key #1 spent, later steps must start on
+// key #2 — not each pay a call to rediscover it.
+describe("fetchListings runs the planned steps, one request each", () => {
+  it("sends each step's kind, profile and filters", async () => {
+    const bodies = [];
+    global.fetch = vi.fn(async (url, init) => { bodies.push(JSON.parse(init.body)); return ok({ listings: [] }); });
+    await fetchListings([{ kind: "full", profile: P("a") }, { kind: "new", profile: P("b"), since: 2 }], [], {}, { excludeSalt: true, franchiseOnly: true });
+    expect(bodies.map((b) => [b.kind, b.profile.id, b.since || null, b.excludeSalt, b.franchiseOnly])).toEqual([["full", "a", null, true, true], ["new", "b", 2, true, true]]);
+  });
+  it("carries spent keys forward and reports a failover once", async () => {
     const bodies = [];
     global.fetch = vi.fn(async (url, init) => {
       const b = JSON.parse(init.body); bodies.push(b);
       const first = bodies.length === 1;
-      const json = {
+      return ok({
         listings: [], errors: [], calls: first ? 2 : 1,
         notices: first ? ["Key #1 is out of monthly quota; continuing on key #2."] : [],
         keyQuotas: first ? [{ id: "1111", remaining: 0, exhausted: true }, { id: "2222", remaining: 300 }] : [{ id: "2222", remaining: 299 }],
-      };
-      return { ok: true, status: 200, json: async () => json };
+      });
     });
-    const hubs = [{ n: "A", z: "1" }, { n: "B", z: "2" }, { n: "C", z: "3" }];
-    const r = await fetchListings([{ id: "p" }], hubs, {}, { marketcheckKeys: ["xxxx1111", "yyyy2222"], spentKeys: [] });
-    // The nationwide attempt first (all hubs), then each location.
-    expect(bodies.map((b) => [b.national || null, b.hubs.length])).toEqual([["only", 3], [null, 1], [null, 1], [null, 1]]);
-    expect(bodies.map((b) => b.spentKeys)).toEqual([[], ["1111"], ["1111"], ["1111"]]);
+    const r = await fetchListings([{ kind: "full", profile: P("a") }, { kind: "full", profile: P("b") }], [], {}, { marketcheckKeys: ["xxxx1111", "yyyy2222"], spentKeys: [] });
+    expect(bodies.map((b) => b.spentKeys)).toEqual([[], ["1111"]]);
     expect(r.notices).toEqual(["Key #1 is out of monthly quota; continuing on key #2."]);
     expect(r.errors).toEqual([]);
-    expect(r.calls).toBe(5);
-  });
-  it("starts from the spent keys the stored quota already knows", async () => {
-    const bodies = [];
-    global.fetch = vi.fn(async (url, init) => { bodies.push(JSON.parse(init.body)); return { ok: true, status: 200, json: async () => ({ listings: [] }) }; });
-    await fetchListings([{ id: "p" }], [{ z: "1" }, { z: "2" }], {}, { spentKeys: ["1111"] });
-    expect(bodies.map((b) => b.spentKeys)).toEqual([["1111"], ["1111"], ["1111"]]);
-  });
-});
-
-describe("fetchListings: nationwide first", () => {
-  it("stops after the nationwide request when it covered every profile", async () => {
-    const bodies = [];
-    global.fetch = vi.fn(async (url, init) => { bodies.push(JSON.parse(init.body)); return { ok: true, status: 200, json: async () => ({ listings: [{ vin: "V1", price: 1 }], localProfiles: [], calls: 3 }) }; });
-    const r = await fetchListings([{ id: "a" }, { id: "b" }], [{ z: "1" }, { z: "2" }], {}, {});
-    expect(bodies.length).toBe(1);
     expect(r.calls).toBe(3);
-    expect(r.listings.map((l) => l.vin)).toEqual(["V1"]);
   });
-  it("runs only the uncovered profiles per location", async () => {
+  it("looks up watchlist VINs the searches didn't return, and marks unreturned ones gone", async () => {
     const bodies = [];
-    global.fetch = vi.fn(async (url, init) => { const b = JSON.parse(init.body); bodies.push(b); return { ok: true, status: 200, json: async () => ({ listings: [], localProfiles: b.national ? ["b"] : [] }) }; });
-    await fetchListings([{ id: "a" }, { id: "b" }], [{ z: "1" }, { z: "2" }], {}, {});
-    expect(bodies.map((b) => b.profiles.map((p) => p.id))).toEqual([["a", "b"], ["b"], ["b"]]);
+    global.fetch = vi.fn(async (url, init) => {
+      const b = JSON.parse(init.body); bodies.push(b);
+      if (b.kind === "vins") return ok({ listings: [{ vin: "W2", price: 10 }] });
+      return ok({ listings: [{ vin: "W1", price: 5 }, { vin: "NEW", price: 7 }], numFound: 2 });
+    });
+    const r = await fetchListings([{ kind: "new", profile: P("a"), since: 2 }], ["W1", "W2", "W3"], {}, {});
+    expect(bodies.map((b) => b.kind)).toEqual(["new", "vins"]);
+    expect(bodies[1].vins).toEqual(["W2", "W3"]);
+    expect(r.goneVins).toEqual(["W3"]);
+    expect(r.listings.map((l) => l.vin).sort()).toEqual(["NEW", "W1", "W2"]);
+    expect(r.results[0]).toMatchObject({ kind: "new", numFound: 2, ok: true });
   });
-  it("falls back to every location if the nationwide request itself fails", async () => {
+  it("a failed VIN lookup proves nothing gone", async () => {
+    global.fetch = vi.fn(async (url, init) => (JSON.parse(init.body).kind === "vins" ? { ok: false, status: 504, json: async () => ({}) } : ok({ listings: [] })));
+    const r = await fetchListings([{ kind: "full", profile: P("a") }], ["W1"], {}, {});
+    expect(r.goneVins).toEqual([]);
+    expect(r.errors[0]).toMatch(/HTTP 504/);
+  });
+  it("stops on a rate limit — no further steps, no VIN lookup", async () => {
     const bodies = [];
-    global.fetch = vi.fn(async (url, init) => { const b = JSON.parse(init.body); bodies.push(b); return b.national ? { ok: false, status: 504, json: async () => ({}) } : { ok: true, status: 200, json: async () => ({ listings: [] }) }; });
-    const r = await fetchListings([{ id: "a" }], [{ z: "1" }, { z: "2" }], {}, {});
-    expect(bodies.length).toBe(3);
-    expect(r.errors).toEqual([]); // recovered — every location was searched
-    expect(r.notices[0]).toMatch(/Nationwide search failed \(Sync failed \(HTTP 504\)\); searched each location instead/);
+    global.fetch = vi.fn(async (url, init) => { bodies.push(JSON.parse(init.body)); return { ok: false, status: 429, json: async () => ({}) }; });
+    const r = await fetchListings([{ kind: "full", profile: P("a") }, { kind: "full", profile: P("b") }], ["W1"], {}, {});
+    expect(bodies.length).toBe(1);
+    expect(r.rateLimited).toBe(true);
+    expect(r.results[0].ok).toBe(false);
   });
-  it("a network-level failure ('Load failed') falls back the same way", async () => {
-    const bodies = [];
-    global.fetch = vi.fn(async (url, init) => { const b = JSON.parse(init.body); bodies.push(b); if (b.national) throw new TypeError("Load failed"); return { ok: true, status: 200, json: async () => ({ listings: [] }) }; });
-    const r = await fetchListings([{ id: "a" }], [{ z: "1" }, { z: "2" }], {}, {});
-    expect(bodies.length).toBe(3);
-    expect(r.errors).toEqual([]);
-  });
-  it("reports progress as nationwide first, then per location only for what's left", async () => {
+  it("reports progress per step", async () => {
     const seen = [];
-    global.fetch = vi.fn(async (url, init) => { const b = JSON.parse(init.body); return { ok: true, status: 200, json: async () => ({ listings: [], localProfiles: b.national ? ["b"] : [] }) }; });
-    await fetchListings([{ id: "a" }, { id: "b" }], [{ z: "1" }, { z: "2" }], {}, {}, (i) => seen.push([i.phase, i.done, i.total, i.covered]));
-    expect(seen).toEqual([["national", 0, 2, null], ["local", 0, 2, 1], ["local", 1, 2, 1], ["local", 2, 2, 1]]);
-  });
-  it("when nationwide covers everything, progress ends there", async () => {
-    const seen = [];
-    global.fetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ listings: [], localProfiles: [] }) }));
-    await fetchListings([{ id: "a" }], [{ z: "1" }, { z: "2" }], {}, {}, (i) => seen.push(i.phase));
-    expect(seen).toEqual(["national", "done"]);
+    global.fetch = vi.fn(async () => ok({ listings: [] }));
+    await fetchListings([{ kind: "full", profile: P("a") }, { kind: "full", profile: P("b") }], [], {}, {}, (i) => seen.push([i.done, i.total, i.label]));
+    expect(seen).toEqual([[1, 3, "a"], [2, 3, "b"]]);
   });
 });
 

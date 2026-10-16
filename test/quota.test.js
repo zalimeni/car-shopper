@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { dedupeKeyEntries, ingestSnaps, recordSyncCalls, mergeReports, summarize, syncCost, syncsLeft, gaugeTone, keyIdOf, planSig } from "../src/quota.js";
+import { dedupeKeyEntries, ingestSnaps, recordSyncCalls, mergeReports, summarize, syncsLeft, gaugeTone, keyIdOf } from "../src/quota.js";
 
 const NOW = Date.parse("2026-10-14T12:00:00Z");
 const keys = [{ key: "sk-aaaa1111", label: "Personal" }, { key: "sk-bbbb2222", label: "" }];
@@ -85,44 +85,13 @@ describe("summarize", () => {
   });
 });
 
-describe("syncCost / syncsLeft", () => {
-  const P = (id, pt) => ({ id, params: { make: "M", model: id, powertrain: pt } });
-  it("merges every profile into one query per location (powertrain_type takes a list)", () => {
-    const c = syncCost([P("a", "Hybrid"), P("b", "hev"), P("c", "")], 3, null);
-    expect([c.profiles, c.groups, c.hubs, c.national]).toEqual([3, 1, 3, false]);
-    expect(c.min).toBe(3);               // 1 query x 3 locations, one page each
-    expect(c.max).toBe(10 * 3);          // a 3-profile group may page 10 (capped at the 500-row ceiling)
-    expect(c.perHub).toEqual({ min: 1, max: 10 });
-    expect(c.liveSearch).toEqual({ min: 1, max: 4 });
-  });
-  it("with 2+ located hubs a sync starts nationwide: one page at best, per-location after a miss", () => {
-    const hubs = Array.from({ length: 16 }, (_, i) => ({ lat: 35 + i / 10, lon: -78, z: "0000" + i }));
-    const profs = [P("a", "Hybrid"), P("b", "PHEV"), P("c", "")];
-    const c = syncCost(profs, hubs, null);
-    expect([c.national, c.min, c.max]).toEqual([true, 1, 1 + 10 * 16]);
-    // A ZIP-only location rules nationwide out (no coordinates to filter by).
-    expect(syncCost(profs, hubs.concat([{ z: "02101" }]), null).national).toBe(false);
-  });
-  it("reuses a measured cost only for the same plan", () => {
-    const hubs = [{ lat: 1, lon: 2 }, { lat: 3, lon: 4 }];
-    const profs = [P("a", "")];
-    const last = { calls: 5, plan: planSig(profs, hubs) };
-    expect(syncCost(profs, hubs, last).measured).toBe(5);
-    expect(syncCost(profs, hubs.concat([{ lat: 5, lon: 6 }]), last).measured).toBeNull();
-    expect(syncCost(profs, hubs, { calls: 5 }).measured).toBeNull(); // measured before plans were recorded
-  });
-  it("caps a big merged group at the 500-row (10-page) pagination ceiling", () => {
-    const five = ["a", "b", "c", "d", "e"].map((x) => P(x, ""));
-    expect(syncCost(five, 1, null).max).toBe(10);
-  });
-  it("converts remaining calls to whole syncs (best, worst, and at the measured cost)", () => {
-    const c = syncCost([P("a", ""), P("b", "")], 2, { calls: 7 });
-    expect([c.min, c.max]).toEqual([2, 16]);
-    expect(syncsLeft(500, c)).toEqual({ best: 250, worst: 31, measured: 71 });
+describe("syncsLeft", () => {
+  it("converts remaining calls to whole syncs, best and worst case", () => {
+    expect(syncsLeft(500, { min: 2, max: 16 })).toEqual({ best: 250, worst: 31 });
   });
   it("returns null when there is nothing to estimate", () => {
-    expect(syncsLeft(500, syncCost([], 2, null))).toBeNull();
-    expect(syncsLeft(null, syncCost([P("a", "")], 1, null))).toBeNull();
+    expect(syncsLeft(500, { min: 0, max: 0 })).toBeNull();
+    expect(syncsLeft(null, { min: 1, max: 4 })).toBeNull();
   });
 });
 

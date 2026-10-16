@@ -5,7 +5,7 @@
 // The app's criteria are user-editable, so the schema and the rubric are built
 // from whatever criteria the client sends rather than hardcoded.
 
-import { homeMiles } from "../src/geo.js";
+import { travelFacts, DRIVE_MAX_MI, AIRPORT_NEAR_MI } from "../src/travel.js";
 
 // Models the user may pick for scoring (allowlisted so a request can't drive
 // arbitrary model strings). Default is Sonnet — strong judgment for this
@@ -38,7 +38,7 @@ export const CRITERION_GUIDANCE = {
   condition: "10 = clean title, 1-owner, no accidents, well-maintained; 1 = branded title, accidents, or neglect.",
   features: "10 = target trim or richer with all must-have + several nice-to-have features (a trim above the buyer's preferred level is a bonus, never a penalty); 1 = a trim below their preferred level / missing must-haves.",
   color: "10 = preferred/neutral color; 1 = a color the buyer wants to avoid (see requirements).",
-  location: "10 = close to the buyer's HOME BASE & low salt-belt exposure; 1 = a long haul from home and/or a heavy road-salt region (rust risk). Judge the distance to the home base — use the stated straight-line figure when the listing has one, otherwise the dealer's city/state — NOT the distance from whichever search area the listing turned up in.",
+  location: "10 = close to the buyer's HOME BASE & low salt-belt exposure; 1 = a long haul from home and/or a heavy road-salt region (rust risk). Judge the distance to the home base — use the stated straight-line figure when the listing has one, otherwise the dealer's city/state. A far car near a major airport is less of a burden (fly in, drive or ship back) than one far from any airport.",
   deal: "10 = priced well below comparable listings (great deal); 1 = priced above market.",
 };
 
@@ -120,15 +120,14 @@ function listingFacts(l, homeBase) {
   // synced before cpo became its own field).
   if (l.cpo === true || l.dealerType === "CPO") f.push("Certified Pre-Owned (CPO): Yes — manufacturer-backed inspection & extended warranty");
   add("Dealer location", [l.location, l.state].filter(Boolean).join(", "));
-  // NOT distance from home: the buyer searches several travel hubs, so this is
-  // the radius from whichever hub turned the car up. A car 20 mi from a Kentucky
-  // hub is still ~500 mi from a Durham NC home base. Labelled so the model can't
-  // read it as proximity to the buyer.
-  add("Distance from the search area it was found in (NOT from home)", l.distMi != null ? l.distMi + " mi" : null);
-  // Computed from the dealer's coordinates, so the model needn't guess from a
-  // city name. Straight-line; the drive is usually 20-30% longer.
-  const hm = homeMiles(l, homeBase);
-  add("Straight-line distance from the buyer's HOME BASE", hm != null ? hm + " mi (driving is typically 20-30% longer)" : null);
+  // Travel, computed from the dealer's coordinates (src/travel.js) so the model
+  // needn't guess from a city name. Straight-line; the drive is usually 20-30% longer.
+  const t = travelFacts(l, homeBase);
+  add("Straight-line distance from the buyer's HOME BASE", t.homeMi != null ? t.homeMi + " mi (driving is typically 20-30% longer)" + (t.farFromHome ? " — over " + DRIVE_MAX_MI + " mi, so likely shipped or flown to rather than driven" : "") : null);
+  // Listings synced before dealer coordinates: the radius from an old search location.
+  if (t.homeMi == null) add("Distance from the search area it was found in (NOT from home)", l.distMi != null ? l.distMi + " mi" : null);
+  add("Nearest major airport to the dealer", t.airport ? t.airport.code + ", " + t.airport.mi + " mi" + (t.airport.near ? " (within " + AIRPORT_NEAR_MI + " mi — easy to fly in)" : "") : null);
+  if (t.salt) f.push("Dealer is in a salt-belt state (" + l.state + ") — higher underbody-rust risk unless the car lived elsewhere");
   add("Color", l.color);
   add("Days listed at this dealer (current listing)", l.dom);
   // Recent asking-price trajectory — a strong deal/negotiation signal.
@@ -160,7 +159,7 @@ export function memoSection(listing) {
 }
 
 // Where the buyer actually lives — the anchor for the "location" criterion.
-// Distinct from the search hubs, which are just places they're willing to look.
+// Searches are nationwide, so a listing can be anywhere.
 export function homeBaseLabel(homeBase) {
   if (!homeBase) return "";
   if (typeof homeBase === "string") return homeBase.trim();
@@ -274,14 +273,14 @@ export function buildUserPrompt(listing, ctx) {
       + (bands.matchedTier ? "" : " NOTE: no baseline tier matches this listing's trim, so these are generic fallback numbers. If this trim sits above the buyer's preferred trims it should legitimately price above these bands — treat them as a floor, not a ceiling, and do not mark the listing down for clearing them on trim alone.")
     : "";
 
-  // The buyer searches several travel hubs, so a listing's distance-from-search-
-  // area says nothing about how far it is from them. Anchor "location" on home.
+  // Searches are nationwide, so anchor "location" on home (plus how easy the dealer
+  // is to fly to — a far car can be flown to and driven back, or shipped).
   const home = homeBaseLabel(ctx.homeBase);
   const homeSection = home
     ? "BUYER'S HOME BASE: " + home + ". This is where the car has to end up, and the ONLY anchor for the \"location\" criterion — "
-      + "use the \"Straight-line distance from the buyer's HOME BASE\" figure in the listing when one is given, otherwise estimate the drive from the dealer's city/state to here. The buyer also searches other travel hubs far from home, so a listing "
-      + "sitting a few miles from one of those search areas is NOT nearby; score it on its real distance from " + home + "."
-    : "BUYER'S HOME BASE: not set. Judge \"location\" from the dealer's city/state against the buyer's search locations, and say the "
+      + "use the \"Straight-line distance from the buyer's HOME BASE\" figure in the listing when one is given, otherwise estimate the drive from the dealer's city/state to here. "
+      + "Searches are nationwide, so a listing can be anywhere; a far one near a major airport (fly in, drive back) is less of a burden than one far from any airport, and shipping is an option."
+    : "BUYER'S HOME BASE: not set. Judge \"location\" from the dealer's city/state and salt-belt exposure, and say the "
       + "home base is unknown rather than assuming a listing is local.";
 
   return [

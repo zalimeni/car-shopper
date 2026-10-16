@@ -1,146 +1,52 @@
-// Client-side sync (sync-on-open + "Sync now").
+// Client-side sync (the ↻ Sync button).
 //
 // Pulls dealer inventory via the /api/marketcheck proxy and reconciles it
 // against the stored listings. Runs in the browser under the user's Supabase
 // session, so every write goes through normal RLS — no service-role key.
 //
 // Split of responsibilities:
-//   - fetchListings(): talk to the proxy, return normalized listings.
+//   - fetchListings(): run the planned steps (src/syncPlan.js) through the proxy.
 //   - reconcile():     pure function, lives in src/reconcile.js (shared with
 //                      the server-side scheduled sync) and re-exported here.
 
 import { supabase } from "./supabaseClient";
-import { mergeReports } from "./quota.js";
-
-// Ids of the keys a batch of per-key reports says are spent this month.
-function spentIn(reports) {
-  return (reports || []).filter(function (r) { return r && r.exhausted && r.id; }).map(function (r) { return r.id; });
-}
-function addUnique(list, items) {
-  (items || []).forEach(function (m) { if (list.indexOf(m) < 0) list.push(m); });
-}
+import { runSync } from "./syncPlan.js";
 export { reconcile } from "./reconcile.js";
 
-export async function fetchListings(profiles, hubs, opts, filters, onProgress) {
-  const hubList = Array.isArray(hubs) ? hubs : [];
-  const report = typeof onProgress === "function" ? onProgress : function () {};
-  // Per-location searches run one request per hub, so a big multi-location sync
-  // (profiles × hubs × car_types × pages) doesn't pile into a single serverless
-  // invocation and blow Vercel's function timeout (the HTTP 504). A slow/failed
-  // hub is isolated: its error is recorded and the rest still return. `report`
-  // fires after each location so the UI can show progress + surface results as
-  // they arrive. Mock and single-hub searches keep the original single request.
-  if ((opts && opts.mock) || hubList.length <= 1) {
-    const r = await fetchChunk(profiles, hubList, opts, filters);
-    report({ done: 1, total: 1, listings: r.listings || [] });
+// Run a planned sync (src/syncPlan.js planSync) — one /api/marketcheck request per
+// step, so no single serverless invocation nears the timeout. Keys found spent are
+// carried forward so later steps start on a live key instead of each re-hitting it.
+// filters: { franchiseOnly, excludeSalt, marketcheckKeys, spentKeys }
+// -> runSync's result: { listings, results, goneVins, errors, notices, calls, ... }
+export async function fetchListings(steps, tracked, opts, filters, onProgress) {
+  const f = filters || {};
+  const spent = (f.spentKeys || []).slice();
+  return runSync(steps, tracked, async function (step) {
+    const r = await postStep(step, opts, Object.assign({}, f, { spentKeys: spent }));
+    (r.keyQuotas || []).forEach(function (q) { if (q && q.exhausted && q.id && spent.indexOf(q.id) < 0) spent.push(q.id); });
     return r;
-  }
-  // Nationwide first: one search for every profile across all locations, kept to
-  // their radii by dealer coordinates — 1–10 calls instead of one+ per location.
-  // Whatever it can't cover (too many matches nationally, or a location without
-  // coordinates) comes back as `localProfiles` and runs per location below.
-  const seen = {}; // vin -> listing, keeping the lowest price across hubs
-  const errors = [];
-  const notices = []; // key failover etc. — reported once, not as errors
-  // Keys known spent (from the stored quota, then from each location's response),
-  // so later locations start on a live key instead of each re-hitting a spent one.
-  const spent = ((filters && filters.spentKeys) || []).slice();
-  let keyQuotas = []; // per-key monthly quota as reported by MarketCheck
-  let calls = 0;      // HTTP requests this sync actually spent
-  let apiInfo = null; // MarketCheck API version / deprecation headers (latest seen)
-  let fingerprints = {}, unchanged = [], queries = 0; // unchanged-search short-circuit
-  let formatSuspect = false;
-  let mock = false;
-  let rateLimited = false;
-  let rateLimitInfo = null;
-  let quota = null; // lowest remaining across hubs
-  let rest = profiles || [];
-  let steps = [{ hubs: hubList, national: true }];
-  let nationalInfo = null; // what the nationwide pass did (skipped / covered), for the status line
-  let localDone = 0, covered = null; // per-location requests finished; profiles nationwide covered
-  const allCount = (profiles || []).length;
-  const goLocal = function () { steps = steps.concat(hubList.map(function (h) { return { hubs: [h] }; })); };
-  // Progress: the nationwide request first ("national", all locations at once), then
-  // one count per location — only if some profiles still need per-location search.
-  const progress = function (phase) {
-    report({ phase: phase, done: phase === "national" ? 0 : localDone, total: hubList.length, listings: Object.values(seen), covered: covered, profiles: allCount });
-  };
-  progress("national");
-  for (let i = 0; i < steps.length; i++) {
-    const step = steps[i];
-    const hub = step.hubs[0];
-    try {
-      const r = await fetchChunk(rest, step.hubs, opts, Object.assign({}, filters, { spentKeys: spent, national: step.national ? "only" : undefined }));
-      if (step.national) {
-        const left = {};
-        (r.localProfiles || []).forEach(function (id) { left[id] = true; });
-        rest = rest.filter(function (p) { return left[p.id]; });
-        covered = allCount - rest.length;
-        nationalInfo = r.nationalInfo || null;
-        if (rest.length) goLocal();
-      }
-      (r.listings || []).forEach(function (l) {
-        if (!l.vin) return;
-        const prev = seen[l.vin];
-        // Lowest REAL price wins — a priced row always beats an unpriced one.
-        if (!prev || (l.price && (!prev.price || l.price < prev.price))) seen[l.vin] = l;
-      });
-      (r.errors || []).forEach(function (m) { errors.push(m); });
-      addUnique(notices, r.notices);
-      addUnique(spent, spentIn(r.keyQuotas));
-      keyQuotas = mergeReports(keyQuotas, r.keyQuotas);
-      calls += r.calls || 0;
-      if (r.apiInfo) apiInfo = r.apiInfo;
-      Object.assign(fingerprints, r.fingerprints || {});
-      unchanged = unchanged.concat(r.unchanged || []);
-      queries += r.queries || 0;
-      if (r.formatSuspect) formatSuspect = true;
-      if (r.mock) mock = true;
-      if (r.rateLimited) { rateLimited = true; if (r.rateLimitInfo) rateLimitInfo = r.rateLimitInfo; }
-      if (r.quota && r.quota.remaining != null && (quota == null || r.quota.remaining < quota.remaining)) quota = r.quota;
-    } catch (e) {
-      const why = e && e.message ? e.message : "sync failed";
-      if (e && e.rateLimited) rateLimited = true;
-      if (step.national && !rateLimited) {
-        // The nationwide request failed outright (e.g. Safari's "Load failed" on a
-        // slow response): every location is searched instead, so nothing is lost.
-        notices.push("Nationwide search failed (" + why + "); searched each location instead.");
-        covered = 0;
-        nationalInfo = { failed: why };
-        goLocal();
-      } else {
-        errors.push((step.national ? "nationwide search" : (hub.n || hub.z || "location")) + ": " + why);
-      }
-    }
-    if (!step.national) localDone++;
-    progress(step.national ? (steps.length > 1 ? "local" : "done") : "local");
-    // Quota hit: further locations will fail too, so stop rather than burn more.
-    if (rateLimited) break;
-  }
-  return { listings: Object.values(seen), nationalInfo: nationalInfo, errors: errors, notices: notices, mock: mock, rateLimited: rateLimited, rateLimitInfo: rateLimitInfo, quota: quota, keyQuotas: keyQuotas, calls: calls, apiInfo: apiInfo, formatSuspect: formatSuspect, fingerprints: fingerprints, unchanged: unchanged, queries: queries };
+  }, onProgress);
 }
 
-// One /api/marketcheck request for the given hubs (usually a single hub).
-async function fetchChunk(profiles, hubs, opts, filters) {
+// One step -> the proxy's report. Throws on an HTTP failure (err.rateLimited for 429/503/402).
+export async function postStep(step, opts, filters) {
+  const f = filters || {};
   const qs = opts && opts.mock ? "?mock=1" : "";
   const { data: sess } = await supabase.auth.getSession();
   const token = sess && sess.session ? sess.session.access_token : "";
+  const p = step.profile;
   const res = await fetch("/api/marketcheck" + qs, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: token ? "Bearer " + token : "",
-    },
+    headers: { "Content-Type": "application/json", Authorization: token ? "Bearer " + token : "" },
     body: JSON.stringify({
-      profiles: (profiles || []).map(function (p) {
-        return { id: p.id, name: p.name, params: p.params };
-      }),
-      hubs: hubs || [],
-      franchiseOnly: !!(filters && filters.franchiseOnly),
-      marketcheckKeys: (filters && Array.isArray(filters.marketcheckKeys)) ? filters.marketcheckKeys : [],
-      fingerprints: (filters && filters.fingerprints) || {},
-      national: (filters && filters.national) || undefined,
-      spentKeys: (filters && Array.isArray(filters.spentKeys)) ? filters.spentKeys : [],
+      kind: step.kind,
+      profile: p ? { id: p.id, name: p.name, params: p.params } : undefined,
+      since: step.since,
+      vins: step.vins,
+      excludeSalt: f.excludeSalt !== false,
+      franchiseOnly: !!f.franchiseOnly,
+      marketcheckKeys: Array.isArray(f.marketcheckKeys) ? f.marketcheckKeys : [],
+      spentKeys: Array.isArray(f.spentKeys) ? f.spentKeys : [],
     }),
   });
   if (!res.ok) {
@@ -156,8 +62,7 @@ async function fetchChunk(profiles, hubs, opts, filters) {
     if (limited) err.rateLimited = true;
     throw err;
   }
-  const json = await res.json();
-  return { listings: json.listings || [], errors: json.errors || [], notices: json.notices || [], mock: !!json.mock, rateLimited: !!json.rateLimited, rateLimitInfo: json.rateLimitInfo || null, quota: json.quota || null, keyQuotas: json.keyQuotas || [], calls: json.calls || 0, apiInfo: json.apiInfo || null, formatSuspect: !!json.formatSuspect, fingerprints: json.fingerprints || {}, unchanged: json.unchanged || [], queries: json.queries || 0, nationalInfo: json.nationalInfo || null, localProfiles: Array.isArray(json.localProfiles) ? json.localProfiles : (profiles || []).map(function (p) { return p.id; }) };
+  return res.json();
 }
 
 // Live-market comp broadening for the Price Check tool: fire a one-off
@@ -196,7 +101,7 @@ export async function fetchPriceComps(query, hubs, marketcheckKeys, spentKeys) {
 
 // Debug helper: POST /api/marketcheck?raw=1 and return the raw MarketCheck
 // response + normalized sample. Wired to window.__rawSync for console use.
-export async function fetchRawSample(profiles, hubs, vin, marketcheckKeys) {
+export async function fetchRawSample(profiles, hubs, vin, marketcheckKeys) { // hubs: [] = nationwide
   const { data: sess } = await supabase.auth.getSession();
   const token = sess && sess.session ? sess.session.access_token : "";
   const res = await fetch("/api/marketcheck?raw=1", {
