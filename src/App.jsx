@@ -1719,7 +1719,10 @@ function DashView({ data, watch, rej, sold, staleN, setTab, markAllChk, viewProf
       </div>
 
       <div style={S.card}>
-        <h3 style={S.cardH}>Global Requirements</h3>
+        <div style={S.secH}>
+          <h3 style={S.cardH}>Global Requirements</h3>
+          <button style={S.secBtn} onClick={function () { setTab("Profiles"); }} title="Add, edit, or turn off requirements on the Profiles tab">Edit</button>
+        </div>
         {(data.globalReqs || []).filter(function (r) { return r.active; }).length
           ? (data.globalReqs || []).filter(function (r) { return r.active; }).map(function (r) {
               return (<div key={r.id} style={{ fontSize: 12, color: "#c8c8d0", padding: "2px 0" }}>✓ {r.text}</div>);
