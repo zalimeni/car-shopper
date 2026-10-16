@@ -457,7 +457,7 @@ async function getPage(s, makeUrl, label) {
     if (!Array.isArray(json.listings) && json.num_found == null) s.shapeless = true;
     const rows = Array.isArray(json.listings) ? json.listings : [];
     rows.forEach(function (row) { s.rowsSeen++; if (!row || !row.vin || !row.build || !row.build.make || !row.build.model) s.malformed++; });
-    return { rows: rows, numFound: typeof json.num_found === "number" ? json.num_found : null };
+    return { rows: rows, numFound: typeof json.num_found === "number" ? json.num_found : null, facets: json.facets || null };
   }
 }
 
@@ -469,7 +469,7 @@ async function getPage(s, makeUrl, label) {
 //           ceiling and says so.
 //   new   — newest at this dealer first (dos_active asc), stopping once a page
 //           reaches cars listed more than `since` days ago.
-//   count — just num_found (rows=0): one call, no paging.
+//   count — num_found plus the color facet (rows=0): one call, no paging.
 //   vins  — the listed rows for up to 50 VINs (vin= takes a list), every page.
 //   local — the old radius search around one hub (Price Check's live comps).
 export async function runStep(s, step) {
@@ -477,6 +477,7 @@ export async function runStep(s, step) {
   const profile = step.profile && step.profile.params ? step.profile : null;
   const seen = {};
   let numFound = null;
+  let colors = null; // count step: { counts: { Black: 261, … }, unlisted: 34 }
   const keep = function (row) {
     const norm = normalize(row, profile ? profile.id : null);
     if (!norm || !norm.vin) return;
@@ -537,8 +538,18 @@ export async function runStep(s, step) {
   } else if (!profile) {
     s.errors.push("No profile to search");
   } else if (step.kind === "count") {
-    const pg = await getPage(s, function (k) { return nat({ state: states.join(","), rows: "0" })(k, 0); }, label);
-    if (pg) numFound = pg.numFound;
+    // Plus the color breakdown across the whole match set (a facet: same call, no
+    // paging). Verified live to list every base color (11 for Outback, Purple: 1).
+    const pg = await getPage(s, function (k) { return nat({ state: states.join(","), rows: "0", facets: "base_exterior_color" })(k, 0); }, label);
+    if (pg) {
+      numFound = pg.numFound;
+      const f = pg.facets && Array.isArray(pg.facets.base_exterior_color) ? pg.facets.base_exterior_color : null;
+      if (f) {
+        const counts = {};
+        f.forEach(function (x) { if (x && x.item) counts[x.item] = Number(x.count) || 0; });
+        colors = { counts: counts, unlisted: numFound != null ? Math.max(0, numFound - f.reduce(function (a, x) { return a + (Number(x && x.count) || 0); }, 0)) : null };
+      }
+    }
   } else if (step.kind === "new") {
     const since = Math.max(1, Number(step.since) || 1);
     const make = nat({ state: states.join(","), sort_by: "dos_active", sort_order: "asc" });
@@ -560,7 +571,7 @@ export async function runStep(s, step) {
   } else {
     numFound = await fullOver(states);
   }
-  return Object.assign(sessionReport(s), { listings: Object.values(seen), numFound: numFound });
+  return Object.assign(sessionReport(s), { listings: Object.values(seen), numFound: numFound, colors: colors });
 }
 
 // ── MarketCheck query construction ──
@@ -677,6 +688,9 @@ export function normalize(row, profileId) {
     location: dealer.city || "",
     state: dealer.state || "",
     color: row.exterior_color || "",
+    // MarketCheck's normalized color ("Black", "Gray"…) — what per-profile color
+    // filters match on (src/colors.js). null when the listing has no color at all.
+    baseColor: row.base_ext_color || null,
     link: safeHttpUrl(row.vdp_url),
     photo: pickPhoto(row),
     // Days listed at THIS source, active stretch only (dos_active). MarketCheck's

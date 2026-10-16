@@ -88,6 +88,15 @@ card shows it and warns past 300 (narrow price/miles/years). Typical: a
 new-listings pass is ~1 call per profile, the watchlist lookup ~1, and a full
 refresh one per 50 matching cars — a few calls a sync for small profiles.
 
+**Colors, filtered on our side.** Each listing keeps MarketCheck's normalized
+`base_ext_color` as `baseColor` (some listings, often marketplace-relayed, have no
+color at all — shown as "Color not listed"). A profile's hidden colors and its
+"include cars with no color listed" switch (default on) hide candidates locally,
+like trim excludes, so an unexpected or missing color is never silently dropped by
+the search. The editor's color list comes from a `facets=base_exterior_color` on a
+rows=0 count (verified live to list every base color — Outback: 11, Purple: 1),
+taken when a profile is saved with new search filters: 1 call.
+
 **Travel flags, not filters.** Nothing is filtered on distance (a far car can be
 shipped). `src/travel.js` flags each listing from the dealer's coordinates:
 straight-line miles from the home base ("ship or fly" past 500), the nearest
