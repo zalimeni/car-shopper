@@ -88,15 +88,16 @@ There is **no generated source** in `src/` or `api/` — it's all authored by ha
 See `docs/listing-pipeline.md` for the full design. In short:
 
 - **State model:** the whole app state (`profiles`, `criteria`, `globalReqs`,
-  `listings`, `settings` {budget, taxRate, tagline, homeBase, saltMode, …}, `skipped`,
+  `listings`, `candidates`, `settings` {budget, taxRate, tagline, homeBase, saltMode, …}, `skipped`,
   `scoreModel`, `autoScore`, `onboarded`, `version`, `lastSynced`) is one JSONB
   blob per user in `app_state.data`. `storage.js` reads/writes it; `App.jsx`
   holds it in `data` and saves via `save()` / `saveRecalc()` / `patchListings()`.
   There is no per-listing table. Bump `VERSION` + add a `migrate()` step when the
   blob shape changes (see the v6 `settings` migration).
-  The candidate **review queue** is not in the blob: it's kept per device in
-  `localStorage` (`cs-candidates`, ≤300, pruned of approved/skipped VINs on load,
-  cleared on sign-out) — so it survives closing the app; a sync rebuilds it elsewhere.
+  The candidate **review queue** is in the blob too (`data.candidates`, newest
+  300): restored on load minus VINs since approved/skipped (`restoreQueue`), and
+  saved ~1 s after it changes. The scheduled sync appends to it (flagged
+  `fromScheduled`, counted for a notice on next open).
 - **AI scoring:** `src/score.js` → `POST /api/score` decrypts the user's vaulted
   Anthropic key (`_crypto` + `_supabaseAdmin`) and scores each listing against a
   JSON schema built from the user's criteria (`_scoring.js`, model allowlisted).
