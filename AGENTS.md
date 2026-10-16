@@ -51,6 +51,7 @@ over architecture.
 | `src/airports.js`, `src/travel.js` | Major-airport list + `travelFacts`: miles from the home base ("ship or fly" past 500), nearest airport ("fly-in friendly" within 50 mi), salt-belt flag. Flags only — never filters. Used by cards and AI scoring. Pure, tested. |
 | `src/colors.js` | Per-profile exterior-color filter (`params.excludeColors`, `params.includeUnlistedColor` default on), applied on our side to candidates — matches MarketCheck's normalized `baseColor` (`base_ext_color`; filled from the VIN decoder when a listing has none), keyword fallback for older listings. The editor's choices come from a facet (counts per color, plus how many list none) fetched when a profile is saved with new search filters (`refreshProfileFacets` → a `count` step) and refreshed by every full refresh (facet on its page 1, no extra call). Global `settings.defaultExcludeColors` seeds new profiles. Pure, tested. |
 | `src/tags.js` | Freeform listing tags (`listing.tags`): add/remove (case-insensitive, adopts an existing tag's spelling), `allTags` for suggestions + the Results/Compare tag filter. AI scoring sees them; editing never marks a score stale. Pure, tested. |
+| `src/compareCols.js` | Compare table column layout: user order (drag a header) + pins (sticky on the left), stored in `settings.compareCols`. `layoutColumns`/`moveColumn`/`togglePin`. Pure, tested. |
 | `src/markdown.js` | Safe Markdown parser for listing notes (text → typed tree, never HTML; http(s)-only links) + the `MEMO_MAX` (4,000-char) limit. Pure, tested. Rendered by `MarkdownView` / `ListingMemo` in `App.jsx`. |
 | `src/quota.js` | MarketCheck quota bookkeeping for the header gauge + modal: per-key snapshots (from syncs / live searches — never its own calls), capacity across keys (used in order), sync-cost estimates. Pure, tested. |
 | `public/locations.txt` | Flat file (`ST|City|ZIP|lat|lon`, ~41k rows) behind the location picker; lazy-loaded, not bundled. Built by `scripts/build-locations.mjs` from GeoNames (CC BY 4.0). |
@@ -98,6 +99,14 @@ See `docs/listing-pipeline.md` for the full design. In short:
   300): restored on load minus VINs since approved/skipped (`restoreQueue`), and
   saved ~1 s after it changes. The scheduled sync appends to it (flagged
   `fromScheduled`, counted for a notice on next open).
+- **Settings keys:** `DEFAULT_SETTINGS` (top of `App.jsx`) is the schema — one
+  commented line per key. A new optional key only needs a line there
+  (`getSettings()` merges defaults on read), not a `VERSION` bump. Settings
+  edits don't flag AI scores stale: `scoreInputHash` reads only `homeBase` from
+  settings. The scheduled sync spreads `state.settings`, so new keys survive it.
+- **Where preferences live:** anything the user sets (layouts, filters' defaults,
+  the review queue) goes in the synced blob so every device agrees — the owner
+  asked for this explicitly. `localStorage` is only for throwaway per-device state.
 - **AI scoring:** `src/score.js` → `POST /api/score` decrypts the user's vaulted
   Anthropic key (`_crypto` + `_supabaseAdmin`) and scores each listing against a
   JSON schema built from the user's criteria (`_scoring.js`, model allowlisted).
@@ -148,11 +157,9 @@ npm run preview   # serve the built bundle
 npm test          # Vitest golden tests (see test/)
 ```
 
-**Tests:** Vitest tests live in `test/` and cover the deterministic core —
-`buildUrl`/`parseYears`/`normalize`/`mapDealerType`/`pickPhoto`
-(`api/marketcheck.js`), `reconcile` (`src/sync.js`), the scoring helpers
-(`buildScoreSchema`/`buildUserPrompt`/`coerceResult`/`resolveScoreModel`,
-`api/_scoring.js`), and the key crypto round-trip (`api/_crypto.js`). The
+**Tests:** Vitest tests live in `test/` — unit tests for every pure module
+(`*.test.js`) and jsdom render tests (`*.render.test.jsx`) for UI flows; see
+`test/README.md` for the layout, the full-App harness, and jsdom's gaps. The
 `buildUrl` test guards against request regressions (host; exact-year `year` CSV
 so non-contiguous profiles exclude gap years; no `seller_type`). Fixtures are in
 `test/fixtures/` — refresh
@@ -200,6 +207,26 @@ per environment (Preview vs Production) — set keys in the env you're testing.
 - Migrations are **append-only** and must be **idempotent** (see existing ones).
 - Don't commit secrets or `.env`. `.env.example` is the source of truth for vars.
 
+## UI patterns (reuse these)
+
+- **Tabs** (`TABS` in `App.jsx`): Dashboard, Profiles (profile editor `ProfEd`:
+  search fields, trim include/exclude — free-text, comma-separated, not chips —
+  `ColorFilter` chips), Criteria, Results (candidates `CandCard`, watchlist
+  `LCard`), Compare (sortable table; rows open the card), Price, Settings, Help.
+  User-facing changes get a line in `HelpTab`.
+- **Modals:** fixed backdrop (`zIndex: 200`) that closes on `onMouseDown`, inner
+  dialog stops propagation, Escape closes via a `keydown` listener —
+  `QuotaModal`, `ListingModal`.
+- **Listing cards:** `cardProps(listing, ctx, stale, criteriaStale)` builds
+  `LCard`'s props from the App's handlers, so any view can show the Results card.
+- **Toggles:** render `<Check on={…} />` instead of a conditional "✓ " so the
+  button keeps its width; keep border widths constant between states.
+- **Sortable tables:** `sortRows` / `nextSort` / `sortIndicator` + the `cs-sort`
+  class (Compare, Price Check comps).
+- **Touch / iOS Home Screen:** the owner uses it as an iPhone web app. Inputs are
+  16px on coarse pointers (no zoom); HTML5 drag-and-drop doesn't work with touch,
+  so drags use pointer events on a `touch-action: none` grip (Compare headers).
+
 ## Debugging playbook
 
 ### Sync returns "0 found" / query errors
@@ -221,6 +248,14 @@ per environment (Preview vs Production) — set keys in the env you're testing.
    - Radius > 100 on the free tier (Price Check's live comps) → set `MARKETCHECK_RADIUS=100`.
 4. To exercise the full candidate/approve flow **without** the API or key, the
    proxy supports `?mock=1` (synthetic listings).
+
+### Probing MarketCheck live
+Every call is billed against the key's 500/month free quota — errors, 404s and
+`rows=0` counts included — and there is no free endpoint that reports the
+quota (it's only learned from the `quota-*` headers of real calls). Ask the
+owner before spending calls, keep probes to one or two, and never commit a key.
+`?mock=1` costs nothing. What's already verified live is listed in
+`docs/listing-pipeline.md` §2–3 — check there before re-probing.
 
 ### Headless / agent debugging (no email login)
 If `DEBUG_TOKEN` is set in the server env (a long random secret), call the API
@@ -273,7 +308,9 @@ Supabase-idiomatic route is a dedicated password user via
 `main` has a ruleset requiring the **`test`** check (the `npm test` + `npm run
 build` workflow), and the repo allows **auto-merge**. Open the PR, enable
 auto-merge (squash) on it, and move on — GitHub merges once `test` passes, and
-red CI can't merge. Don't make the migrations `validate` check required: it only
+red CI can't merge. The owner merges freely — no need to ask. After a squash
+merge, start follow-up work from the new `main` (the old commits aren't
+ancestors of it). Don't make the migrations `validate` check required: it only
 runs on some PRs, so others would wait on it forever.
 
 ## Deploy

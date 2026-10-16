@@ -7,8 +7,8 @@
 // for the accounts in CRON_SYNC_EMAILS (default: the owner). Price changes and
 // last-seen updates are written straight into the user's app_state blob
 // (flagged reviewPending, same as an in-app sync); brand-new VINs are parked
-// in the review queue (data.candidates, flagged fromScheduled), which the client
-// queue on next open. No AI scoring here — that stays a client-initiated
+// in the review queue (data.candidates, flagged fromScheduled), which every
+// device shows on next open. No AI scoring here — that stays a client-initiated
 // action against the user's own key/quota.
 //
 // Scheduled sync is OFF BY DEFAULT: the endpoint does nothing (a clean no-op)
