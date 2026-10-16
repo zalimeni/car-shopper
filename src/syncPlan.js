@@ -138,8 +138,11 @@ export function estimateCost(profiles, meta, listings, opts, nowMs) {
 // onProgress({ done, total, label, listings }) after each step.
 // opts.colorCache: settings.mcColors — VIN -> decoded color (or { color: null } for
 // "decoded, none"), so a car is never decoded twice.
+// opts.alsoDecode: more colorless VINs to decode (e.g. queued candidates this sync's
+// searches didn't return); they come after this sync's own cars, within the cap.
 export async function runSync(steps, tracked, exec, onProgress, opts) {
   const colorCache = (opts && opts.colorCache) || {};
+  const alsoDecode = ((opts && opts.alsoDecode) || []).map(function (v) { return String(v || "").trim().toUpperCase(); }).filter(Boolean);
   const report = typeof onProgress === "function" ? onProgress : function () {};
   const out = {
     listings: [], results: [], goneVins: [], errors: [], notices: [], keyQuotas: [], calls: 0,
@@ -196,7 +199,8 @@ export async function runSync(steps, tracked, exec, onProgress, opts) {
   // Fill missing colors: remembered decodes first, then NeoVIN for the rest (capped).
   const colorless = Object.keys(seen).filter(function (v) { return !seen[v].color && !seen[v].baseColor; });
   colorless.forEach(function (v) { if (colorCache[v] && colorCache[v].baseColor) applyColor(v, colorCache[v]); });
-  const toDecode = colorless.filter(function (v) { return !(v in colorCache); }).slice(0, DECODE_MAX);
+  const extra = alsoDecode.filter(function (v) { return !seen[v] && colorless.indexOf(v) < 0; });
+  const toDecode = colorless.concat(extra).filter(function (v) { return !(v in colorCache); }).slice(0, DECODE_MAX);
   if (toDecode.length) {
     let r;
     try { r = await exec({ kind: "decode", vins: toDecode }); } catch (e) { r = failed(e); }
