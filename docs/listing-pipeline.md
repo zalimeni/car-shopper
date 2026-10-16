@@ -95,7 +95,8 @@ color at all — shown as "Color not listed"). A profile's hidden colors and its
 like trim excludes, so an unexpected or missing color is never silently dropped by
 the search. The editor's color list comes from a `facets=base_exterior_color` on a
 rows=0 count (verified live to list every base color — Outback: 11, Purple: 1),
-taken when a profile is saved with new search filters: 1 call.
+taken when a profile is saved with new search filters (1 call) and refreshed by
+every full refresh (the facet rides on its page 1 — no extra call).
 
 **Travel flags, not filters.** Nothing is filtered on distance (a far car can be
 shipped). `src/travel.js` flags each listing from the dealer's coordinates:

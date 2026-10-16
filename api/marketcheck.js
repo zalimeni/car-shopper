@@ -463,7 +463,8 @@ async function getPage(s, makeUrl, label) {
 
 // One step -> the session report plus { listings, numFound }.
 // step: { kind: "full" | "new" | "count" | "vins" | "local", profile, since, vins, excludeSalt, hub }
-//   full  — every car matching the profile nationwide (salt states excluded unless
+//   full  — every car matching the profile nationwide, plus its color breakdown
+//           (a facet on page 1 — no extra call) (salt states excluded unless
 //           excludeSalt === false). Over the 500-row ceiling the state list is
 //           halved until each part fits; a single state still too big pages to the
 //           ceiling and says so.
@@ -472,6 +473,17 @@ async function getPage(s, makeUrl, label) {
 //   count — num_found plus the color facet (rows=0): one call, no paging.
 //   vins  — the listed rows for up to 50 VINs (vin= takes a list), every page.
 //   local — the old radius search around one hub (Price Check's live comps).
+// A page's base_exterior_color facet -> { counts: { Black: 261, … }, unlisted }
+// (unlisted = matching cars with no color at all), or null without the facet.
+function colorsOf(pg) {
+  const f = pg && pg.facets && Array.isArray(pg.facets.base_exterior_color) ? pg.facets.base_exterior_color : null;
+  if (!f) return null;
+  const counts = {};
+  let total = 0;
+  f.forEach(function (x) { if (x && x.item) { counts[x.item] = Number(x.count) || 0; total += counts[x.item]; } });
+  return { counts: counts, unlisted: pg.numFound != null ? Math.max(0, pg.numFound - total) : null };
+}
+
 export async function runStep(s, step) {
   step = step || {};
   const profile = step.profile && step.profile.params ? step.profile : null;
@@ -507,8 +519,13 @@ export async function runStep(s, step) {
   // Full refresh over a list of states, halving it while the result is too big.
   async function fullOver(list) {
     const make = nat({ state: list.join(",") });
-    const p1 = await getPage(s, function (k) { return make(k, 0); }, label);
+    // The top-level page 1 also asks for the color breakdown of the whole match
+    // set (a facet: same call, nothing extra), so each full refresh keeps the
+    // profile's color list current.
+    const top = list === states;
+    const p1 = await getPage(s, function (k) { const u = make(k, 0); return top ? u + "&facets=base_exterior_color" : u; }, label);
     if (!p1) return null;
+    if (top) colors = colorsOf(p1);
     p1.rows.forEach(keep);
     const n = p1.numFound;
     if (n != null && n > PAGE_LIMIT && list.length > 1) {
@@ -543,12 +560,7 @@ export async function runStep(s, step) {
     const pg = await getPage(s, function (k) { return nat({ state: states.join(","), rows: "0", facets: "base_exterior_color" })(k, 0); }, label);
     if (pg) {
       numFound = pg.numFound;
-      const f = pg.facets && Array.isArray(pg.facets.base_exterior_color) ? pg.facets.base_exterior_color : null;
-      if (f) {
-        const counts = {};
-        f.forEach(function (x) { if (x && x.item) counts[x.item] = Number(x.count) || 0; });
-        colors = { counts: counts, unlisted: numFound != null ? Math.max(0, numFound - f.reduce(function (a, x) { return a + (Number(x && x.count) || 0); }, 0)) : null };
-      }
+      colors = colorsOf(pg);
     }
   } else if (step.kind === "new") {
     const since = Math.max(1, Number(step.since) || 1);

@@ -111,3 +111,13 @@ describe("travel flags", () => {
     expect(travelFacts({ dLat: 33.45, dLon: -112.07 }, null)).toMatchObject({ homeMi: null, farFromHome: false, airport: { code: "PHX" } });
   });
 });
+
+describe("full refresh colors reach the profile's meta", () => {
+  it("nextProfileMeta stores a step's color breakdown with its time", () => {
+    const now = iso(0);
+    const m = nextProfileMeta({}, [{ profile: bolt, kind: "full", numFound: 80, colors: { counts: { Blue: 50, White: 25 }, unlisted: 5 }, ok: true }], OPTS, now);
+    expect(m.bolt.colors).toEqual({ counts: { Blue: 50, White: 25 }, unlisted: 5, at: now });
+    const n = nextProfileMeta(m, [{ profile: bolt, kind: "new", numFound: 80, colors: null, ok: true }], OPTS, iso(-1));
+    expect(n.bolt.colors.at).toBe(now); // a new-listings pass leaves it alone
+  });
+});
