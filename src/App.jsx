@@ -1417,7 +1417,8 @@ export default function App() {
             scoreModel={scoreModel} setScoreModel={setScoreModel} goSettings={function () { setTab("Settings"); }} />
         )}
         {tab === "Help" && <HelpTab />}
-        {tab === "Compare" && <CompareTab data={data} />}
+        {tab === "Compare" && <CompareTab data={data} cardCtx={{ data: data, edListing: edListing, setEdListing: setEdListing, updListing: updListing, delListing: delListing,
+          markChk: markChk, scoreItems: scoreItems, scoreBusy: scoreBusy, keyStatus: keyStatus, scoringActive: scoringActive }} />}
         {tab === "Price" && <PriceCheckTab data={data} candidates={candidates} keyStatus={keyStatus} onQuota={noteQuota} goSettings={function () { setTab("Settings"); }} />}
         {tab === "Settings" && <SettingsTab data={data} save={save} keyStatus={keyStatus} setKeyStatus={setKeyStatus} />}
         {tab === "Admin" && isAdmin && <AdminTab />}
@@ -2556,10 +2557,10 @@ function Wizard({ data, onComplete }) {
               <p style={lbl}>The starter set is the owner's picks: <span style={b}>{starterProfiles.map(function (p) { return p.name; }).join(", ") || "none"}</span> — hybrid/EV oriented.</p>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <button style={Object.assign({}, S.secBtn, keepProfiles ? { borderColor: "#2563eb", color: "#fff" } : {})} onClick={function () { setKeepProfiles(true); }}>
-                  {keepProfiles ? "✓ " : ""}Keep the {starterProfiles.length} starter profile{starterProfiles.length === 1 ? "" : "s"} (edit later)
+                  <Check on={keepProfiles} />Keep the {starterProfiles.length} starter profile{starterProfiles.length === 1 ? "" : "s"} (edit later)
                 </button>
                 <button style={Object.assign({}, S.secBtn, !keepProfiles ? { borderColor: "#2563eb", color: "#fff" } : {})} onClick={function () { setKeepProfiles(false); }}>
-                  {!keepProfiles ? "✓ " : ""}Start blank — I'll add my own
+                  <Check on={!keepProfiles} />Start blank — I'll add my own
                 </button>
               </div>
             </div>
@@ -2665,6 +2666,9 @@ function AdminTab() {
 }
 
 // ── Compare ──
+// A toggle's check mark that keeps its space when off, so toggling never
+// resizes the button (and reflows its neighbours).
+function Check({ on }) { return (<span aria-hidden="true" style={{ visibility: on ? "visible" : "hidden" }}>✓ </span>); }
 function scoreHue(v) { return v >= 7 ? "#2d8659" : v >= 5 ? "#d4a017" : "#c44"; }
 
 // Is a list price fair? Checks a VIN-or-description against comparable cars in
@@ -2901,12 +2905,15 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings, onQuota
   );
 }
 
-function CompareTab({ data }) {
+function CompareTab({ data, cardCtx }) {
   var profs = data.profiles || [];
   var [sel, setSel] = useState(function () { return profs.map(function (p) { return p.id; }); });
   var [cmpDealer, setCmpDealer] = useState("all");
   var [cmpTag, setCmpTag] = useState("all");
   var [detail, setDetail] = useState(null); // { listing, crit|null, score, text }
+  var [openId, setOpenId] = useState(null); // row tapped → its card in a modal
+  var openL = openId ? data.listings.find(function (l) { return (l.id || l.vin) === openId; }) || null : null;
+  var closeModal = useCallback(function () { setOpenId(null); }, []);
   var [sort, setSort] = useState({ key: "score", dir: "desc" }); // best-scoring first
   function toggle(id) { setSel(function (prev) { return prev.indexOf(id) > -1 ? prev.filter(function (x) { return x !== id; }) : prev.concat(id); }); }
 
@@ -2978,7 +2985,7 @@ function CompareTab({ data }) {
       var sBest = best != null && best > 0 && sv === best;
       var sum = l.aiSummary;
       var ss = Object.assign({}, cell, { fontWeight: 700, color: sv ? scoreHue(sv) : "#555" }, sum ? tap : {});
-      return (<td key={col.key} style={ss} onClick={sum ? function () { setDetail({ listing: l, crit: null, score: sv, text: sum }); } : undefined}>{sv || "—"}{sBest ? " ★" : ""}</td>);
+      return (<td key={col.key} style={ss} onClick={sum ? function (e) { e.stopPropagation(); setDetail({ listing: l, crit: null, score: sv, text: sum }); } : undefined}>{sv || "—"}{sBest ? " ★" : ""}</td>);
     }
     if (col.kind === "crit") {
       var cv = l.scores && l.scores[col.crit.id];
@@ -2986,7 +2993,7 @@ function CompareTab({ data }) {
       var cBest = best != null && cv === best;
       var rat = l.aiRationales && l.aiRationales[col.crit.id];
       var cs = Object.assign({}, cell, { color: scoreHue(cv), fontWeight: cBest ? 700 : 400 }, rat ? tap : {});
-      return (<td key={col.key} style={cs} onClick={rat ? function () { setDetail({ listing: l, crit: col.crit, score: cv, text: rat }); } : undefined}>{cv}{cBest ? " ★" : ""}</td>);
+      return (<td key={col.key} style={cs} onClick={rat ? function (e) { e.stopPropagation(); setDetail({ listing: l, crit: col.crit, score: cv, text: rat }); } : undefined}>{cv}{cBest ? " ★" : ""}</td>);
     }
     if (col.kind === "cpo") {
       var yes = isCpo(l);
@@ -3002,14 +3009,14 @@ function CompareTab({ data }) {
     <div>
       <div style={S.secH}><h2 style={S.secT}>Compare</h2></div>
       <div style={S.card}>
-        <p style={S.help}>Watchlist listings (rows) for the selected profiles, with each listing's price/mileage and a CPO column. Filter by dealer type below. Click any column heading to sort by it — click again to reverse; listings missing that value stay at the bottom either way. Best value per column is highlighted (★ / green). Tap an underlined score (or a row's total) for the AI rationale.</p>
+        <p style={S.help}>Watchlist listings (rows) for the selected profiles, with each listing's price/mileage and a CPO column. Filter by dealer type below. Click any column heading to sort by it — click again to reverse; listings missing that value stay at the bottom either way. Best value per column is highlighted (★ / green). Tap an underlined score (or a row's total) for the AI rationale; tap anywhere else on a row to open its card (edit tags, notes, status).</p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
           {profs.map(function (p) {
             var on = sel.indexOf(p.id) > -1;
             return (
               <button key={p.id} onClick={function () { toggle(p.id); }}
                 style={Object.assign({}, S.searchBtn, on ? { borderColor: "#2563eb", color: "#fff" } : { opacity: 0.55 })}>
-                {on ? "✓ " : ""}{p.name}
+                <Check on={on} />{p.name}
               </button>
             );
           })}
@@ -3051,7 +3058,7 @@ function CompareTab({ data }) {
                 var url = l.link || (l.vin ? "https://www.google.com/search?q=" + encodeURIComponent(l.vin) : "");
                 var prof = data.profiles.find(function (p) { return p.id === l.profileId; });
                 return (
-                  <tr key={l.id || i}>
+                  <tr key={l.id || i} className="cs-row" style={{ cursor: "pointer" }} title="Open this listing" onClick={function () { setOpenId(l.id || l.vin); }}>
                     <td style={rowLabel}>
                       <div style={{ color: "#f0f0f3", fontWeight: 600 }}>{l.year} {l.vehicle}</div>
                       {l.trim && <div style={{ fontSize: 11, color: "#8a8a96" }}>{l.trim}</div>}
@@ -3061,8 +3068,13 @@ function CompareTab({ data }) {
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
                         {prof && <RoleBadge role={prof.role} />}
-                        {url && <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#8ab4f8" }}>view →</a>}
+                        {url && <a href={url} target="_blank" rel="noopener noreferrer" onClick={function (e) { e.stopPropagation(); }} style={{ fontSize: 11, color: "#8ab4f8" }}>view →</a>}
                       </div>
+                      {Array.isArray(l.tags) && l.tags.length > 0 && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 4 }}>
+                          {l.tags.map(function (t) { return (<span key={t} style={{ background: "#1b2236", border: "1px solid #2a3554", borderRadius: 10, padding: "0 6px", fontSize: 10, color: "#b8c4e0", whiteSpace: "nowrap" }}>🏷 {t}</span>); })}
+                        </div>
+                      )}
                     </td>
                     {cols.map(function (col) { return renderCell(l, col); })}
                   </tr>
@@ -3084,6 +3096,7 @@ function CompareTab({ data }) {
           <div style={{ fontSize: 13, color: "#c8c8d0", lineHeight: 1.5 }}>{detail.text}</div>
         </div>
       )}
+      {openL && cardCtx && <ListingModal listing={openL} ctx={cardCtx} onClose={closeModal} />}
     </div>
   );
 }
@@ -3111,7 +3124,7 @@ function HelpTab() {
         <p style={li}><span style={b}>Profiles</span> — add/edit/enable the vehicles you're searching for. Each active profile is one nationwide search on sync; its card shows how many cars it matches.</p>
         <p style={li}><span style={b}>Criteria</span> — the weighted factors (price, mileage, condition, etc.) behind each listing's composite score. Editing weights re-scores everything automatically.</p>
         <p style={li}><span style={b}>Results</span> — sync, review candidates, and manage your watchlist. This is where you'll spend most of your time.</p>
-        <p style={li}><span style={b}>Compare</span> — side-by-side table of watchlist listings for the profiles you pick, across primary specs and each scoring criterion plus the total; best value per row is highlighted.</p>
+        <p style={li}><span style={b}>Compare</span> — side-by-side table of watchlist listings for the profiles you pick, across primary specs and each scoring criterion plus the total; best value per row is highlighted. Each row shows its tags; tap a row to open its full card (edit tags and notes, open the listing).</p>
         <p style={li}><span style={b}>Price</span> — is an asking price fair? Enter a VIN or a description (year/make/model/trim/mileage) and it's judged against comparable cars in your own tracked, rejected, sold, skipped &amp; candidate data — free and offline. A confidence badge reflects how many comps backed the read and how tightly they cluster. Thin on local comps? <span style={b}>Check the live market</span> fires a one-off MarketCheck search for that vehicle around your home base (1–4 calls of your quota) to widen the pool. With an Anthropic key you can also ask AI for a plain-English verdict, weighted to the confidence. Great for sanity-checking a private listing you found elsewhere.</p>
       </div>
 
@@ -3257,16 +3270,9 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   var [showSkipped, setShowSkipped] = useState(false);
   var [showTrimHidden, setShowTrimHidden] = useState(false);
 
-  function cp(l, stale) {
-    return { key: l.id, listing: l, data: data, editing: edListing === l.id,
-      onEdit: function () { setEdListing(edListing === l.id ? null : l.id); },
-      onUpd: function (u) { updListing(l.id, u); setEdListing(null); },
-      onStatus: function (s) { updListing(l.id, { status: s }); },
-      onDel: function () { delListing(l.id); },
-      onChk: function () { markChk(l.id); }, stale: stale, criteriaStale: staleOf(l),
-      onScore: function () { scoreItems([], [l]); }, scoreBusy: scoreBusy, keyOk: keyStatus.valid,
-      scoring: scoringActive.indexOf(l.id || l.vin) > -1 };
-  }
+  var cardCtx = { data: data, edListing: edListing, setEdListing: setEdListing, updListing: updListing, delListing: delListing,
+    markChk: markChk, scoreItems: scoreItems, scoreBusy: scoreBusy, keyStatus: keyStatus, scoringActive: scoringActive };
+  function cp(l, stale) { return cardProps(l, cardCtx, stale, staleOf(l)); }
 
   var totalShown = staleW.length + freshW.length + rejL.length + soldL.length;
   var totalAll = data.listings.length;
@@ -4111,6 +4117,45 @@ export function TagEditor({ tags, known, onChange }) {
           <button style={Object.assign({}, S.smBtn, { fontSize: 11, color: "#6b6b76" })} onClick={function () { setOpen(false); setText(""); }}>Done</button>
         </span>
       )}
+    </div>
+  );
+}
+
+// Props for a watchlist card (LCard) — shared by Results and Compare's modal.
+// `c` carries the App's listing handlers + scoring state.
+function cardProps(l, c, stale, criteriaStale) {
+  return { key: l.id, listing: l, data: c.data, editing: c.edListing === l.id,
+    onEdit: function () { c.setEdListing(c.edListing === l.id ? null : l.id); },
+    onUpd: function (u) { c.updListing(l.id, u); c.setEdListing(null); },
+    onStatus: function (s) { c.updListing(l.id, { status: s }); },
+    onDel: function () { c.delListing(l.id); },
+    onChk: function () { c.markChk(l.id); }, stale: stale, criteriaStale: criteriaStale,
+    onScore: function () { c.scoreItems([], [l]); }, scoreBusy: c.scoreBusy, keyOk: !!(c.keyStatus && c.keyStatus.valid),
+    scoring: (c.scoringActive || []).indexOf(l.id || l.vin) > -1 };
+}
+
+// Compare's row → the same card Results shows, in a modal (edit tags, open the
+// link, change status). Closes on Escape, a backdrop tap, or when the listing
+// goes away (deleted).
+function ListingModal({ listing, ctx, onClose }) {
+  useEffect(function () {
+    function onKey(e) { if (e.key === "Escape") onClose(); }
+    window.addEventListener("keydown", onKey);
+    return function () { window.removeEventListener("keydown", onKey); };
+  }, [onClose]);
+  var l = listing;
+  var prof = (ctx.data.profiles || []).find(function (p) { return p.id === l.profileId; }) || null;
+  var props = cardProps(l, ctx, daysSince(l.lastChecked) >= STALE_DAYS, scoreIsStale(l, scoreInputHash(ctx.data, prof)));
+  delete props.key;
+  return (
+    <div onMouseDown={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.62)", zIndex: 200, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "6vh 12px 12px", overflowY: "auto" }}>
+      <div role="dialog" aria-modal="true" aria-label={(l.year || "") + " " + (l.vehicle || "listing")} onMouseDown={function (e) { e.stopPropagation(); }}
+        style={{ width: "100%", maxWidth: 640 }}>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6 }}>
+          <button style={Object.assign({}, S.smBtn, { background: "#161820" })} onClick={onClose}>Close</button>
+        </div>
+        <LCard {...props} />
+      </div>
     </div>
   );
 }

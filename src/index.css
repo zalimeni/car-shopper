@@ -82,3 +82,8 @@ a {
 .cs-sort:hover {
   color: #e4e4e7;
 }
+
+/* Compare: a row opens its listing card */
+.cs-row:hover > td {
+  background-color: #1b1e28 !important;
+}
