@@ -94,6 +94,9 @@ See `docs/listing-pipeline.md` for the full design. In short:
   holds it in `data` and saves via `save()` / `saveRecalc()` / `patchListings()`.
   There is no per-listing table. Bump `VERSION` + add a `migrate()` step when the
   blob shape changes (see the v6 `settings` migration).
+  The candidate **review queue** is not in the blob: it's kept per device in
+  `localStorage` (`cs-candidates`, ≤300, pruned of approved/skipped VINs on load,
+  cleared on sign-out) — so it survives closing the app; a sync rebuilds it elsewhere.
 - **AI scoring:** `src/score.js` → `POST /api/score` decrypts the user's vaulted
   Anthropic key (`_crypto` + `_supabaseAdmin`) and scores each listing against a
   JSON schema built from the user's criteria (`_scoring.js`, model allowlisted).
