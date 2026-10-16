@@ -528,6 +528,32 @@ function ssSet(key, val) {
   try { sessionStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* unavailable */ }
 }
 
+// The candidate review queue is kept on this device (localStorage), so it survives
+// closing the app — sessionStorage didn't, and an iPhone Home Screen app loses it
+// whenever iOS closes the app. Per device, not synced: a fresh sync rebuilds it
+// elsewhere. Bounded, and cars since approved/skipped are dropped on load.
+var QUEUE_KEY = "cs-candidates";
+var QUEUE_MAX = 300;
+export function loadQueue() {
+  try {
+    var v = localStorage.getItem(QUEUE_KEY);
+    if (v != null) return JSON.parse(v) || [];
+  } catch (e) { /* unavailable */ }
+  return ssGet(QUEUE_KEY, []); // a queue saved before it moved to localStorage
+}
+export function saveQueue(list) {
+  var q = Array.isArray(list) ? list : [];
+  if (q.length > QUEUE_MAX) q = q.slice(q.length - QUEUE_MAX); // keep the newest
+  try { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); } catch (e) { /* full or unavailable */ }
+}
+// Queue entries already decided: on the watchlist (or rejected/sold) or skipped.
+export function pruneQueue(queue, data) {
+  var done = {};
+  ((data && data.listings) || []).forEach(function (l) { if (l.vin) done[String(l.vin).toUpperCase()] = true; });
+  ((data && data.skipped) || []).forEach(function (l) { if (l.vin) done[String(l.vin).toUpperCase()] = true; });
+  return (queue || []).filter(function (c) { return !c || !c.vin || !done[String(c.vin).toUpperCase()]; });
+}
+
 // URL-hash deep links: "#results" opens a tab, "#results/rav4-hybrid" opens
 // Results filtered to a profile — so a view can be bookmarked/shared. Returns
 // null when the hash names no known tab.
@@ -558,7 +584,7 @@ export default function App() {
   var [tab, setTab] = useState(function () { var h = tabFromHash(); return (h && h.tab) || ssGet("cs-tab", "Dashboard"); });
   var [saving, setSaving] = useState(false);
   var [edListing, setEdListing] = useState(null);
-  var [candidates, setCandidates] = useState(function () { return ssGet("cs-candidates", []); });
+  var [candidates, setCandidates] = useState(loadQueue);
   var [importText, setImportText] = useState("");
   var [importResult, setImportResult] = useState(null);
   var [filterProf, setFilterProf] = useState(function () { var h = tabFromHash(); return (h && h.prof) || "all"; });
@@ -630,7 +656,7 @@ export default function App() {
 
   // Persist the volatile bits so an app-switch reload restores them.
   useEffect(function () { ssSet("cs-tab", tab); }, [tab]);
-  useEffect(function () { ssSet("cs-candidates", candidates); }, [candidates]);
+  useEffect(function () { saveQueue(candidates); }, [candidates]);
   useEffect(function () { ssSet("cs-rawDebug", rawDebug); }, [rawDebug]);
 
   // Mirror the current view into the URL hash (replaceState — no history spam)
@@ -675,11 +701,15 @@ export default function App() {
           d.listings = recalcAll(d.listings || [], d.criteria || DEFAULT_CRITERIA);
           // The scheduled background sync (api/cron-sync.js) parks new finds in
           // pendingCandidates — drain them into this device's review queue.
+          // A queue kept from an earlier visit may hold cars since approved or
+          // skipped (here or on another device) — drop those.
+          var dLoaded = d;
+          setCandidates(function (prev) { var p = pruneQueue(prev, dLoaded); return p.length === prev.length ? prev : p; });
           var pend = Array.isArray(d.pendingCandidates) ? d.pendingCandidates : [];
           if (pend.length > 0) {
             var skv = {};
             (d.skipped || []).forEach(function (s) { if (s.vin) skv[s.vin] = true; });
-            // `candidates` here is the mount-time (session-restored) queue —
+            // `candidates` here is the mount-time (restored) queue —
             // nothing else has touched it yet, so dedup against it directly.
             var seenV = {};
             candidates.forEach(function (c) { if (c.vin) seenV[c.vin] = true; });
