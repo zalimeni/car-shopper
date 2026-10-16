@@ -20,6 +20,15 @@ input, select, textarea, button {
   font-family: inherit;
 }
 
+/* iOS Safari zooms the page into any focused field under 16px (and the Home
+   Screen app stays zoomed). Inputs are styled inline at 12–14px, so on touch
+   screens lift form fields to 16px — !important beats the inline sizes. */
+@media (pointer: coarse) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
 a {
   color: inherit;
 }
