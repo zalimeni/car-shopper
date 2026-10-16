@@ -109,6 +109,7 @@ describe("normalize", () => {
       location: "Attleboro",
       state: "MA",
       color: "Midnight Black Metallic",
+      baseColor: null, // this fixture predates base_ext_color
       link: "https://www.courtesymitsubishima.com/auto/used-2021-toyota-rav4-hybrid-le-attleboro-ma/121137914/",
       photo: "",
       dom: null, // older fixture: no dos_active / dom_active (its plain dom 18 is deliberately ignored)

@@ -119,3 +119,18 @@ describe("local search (Price Check's live comps)", () => {
     expect([q.get("sort_by"), q.get("rows"), q.get("latitude")]).toEqual(["dos_active", "0", null]);
   });
 });
+
+describe("count step returns the color breakdown", () => {
+  it("reads the base_exterior_color facet and how many cars list no color", async () => {
+    mockFetch(() => ({ num_found: 1001, listings: [], facets: { base_exterior_color: [{ item: "Black", count: 261 }, { item: "Gray", count: 204 }, { item: "White", count: 186 }, { item: "Silver", count: 168 }, { item: "Blue", count: 148 }] } }));
+    const r = await step({ kind: "count", profile: tucson });
+    expect(calls[0].facets).toBe("base_exterior_color");
+    expect(r.numFound).toBe(1001);
+    expect(r.colors).toEqual({ counts: { Black: 261, Gray: 204, White: 186, Silver: 168, Blue: 148 }, unlisted: 34 });
+  });
+  it("normalize keeps MarketCheck's base color", async () => {
+    mockFetch(() => ({ num_found: 1, listings: [car("C", { exterior_color: "Phantom Black Pearl", base_ext_color: "Black" })] }));
+    const r = await step({ kind: "full", profile: tucson });
+    expect(r.listings[0]).toMatchObject({ color: "Phantom Black Pearl", baseColor: "Black" });
+  });
+});

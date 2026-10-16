@@ -14,6 +14,7 @@ import { sortRows, nextSort, sortIndicator } from "./tableSort";
 import { homeMiles } from "./geo";
 import { parseMarkdown, clampMemo, MEMO_MAX } from "./markdown";
 import { addTag, removeTag, allTags, hasTag, TAG_MAX } from "./tags";
+import { baseColorOf, colorHideReason, colorChoices, COMMON_COLORS } from "./colors";
 import { summarize, ingestSnaps, recordSyncCalls, syncsLeft, gaugeTone, dedupeKeyEntries, spentKeyIds, FREE_PLAN_CALLS } from "./quota";
 import { loadLocations, searchLocations, hubFromZip } from "./locations";
 
@@ -91,6 +92,7 @@ var DEFAULT_SETTINGS = {
   // are nationwide.
   homeBase: HOME_BASE, // { n, z, lat, lon }
   saltMode: "exclude", // salt-belt dealers (src/regions.js): "exclude" from searches, or "flag" them
+  defaultExcludeColors: [], // exterior colors new profiles start out hiding (src/colors.js)
   mcQuota: null, // latest MarketCheck quota snapshot per key + last sync cost (see src/quota.js)
   mcApi: null, // MarketCheck API version + deprecation/sunset headers from the last response (drift banner)
   mcProfiles: null, // { profileId: { fullAt, lastAt, sig, count, countSig, countAt } } — src/syncPlan.js
@@ -404,6 +406,19 @@ function trimAllowed(trimText, includeStr, excludeStr) {
   var inc = terms(includeStr);
   if (inc.length && !inc.some(function (e) { return t.indexOf(e) > -1; })) return false;
   return true;
+}
+
+// Why a profile's own filters hide a candidate (trim include/exclude, then exterior
+// color — both applied on our side after the search), or null when it shows.
+function candHideReason(c, p) {
+  if (!p || !p.params) return null;
+  var t = ((c.trim || "") + " " + (c.vehicle || "")).toLowerCase();
+  if (!trimAllowed(t, p.params.trimInclude, p.params.trimExclude)) {
+    var m = (p.params.trimExclude || "").split(",").map(function (x) { return x.trim(); }).filter(Boolean).filter(function (e) { return t.indexOf(e.toLowerCase()) > -1; });
+    return { kind: "trim", text: m.length ? "matches trim exclude: " + m.join(", ") : "trim not in include list" };
+  }
+  var cr = colorHideReason(c, p.params);
+  return cr ? { kind: "color", text: cr } : null;
 }
 
 // ── Dedup: VIN match keeps lower price ──
@@ -908,8 +923,7 @@ export default function App() {
         var pool = candidates.concat(added);
         var newToScore = pool.filter(function (c) {
           if (c.scoredAt) return false;
-          var p = profById[c.profileId];
-          return !p || !p.params ? true : trimAllowed((c.trim || "") + " " + (c.vehicle || ""), p.params.trimInclude, p.params.trimExclude);
+          return !candHideReason(c, profById[c.profileId]);
         });
         var toScoreCount = newToScore.length + changed.length;
         if (toScoreCount > AUTO_SCORE_MAX) {
@@ -1000,8 +1014,7 @@ export default function App() {
     var approved = [];
     candidates.forEach(function (cand) {
       var p = profById[cand.profileId];
-      var pass = !p || !p.params ? true : trimAllowed((cand.trim || "") + " " + (cand.vehicle || ""), p.params.trimInclude, p.params.trimExclude);
-      if (!pass) return; // leave trim-hidden candidates in the queue
+      if (candHideReason(cand, p)) return; // leave trim/color-hidden candidates in the queue
       var nl = Object.assign({}, cand, {
         id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
         addedDate: cand.addedDate || today(), lastChecked: today(), _candidate: undefined, _dupe: undefined, _existingPrice: undefined, _cheaper: undefined
@@ -1053,6 +1066,41 @@ export default function App() {
       addTrimTerm(cand.profileId, "trimInclude", cand.trim);
     }
   }, [data, save, addTrimTerm]);
+
+  // Un-hide a color-hidden candidate: drop its color from the profile's excludes
+  // (or, for a car with no color listed, turn "include no color listed" back on).
+  var showColor = useCallback(function (cand) {
+    if (!data) return;
+    var base = baseColorOf(cand);
+    save(Object.assign({}, data, { profiles: data.profiles.map(function (x) {
+      if (x.id !== cand.profileId || !x.params) return x;
+      var np = base
+        ? { excludeColors: (x.params.excludeColors || []).filter(function (c) { return String(c).toLowerCase() !== base.toLowerCase(); }) }
+        : { includeUnlistedColor: true };
+      return Object.assign({}, x, { params: Object.assign({}, x.params, np) });
+    }) }));
+  }, [data, save]);
+
+  // A profile's nationwide match count + color breakdown (one rows=0 call with a
+  // facet). Fetched when a profile is saved with new search filters, or on request.
+  // Saves into the LATEST state — the call takes a moment and the edit that
+  // triggered it has just been saved.
+  var refreshProfileFacets = useCallback(async function (profile) {
+    var d0 = dataRef.current;
+    if (!d0 || !profile || !profile.params || !(profile.params.make || profile.params.model)) return null;
+    var po = planOpts(d0);
+    var r = await postStep({ kind: "count", profile: profile }, null, Object.assign({}, po, { marketcheckKeys: mcKeys(d0), spentKeys: mcSpent(d0) }));
+    var d = dataRef.current || d0;
+    var st = getSettings(d);
+    var nowIso = new Date().toISOString();
+    var meta = Object.assign({}, st.mcProfiles || {});
+    if (r.numFound != null) {
+      meta[profile.id] = Object.assign({}, meta[profile.id] || {}, { count: r.numFound, countSig: searchSig(profile, po), countAt: nowIso },
+        r.colors ? { colors: Object.assign({}, r.colors, { at: nowIso }) } : {});
+    }
+    await save(Object.assign({}, d, { settings: Object.assign({}, d.settings || {}, { mcProfiles: meta, mcQuota: ingestSnaps(st.mcQuota, r.keyQuotas, nowIso) }) }));
+    return r;
+  }, [save]);
 
   // Skipped → back into the review queue.
   var restoreSkipped = useCallback(function (entry) {
@@ -1253,14 +1301,14 @@ export default function App() {
           <DashView data={data} watch={watch} rej={rej} sold={sold}
             staleN={staleN} setTab={setTab} markAllChk={markAllChk} viewProfile={viewProfile} />
         )}
-        {tab === "Profiles" && <ProfilesTab data={data} save={save} keyOk={keyStatus.valid} scoreModel={scoreModel} />}
+        {tab === "Profiles" && <ProfilesTab data={data} save={save} keyOk={keyStatus.valid} scoreModel={scoreModel} refreshFacets={refreshProfileFacets} />}
         {tab === "Criteria" && <CriteriaTab data={data} saveRecalc={saveRecalc} save={save} />}
         {tab === "Results" && (
           <ResultsTab data={data} addListing={addListing} updListing={updListing} delListing={delListing}
             edListing={edListing} setEdListing={setEdListing} markChk={markChk}
             ackReview={ackReview} ackAllReviews={ackAllReviews}
             candidates={candidates} approveCand={approveCand}
-            approveAll={approveAll} dismissCand={dismissCand} excludeTrim={excludeTrim} showTrim={showTrim}
+            approveAll={approveAll} dismissCand={dismissCand} excludeTrim={excludeTrim} showTrim={showTrim} showColor={showColor}
             skipped={data.skipped || []} restoreSkipped={restoreSkipped} watchSkipped={watchSkipped} purgeSkipped={purgeSkipped}
             importText={importText} setImportText={setImportText} doImport={doImport} importResult={importResult} setImportResult={setImportResult}
             filterProf={filterProf} setFilterProf={setFilterProf}
@@ -1776,6 +1824,7 @@ export function SettingsCard({ data, save }) {
   var [tagline, setTagline] = useState(s.tagline || "");
   var [franchiseOnly, setFranchiseOnly] = useState(!!s.franchiseOnly);
   var [saltMode, setSaltMode] = useState(s.saltMode === "flag" ? "flag" : "exclude");
+  var [defColors, setDefColors] = useState((s.defaultExcludeColors || []).slice());
   var [mck, setMck] = useState((s.marketcheckKeys || []).map(function (k) { return { key: (k && k.key ? k.key : k) || "", label: (k && k.label) || "" }; }));
   var [home, setHome] = useState(s.homeBase || null);
 
@@ -1798,7 +1847,7 @@ export function SettingsCard({ data, save }) {
   function saveWith(idx) {
     var cleanMck = dedupeKeyEntries(mck); // the one place duplicate keys are handled
     var hb = withHomeCoords(home, idx);
-    save(Object.assign({}, data, { settings: Object.assign({}, s, { budget: parseInt(budget) || 0, tagline: tagline.trim(), franchiseOnly: franchiseOnly, saltMode: saltMode, marketcheckKeys: cleanMck, homeBase: hb ? { n: hb.n, z: hb.z, lat: hb.lat, lon: hb.lon } : null }) }));
+    save(Object.assign({}, data, { settings: Object.assign({}, s, { budget: parseInt(budget) || 0, tagline: tagline.trim(), franchiseOnly: franchiseOnly, saltMode: saltMode, defaultExcludeColors: defColors, marketcheckKeys: cleanMck, homeBase: hb ? { n: hb.n, z: hb.z, lat: hb.lat, lon: hb.lon } : null }) }));
     setOpen(false);
   }
 
@@ -1828,6 +1877,18 @@ export function SettingsCard({ data, save }) {
               <option value="flag">Include, but flag them</option>
             </select>
             <p style={S.help}>Salt-belt states: {SALT_STATES.join(", ")}. Excluding them also saves calls (their cars don't count toward results). The dealer's state is only a hint — a car may have lived elsewhere — so flagging keeps them in view. Changing this re-runs each profile's full search on the next sync.</p>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <label style={S.lbl}>Colors new profiles hide by default</label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 4 }}>
+              {COMMON_COLORS.map(function (c) {
+                var off = defColors.indexOf(c) > -1;
+                return (<button key={c} type="button" aria-pressed={off}
+                  style={Object.assign({}, S.smBtn, { fontSize: 12, borderRadius: 12, padding: "2px 10px", border: "1px solid " + (off ? "#5a2a2a" : "#2a3554"), color: off ? "#e07a7a" : "#c8c8d0", textDecoration: off ? "line-through" : "none" })}
+                  onClick={function () { setDefColors(off ? defColors.filter(function (x) { return x !== c; }) : defColors.concat([c])); }}>{c}</button>);
+              })}
+            </div>
+            <p style={S.help}>A starting point for each new profile's color filter — every profile can change its own (Profiles → Edit). Existing profiles aren't changed.</p>
           </div>
           <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, cursor: "pointer", fontSize: 13, color: "#c8c8d0" }}>
             <input type="checkbox" checked={franchiseOnly} onChange={function (e) { setFranchiseOnly(e.target.checked); }} />
@@ -1917,43 +1978,74 @@ function KeyCard({ keyStatus, setKeyStatus }) {
 
 // ── Profiles + Global Reqs ──
 // How many cars a profile matches nationwide — what its full refresh costs (one
-// call per 50). Known from its searches at no extra cost; after an edit it's stale
-// until the next sync, or a one-call count (rows=0) on request.
-export function ProfileCount({ p, data, save }) {
-  var [busy, setBusy] = useState(false);
+// call per 50) — plus any colors it hides. Measured when the profile is saved with
+// new search filters (one rows=0 call that also returns the color breakdown) and
+// by every search; "check now" re-measures on request (e.g. after a Settings change).
+export function ProfileCount({ p, data, refresh, busy }) {
+  var [checking, setChecking] = useState(false);
   var [err, setErr] = useState("");
   var po = planOpts(data);
   var meta = getSettings(data).mcProfiles || {};
   var st = profileStatus(p, meta, po);
+  var working = busy || checking;
   async function check() {
-    setBusy(true); setErr("");
+    setChecking(true); setErr("");
     try {
-      var r = await postStep({ kind: "count", profile: p }, null, Object.assign({}, po, { marketcheckKeys: mcKeys(data), spentKeys: mcSpent(data) }));
-      var nowIso = new Date().toISOString();
-      var s = getSettings(data);
-      var next = Object.assign({}, s.mcProfiles || {});
-      if (r.numFound != null) next[p.id] = Object.assign({}, next[p.id] || {}, { count: r.numFound, countSig: searchSig(p, po), countAt: nowIso });
-      save(Object.assign({}, data, { settings: Object.assign({}, data.settings || {}, { mcProfiles: next, mcQuota: ingestSnaps(s.mcQuota, r.keyQuotas, nowIso) }) }));
-      if (r.errors && r.errors.length) setErr(String(r.errors[0]).slice(0, 200));
+      var r = await refresh(p);
+      if (r && r.errors && r.errors.length) setErr(String(r.errors[0]).slice(0, 200));
     } catch (e) { setErr(e.message); }
-    setBusy(false);
+    setChecking(false);
   }
   var n = function (v) { return Number(v).toLocaleString(); };
   var big = st.count != null && st.count > COUNT_WARN;
+  var exc = (p.params && p.params.excludeColors) || [];
   return (
     <div style={{ marginTop: 6, fontSize: 12, color: big && st.countCurrent ? "#e8c96a" : "#6b6b76" }}>
-      {st.count != null && st.countCurrent ? (
+      {working ? <span>Measuring matches and colors…</span> : st.count != null && st.countCurrent ? (
         <span>{big ? "⚠ " : ""}{n(st.count)} matching cars nationwide — a full refresh is ~{n(Math.max(1, Math.ceil(st.count / MC_ROWS)))} call{st.count > MC_ROWS ? "s" : ""}{big ? ". Narrow price, miles or years to cut that." : "."}</span>
       ) : (
-        <span>{st.count != null ? "Match count (" + n(st.count) + ") is from before your last edit." : "Match count not known yet."} Next sync measures it, or{" "}
-          <button style={Object.assign({}, S.smBtn, { fontSize: 11 })} disabled={busy} onClick={check}>{busy ? "Checking…" : "check now (1 call)"}</button></span>
+        <span>{st.count != null ? "Match count (" + n(st.count) + ") is from before your last change." : "Match count not known yet."} Next sync measures it, or{" "}
+          {refresh ? <button style={Object.assign({}, S.smBtn, { fontSize: 11 })} onClick={check}>check now (1 call)</button> : null}</span>
       )}
+      {(exc.length || (p.params && p.params.includeUnlistedColor === false)) ? (
+        <div style={{ color: "#6b6b76" }}>Hiding {exc.length ? "colors: " + exc.join(", ") : ""}{exc.length && p.params.includeUnlistedColor === false ? " and " : ""}{p.params.includeUnlistedColor === false ? "cars with no color listed" : ""}</div>
+      ) : null}
       {err && <div style={{ color: "#c44" }}>{err}</div>}
     </div>
   );
 }
 
-function ProfilesTab({ data, save, keyOk, scoreModel }) {
+// Per-profile exterior-color filter (src/colors.js): the colors this profile's
+// matches actually come in (from its facet, with counts), each toggling "hide";
+// plus whether to keep cars with no color listed. Applied on our side.
+export function ColorFilter({ facet, excluded, includeUnlisted, onChange }) {
+  var exc = excluded || [];
+  var isExc = function (c) { return exc.some(function (x) { return String(x).toLowerCase() === c.toLowerCase(); }); };
+  function toggle(c) { onChange({ excludeColors: isExc(c) ? exc.filter(function (x) { return String(x).toLowerCase() !== c.toLowerCase(); }) : exc.concat([c]), includeUnlistedColor: includeUnlisted }); }
+  var choices = colorChoices(facet, exc);
+  return (
+    <div>
+      <label style={S.lbl}>Exterior colors — tap to hide</label>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 4 }}>
+        {choices.map(function (ch) {
+          var off = isExc(ch.color);
+          return (<button key={ch.color} type="button" aria-pressed={off}
+            style={Object.assign({}, S.smBtn, { fontSize: 12, borderRadius: 12, padding: "2px 10px", border: "1px solid " + (off ? "#5a2a2a" : "#2a3554"), color: off ? "#e07a7a" : "#c8c8d0", textDecoration: off ? "line-through" : "none" })}
+            onClick={function () { toggle(ch.color); }}>{ch.color}{ch.count != null ? " · " + ch.count.toLocaleString() : ""}</button>);
+        })}
+      </div>
+      <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 12, color: "#c8c8d0", cursor: "pointer" }}>
+        <input type="checkbox" checked={includeUnlisted !== false} onChange={function (e) { onChange({ excludeColors: exc, includeUnlistedColor: e.target.checked }); }} />
+        Include cars with no color listed{facet && facet.unlisted != null ? " (" + facet.unlisted.toLocaleString() + ")" : ""}
+      </label>
+      <p style={Object.assign({}, S.help, { margin: "4px 0 0" })}>{facet && facet.counts
+        ? "Counts are this profile's nationwide matches by color, measured " + fmtResetTs(facet.at) + "."
+        : "Save the profile to see the colors its matches actually come in, with counts."} Hidden colors are filtered on your device, so new or unexpected colors still show up.</p>
+    </div>
+  );
+}
+
+function ProfilesTab({ data, save, keyOk, scoreModel, refreshFacets }) {
   var [ed, setEd] = useState(null);
   var [showIO, setShowIO] = useState(false);
   var [impText, setImpText] = useState("");
@@ -1982,18 +2074,31 @@ function ProfilesTab({ data, save, keyOk, scoreModel }) {
   function delProf(id) { save(Object.assign({}, data, { profiles: data.profiles.filter(function (p) { return p.id !== id; }) })); }
   function addProf() {
     var n = { id: "p-" + Date.now(), name: "New Profile", role: "", active: true,
-      params: { make: "", model: "", years: "", trims: "", trimInclude: "", trimExclude: "", maxPrice: 20000, maxMiles: 80000, mustHave: "", niceToHave: "", dealbreakers: "" } };
+      params: { make: "", model: "", years: "", trims: "", trimInclude: "", trimExclude: "", maxPrice: 20000, maxMiles: 80000, mustHave: "", niceToHave: "", dealbreakers: "",
+        // Start from the global default color excludes (Settings).
+        excludeColors: (getSettings(data).defaultExcludeColors || []).slice(), includeUnlistedColor: true } };
     // Prepend + open the editor so the new profile is immediately visible (was
     // appended at the bottom of a long list, which read as "nothing happened").
     save(Object.assign({}, data, { profiles: [n].concat(data.profiles || []) }));
     setEd(n.id);
   }
   function updProf(id, upd) {
+    var next = null;
     save(Object.assign({}, data, { profiles: data.profiles.map(function (p) {
-      return p.id === id ? Object.assign({}, p, { name: upd.name, role: upd.role, params: Object.assign({}, p.params, upd.params) }) : p;
+      if (p.id !== id) return p;
+      next = Object.assign({}, p, { name: upd.name, role: upd.role, params: Object.assign({}, p.params, upd.params) });
+      return next;
     }) }));
     setEd(null);
+    // New search filters (or no color breakdown yet) -> one call for the match
+    // count + colors. Edits that don't change the search cost nothing.
+    var m = (getSettings(data).mcProfiles || {})[id] || {};
+    if (next && refreshFacets && (m.countSig !== searchSig(next, planOpts(data)) || !m.colors)) {
+      setFacetBusy(id);
+      refreshFacets(next).catch(function () { /* the card offers a retry */ }).then(function () { setFacetBusy(null); });
+    }
   }
+  var [facetBusy, setFacetBusy] = useState(null);
   function toggleReq(id) { save(Object.assign({}, data, { globalReqs: (data.globalReqs || []).map(function (r) { return r.id === id ? Object.assign({}, r, { active: !r.active }) : r; }) })); }
   var [newReqText, setNewReqText] = useState("");
   var [showAddReq, setShowAddReq] = useState(false);
@@ -2076,7 +2181,7 @@ function ProfilesTab({ data, save, keyOk, scoreModel }) {
                 <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { delProf(p.id); }}>Del</button>
               </div>
             </div>
-            {ed === p.id ? (<ProfEd profile={p} onSave={function (upd) { updProf(p.id, upd); }}
+            {ed === p.id ? (<ProfEd profile={p} onSave={function (upd) { updProf(p.id, upd); }} colorFacet={((getSettings(data).mcProfiles || {})[p.id] || {}).colors}
               listings={data.listings.filter(function (l) { return l.profileId === p.id; })} keyOk={keyOk} model={scoreModel} />) : (
               <div style={{ fontSize: 13, color: "#8a8a96", lineHeight: 1.6 }}>
                 <div>{p.params.make} {p.params.model} · {p.params.years} · {p.params.trims}</div>
@@ -2090,7 +2195,7 @@ function ProfilesTab({ data, save, keyOk, scoreModel }) {
                 )}
                 {p.params.priceBaseline && <div style={{ marginTop: 4 }}><span style={{ fontSize: 11, fontWeight: 600, color: "#b89edd" }}>Price baseline:</span> {(p.params.priceBaseline.tiers || []).length} tier(s) — anchors the price score</div>}
                 {p.params.dealbreakers && <div style={{ marginTop: 4 }}><span style={{ fontSize: 11, fontWeight: 600, color: "#c44" }}>Breaks:</span> {p.params.dealbreakers}</div>}
-                {p.active && <ProfileCount p={p} data={data} save={save} />}
+                {p.active && <ProfileCount p={p} data={data} refresh={refreshFacets} busy={facetBusy === p.id} />}
               </div>
             )}
           </div>
@@ -2100,7 +2205,7 @@ function ProfilesTab({ data, save, keyOk, scoreModel }) {
   );
 }
 
-function ProfEd({ profile, onSave, listings, keyOk, model }) {
+function ProfEd({ profile, onSave, listings, keyOk, model, colorFacet }) {
   var [p, setP] = useState(Object.assign({}, profile.params));
   var [name, setName] = useState(profile.name || "");
   var [role, setRole] = useState(profile.role || "");
@@ -2116,10 +2221,14 @@ function ProfEd({ profile, onSave, listings, keyOk, model }) {
       {[["trimInclude", "Trim include (fuzzy, comma-sep)"], ["trimExclude", "Trim exclude (fuzzy, comma-sep)"]].map(function (pair) {
         return (<div key={pair[0]} style={S.field}><label style={S.lbl}>{pair[1]}</label><input style={S.inp} value={p[pair[0]] || ""} onChange={function (e) { setP(Object.assign({}, p, { [pair[0]]: e.target.value })); }} placeholder={pair[0] === "trimExclude" ? "XT, Turbo, Wilderness" : "e.g. Premium, Limited"} /></div>);
       })}
+      <div style={Object.assign({}, S.field, { gridColumn: "1/-1" })}>
+        <ColorFilter facet={colorFacet} excluded={p.excludeColors} includeUnlisted={p.includeUnlistedColor}
+          onChange={function (c) { setP(Object.assign({}, p, c)); }} />
+      </div>
       {[["mustHave", "Must-have (scoring only)"], ["niceToHave", "Nice-to-have (scoring only)"], ["dealbreakers", "Dealbreakers (scoring only)"]].map(function (pair) {
         return (<div key={pair[0]} style={Object.assign({}, S.field, { gridColumn: "1/-1" })}><label style={S.lbl}>{pair[1]}</label><textarea style={S.ta} value={p[pair[0]] || ""} onChange={function (e) { setP(Object.assign({}, p, { [pair[0]]: e.target.value })); }} rows={2} /></div>);
       })}
-      <p style={Object.assign({}, S.help, { gridColumn: "1/-1", margin: 0 })}>Make / model / powertrain / years / max price / max miles filter the search. Trim include/exclude are fuzzy (substring) filters applied to candidates on your device (MarketCheck can't filter trims). Trims, must/nice-to-have, and dealbreakers only guide AI scoring.</p>
+      <p style={Object.assign({}, S.help, { gridColumn: "1/-1", margin: 0 })}>Make / model / powertrain / years / max price / max miles filter the search. Trim include/exclude (fuzzy, substring) and hidden colors are applied to candidates on your device. Trims, must/nice-to-have, and dealbreakers only guide AI scoring.</p>
       <div style={{ gridColumn: "1/-1" }}>
         <BaselineSection baseline={p.priceBaseline} onChange={function (b) { setP(Object.assign({}, p, { priceBaseline: b })); }}
           profileForGen={{ name: name, params: p }} listings={listings || []} keyOk={keyOk} model={model} />
@@ -2937,6 +3046,7 @@ function HelpTab() {
         <h3 style={S.cardH}>Listings &amp; scores</h3>
         <p style={li}>The big number on a card is the <span style={b}>composite score</span> (your weighted criteria). AI per-criterion scores feed into it; the <span style={b}>✨ AI assessment</span> box shows the summary and a per-criterion breakdown.</p>
         <p style={li}><span style={b}>Notes</span> — every listing card has <span style={b}>📝 Add notes</span> for free-form notes in Markdown (headings, <span style={b}>**bold**</span>, lists, <span style={b}>- [ ]</span> checklists, links), up to 4,000 characters — about a page. They're separate from the rejection reason and from the price-change log sync keeps. AI scoring reads them as first-hand information about that car (a test drive, a dealer call) whenever it next scores that listing. Editing notes never triggers or flags a re-score — use ✨ Re-score on the card when a note matters.</p>
+        <p style={li}><span style={b}>Colors</span> — each profile's editor lists the colors its matches actually come in, with counts (measured when you save the profile with new search filters — one MarketCheck call). Tap a color to hide those cars; "Include cars with no color listed" (on by default) keeps listings MarketCheck has no color for. Hiding happens on your device, so a color you didn't expect still shows up. Hidden candidates sit under "Hidden by trim or color filter", one tap to show them again. Settings sets which colors new profiles start out hiding.</p>
         <p style={li}><span style={b}>Tags</span> — tap <span style={b}>+ tag</span> on a watchlist card to label it however you like ("called dealer", "test drive booked", "waiting on Carfax"). Tags you've used before are suggested, so spellings stay consistent. Filter by tag on Results and Compare (or "No tags" to see what's untouched). AI scoring sees them too; like notes, editing tags never flags a re-score.</p>
         <p style={li}><span style={b}>Statuses</span>: Watchlist (active), Rejected (with a reason, restorable), and <span style={b}>Sold</span> (no longer available — archived, restorable). Stale watched listings surface under "Needs check" — confirm with <span style={b}>Still avail</span>.</p>
         <p style={li}><span style={b}>Title note</span>: "✓ Carfax clean title" means confirmed; "ⓘ Title not Carfax-confirmed" just means the dealer didn't state it (verify yourself) — it's not a salvage flag and doesn't affect the score.</p>
@@ -2957,7 +3067,7 @@ function HelpTab() {
 // ── Results ──
 function ResultsTab({ data, addListing, updListing, delListing, edListing, setEdListing, markChk,
   ackReview, ackAllReviews,
-  candidates, approveCand, approveAll, dismissCand, excludeTrim, showTrim,
+  candidates, approveCand, approveAll, dismissCand, excludeTrim, showTrim, showColor,
   skipped, restoreSkipped, watchSkipped, purgeSkipped,
   importText, setImportText, doImport, importResult, setImportResult,
   filterProf, setFilterProf, doSync, syncing, syncMsg, lastSynced, unseenCount, archiveUnseen,
@@ -3015,21 +3125,10 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   dealerOpts.sort();
   var anyCpo = data.listings.some(isCpo);
 
-  // Partition candidates by each one's profile trim include/exclude filter.
-  function candTrimPass(c) {
-    var p = data.profiles.find(function (x) { return x.id === c.profileId; });
-    if (!p || !p.params) return true;
-    return trimAllowed((c.trim || "") + " " + (c.vehicle || ""), p.params.trimInclude, p.params.trimExclude);
-  }
-  function trimHideReason(c) {
-    var p = data.profiles.find(function (x) { return x.id === c.profileId; });
-    if (!p || !p.params) return "filtered";
-    var t = ((c.trim || "") + " " + (c.vehicle || "")).toLowerCase();
-    var m = (p.params.trimExclude || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean).filter(function (e) { return t.indexOf(e.toLowerCase()) > -1; });
-    if (m.length) return "matches exclude: " + m.join(", ");
-    if ((p.params.trimInclude || "").trim()) return "not in include list";
-    return "filtered";
-  }
+  // Partition candidates by each one's profile trim + color filters.
+  function hideOf(c) { return candHideReason(c, data.profiles.find(function (x) { return x.id === c.profileId; })); }
+  function candTrimPass(c) { return !hideOf(c); }
+  function trimHideReason(c) { var h = hideOf(c); return h ? h.text : "filtered"; }
   var shownCands = candidates.filter(candTrimPass).slice().sort(sortFn);
   var hiddenCands = candidates.filter(function (c) { return !candTrimPass(c); }).slice().sort(sortFn);
 
@@ -3178,7 +3277,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
         <div style={S.card}>
           <h3 style={Object.assign({}, S.cardH, { cursor: "pointer", margin: 0, display: "flex", alignItems: "center", gap: 6 })}
             onClick={function () { setShowTrimHidden(!showTrimHidden); }}>
-            {showTrimHidden ? "▾" : "▸"} Hidden by trim filter ({hiddenCands.length})
+            {showTrimHidden ? "▾" : "▸"} Hidden by trim or color filter ({hiddenCands.length})
           </h3>
           {showTrimHidden && hiddenCands.map(function (c, i) {
             return (
@@ -3186,7 +3285,9 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
                 <div style={{ fontSize: 13, color: "#c8c8d0" }}>{c.year} {c.vehicle}{c.trim ? " · " + c.trim : ""}</div>
                 <div style={{ fontSize: 11, color: "#8a8a96", margin: "2px 0 6px" }}>${(c.price || 0).toLocaleString()} · {(c.mileage || 0).toLocaleString()} mi — {trimHideReason(c)}</div>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  <button style={Object.assign({}, S.smBtn, { color: "#2d8659" })} onClick={function () { showTrim(c); }}>✓ Show this trim</button>
+                  {(hideOf(c) || {}).kind === "color"
+                    ? <button style={Object.assign({}, S.smBtn, { color: "#2d8659" })} onClick={function () { showColor(c); }}>✓ Show {baseColorOf(c) ? baseColorOf(c).toLowerCase() + " cars" : "cars with no color listed"}</button>
+                    : <button style={Object.assign({}, S.smBtn, { color: "#2d8659" })} onClick={function () { showTrim(c); }}>✓ Show this trim</button>}
                   <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { dismissCand(c); }}>Skip</button>
                 </div>
               </div>
@@ -3767,7 +3868,7 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, color: "#8a8a96", marginBottom: 6, lineHeight: 1.8 }}>
         <span>${(cand.price || 0).toLocaleString()}{cand.fees > 0 && <span style={{ color: "#6b6b76", fontSize: 11 }}> +${cand.fees.toLocaleString()} fees</span>}</span>
         <span>{(cand.mileage || 0).toLocaleString()} mi</span>
-        {cand.color && <span>{cand.color}</span>}
+        {cand.color ? <span>{cand.color}</span> : <span style={{ color: "#6b6b76" }} title="MarketCheck has no color for this listing (common for marketplace-relayed ones) — check the photos">Color not listed</span>}
         {cand.dealer && <span>{cand.dealer} ({cand.dealerType || "?"})</span>}
         {cand.location && <span>{cand.location}, {cand.state} {isSalt(cand.state) ? "🧂" : ""}</span>}
         <DistBadge l={cand} data={data} />
@@ -3944,7 +4045,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, color: "#8a8a96", marginBottom: 6, lineHeight: 1.8 }}>
         <span>${(l.price || 0).toLocaleString()}{l.fees > 0 && <span style={{ color: "#6b6b76", fontSize: 11 }}> +${l.fees.toLocaleString()} fees</span>}</span>
         <span>{(l.mileage || 0).toLocaleString()} mi</span>
-        {l.color && <span>{l.color}</span>}
+        {l.color ? <span>{l.color}</span> : l.source === "marketcheck" ? <span style={{ color: "#6b6b76" }} title="MarketCheck has no color for this listing (common for marketplace-relayed ones) — check the photos">Color not listed</span> : null}
         <span>{l.dealer} ({l.dealerType})</span>
         <span>{l.location}, {l.state} {salt ? "🧂" : ""}</span>
         <DistBadge l={l} data={data} />
