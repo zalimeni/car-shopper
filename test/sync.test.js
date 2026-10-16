@@ -179,3 +179,12 @@ describe("reconcile: fees, coordinates and MarketCheck freshness", () => {
     expect(r.candidates[0]).toMatchObject({ fees: 695, dLat: 34.77, mcSeen: "2026-10-12" });
   });
 });
+
+describe("reconcile fills a color a saved listing never had", () => {
+  it("takes the decoded color and marks its source; never overwrites an existing color", () => {
+    const ex = [{ id: "a", vin: "A1", price: 1, status: "watch", source: "marketcheck" }, { id: "b", vin: "B1", price: 1, status: "watch", source: "marketcheck", color: "Blue", baseColor: "Blue" }];
+    const r = reconcile(ex, [{ vin: "A1", price: 1, color: "Shimmering Silver Metallic", baseColor: "Silver", colorSource: "neovin" }, { vin: "B1", price: 1, color: "Red", baseColor: "Red" }], "2026-10-16");
+    expect(r.listings[0]).toMatchObject({ color: "Shimmering Silver Metallic", baseColor: "Silver", colorSource: "neovin" });
+    expect(r.listings[1]).toMatchObject({ color: "Blue", baseColor: "Blue" });
+  });
+});

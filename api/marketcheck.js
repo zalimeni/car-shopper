@@ -397,7 +397,8 @@ const num = function (v) { const n = parseFloat(v); return isFinite(n) ? n : nul
 
 // One page. makeUrl(key) builds the request. -> { rows, numFound } or null when the
 // call failed (recorded on the session; s.timeUp / s.rateLimited say to stop).
-async function getPage(s, makeUrl, label) {
+// opts.decode: a NeoVIN decode answer (no listings array) — skip the search-shape checks.
+async function getPage(s, makeUrl, label, opts) {
   while (true) {
     if (Date.now() > s.deadline) {
       if (!s.timeUp) s.errors.push("Stopped early to avoid a timeout — some results may be missing.");
@@ -454,11 +455,30 @@ async function getPage(s, makeUrl, label) {
     if (qrem != null) s.quota = { remaining: qrem, limit: num(r.headers.get("quota-limit")), reset: r.headers.get("quota-reset-time") || null };
     let json;
     try { json = await r.json(); } catch (e) { s.errors.push(label + ": unreadable response"); return null; }
+    if (opts && opts.decode) return { rows: [], numFound: null, facets: null, json: json };
     if (!Array.isArray(json.listings) && json.num_found == null) s.shapeless = true;
     const rows = Array.isArray(json.listings) ? json.listings : [];
     rows.forEach(function (row) { s.rowsSeen++; if (!row || !row.vin || !row.build || !row.build.make || !row.build.model) s.malformed++; });
     return { rows: rows, numFound: typeof json.num_found === "number" ? json.num_found : null, facets: json.facets || null };
   }
+}
+
+// NeoVIN (MarketCheck's VIN decoder — on the free plan, one call per VIN, no batch
+// form) -> the factory exterior color, for listings whose search record has none.
+// Verified live: KM8JCCD10RU198791 (no color in its listing) decodes to
+// "Shimmering Silver Metallic", base "Silver", confidence 0.8. No build date.
+export const DECODE_ENDPOINT = "/v2/decode/car/neovin/";
+export function buildDecodeUrl(apiKey, vin) {
+  return HOST + DECODE_ENDPOINT + encodeURIComponent(vin) + "/specs?api_key=" + encodeURIComponent(apiKey);
+}
+const DECODE_MIN_CONFIDENCE = 0.5;
+// A NeoVIN answer -> { color, baseColor, confidence } or null when it has no usable color.
+export function decodedColor(j) {
+  const c = j && j.exterior_color;
+  if (!c || typeof c !== "object" || !c.base) return null;
+  const conf = c.confidence != null && c.confidence !== "" ? Number(c.confidence) : null;
+  if (conf != null && isFinite(conf) && conf < DECODE_MIN_CONFIDENCE) return null;
+  return { color: c.name || c.base, baseColor: c.base, confidence: conf };
 }
 
 // One step -> the session report plus { listings, numFound }.
@@ -473,6 +493,7 @@ async function getPage(s, makeUrl, label) {
 //   count — num_found plus the color facet (rows=0): one call, no paging.
 //   vins  — the listed rows for up to 50 VINs (vin= takes a list), every page.
 //   local — the old radius search around one hub (Price Check's live comps).
+//   decode — NeoVIN for up to 10 VINs, one call each -> { decoded: { VIN: { color, baseColor } } }.
 // A page's base_exterior_color facet -> { counts: { Black: 261, … }, unlisted }
 // (unlisted = matching cars with no color at all), or null without the facet.
 function colorsOf(pg) {
@@ -549,7 +570,23 @@ export async function runStep(s, step) {
     return n;
   }
 
-  if (step.kind === "vins") {
+  if (step.kind === "decode") {
+    const vins = (Array.isArray(step.vins) ? step.vins : []).map(function (v) { return String(v || "").trim().toUpperCase(); }).filter(function (v) { return /^[A-HJ-NPR-Z0-9]{17}$/.test(v); }).slice(0, 10);
+    const decoded = {};
+    for (const v of vins) {
+      const before = s.errors.length;
+      const pg = await getPage(s, function (k) { return buildDecodeUrl(k, v); }, "decode " + v, { decode: true });
+      if (!pg) {
+        if (s.timeUp || s.rateLimited) break;
+        // A VIN NeoVIN can't decode isn't a sync error: remember "no color" and move on.
+        s.errors.splice(before);
+        decoded[v] = null;
+        continue;
+      }
+      decoded[v] = decodedColor(pg.json); // null = decoded, but no usable color (remembered too)
+    }
+    return Object.assign(sessionReport(s), { listings: [], numFound: null, decoded: decoded });
+  } else if (step.kind === "vins") {
     const vins = (Array.isArray(step.vins) ? step.vins : []).map(function (v) { return String(v || "").trim().toUpperCase(); }).filter(Boolean).slice(0, 50);
     if (vins.length) await pageAll(function (k, start) { return buildVinUrl(k, vins.join(","), start); }, PAGE_LIMIT);
   } else if (!profile) {

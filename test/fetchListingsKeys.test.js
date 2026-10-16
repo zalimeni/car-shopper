@@ -37,8 +37,8 @@ describe("fetchListings runs the planned steps, one request each", () => {
     const bodies = [];
     global.fetch = vi.fn(async (url, init) => {
       const b = JSON.parse(init.body); bodies.push(b);
-      if (b.kind === "vins") return ok({ listings: [{ vin: "W2", price: 10 }] });
-      return ok({ listings: [{ vin: "W1", price: 5 }, { vin: "NEW", price: 7 }], numFound: 2 });
+      if (b.kind === "vins") return ok({ listings: [{ vin: "W2", price: 10, color: "Blue" }] });
+      return ok({ listings: [{ vin: "W1", price: 5, color: "Red" }, { vin: "NEW", price: 7, color: "Gray" }], numFound: 2 });
     });
     const r = await fetchListings([{ kind: "new", profile: P("a"), since: 2 }], ["W1", "W2", "W3"], {}, {});
     expect(bodies.map((b) => b.kind)).toEqual(["new", "vins"]);
@@ -82,5 +82,38 @@ describe("spentKeyIds", () => {
   });
   it("is empty with nothing stored", () => {
     expect(spentKeyIds(keys, null, NOW)).toEqual([]);
+  });
+});
+
+describe("fills missing colors from the VIN decoder, once per car", () => {
+  const V = (n) => "KM8JCCD10RU19879" + n;
+  it("decodes colorless cars in one final step and applies the colors", async () => {
+    const bodies = [];
+    global.fetch = vi.fn(async (url, init) => {
+      const b = JSON.parse(init.body); bodies.push(b);
+      if (b.kind === "decode") return ok({ decoded: { [V(1)]: { color: "Shimmering Silver Metallic", baseColor: "Silver" }, [V(2)]: null }, calls: 2 });
+      return ok({ listings: [{ vin: V(1), price: 1 }, { vin: V(2), price: 2 }, { vin: V(3), price: 3, color: "Black" }] });
+    });
+    const r = await fetchListings([{ kind: "full", profile: P("a") }], [], {}, {});
+    expect(bodies.map((b) => b.kind)).toEqual(["full", "decode"]);
+    expect(bodies[1].vins).toEqual([V(1), V(2)]);
+    const byVin = Object.fromEntries(r.listings.map((l) => [l.vin, l]));
+    expect(byVin[V(1)]).toMatchObject({ color: "Shimmering Silver Metallic", baseColor: "Silver", colorSource: "neovin" });
+    expect(byVin[V(2)].color).toBeUndefined();
+    expect(r.decoded).toEqual({ [V(1)]: { color: "Shimmering Silver Metallic", baseColor: "Silver" }, [V(2)]: null });
+  });
+  it("uses remembered colors and never re-decodes a VIN (even one with no color)", async () => {
+    const bodies = [];
+    global.fetch = vi.fn(async (url, init) => { const b = JSON.parse(init.body); bodies.push(b); return ok({ listings: [{ vin: V(1), price: 1 }, { vin: V(2), price: 2 }] }); });
+    const cache = { [V(1)]: { color: "Shimmering Silver Metallic", baseColor: "Silver", at: "2026-10-15T00:00:00Z" }, [V(2)]: { color: null, at: "2026-10-15T00:00:00Z" } };
+    const r = await fetchListings([{ kind: "full", profile: P("a") }], [], {}, { colorCache: cache });
+    expect(bodies.map((b) => b.kind)).toEqual(["full"]);
+    expect(r.listings.find((l) => l.vin === V(1)).baseColor).toBe("Silver");
+  });
+  it("decodes at most 10 a sync", async () => {
+    const bodies = [];
+    global.fetch = vi.fn(async (url, init) => { const b = JSON.parse(init.body); bodies.push(b); return ok(b.kind === "decode" ? { decoded: {} } : { listings: Array.from({ length: 14 }, (_, i) => ({ vin: "VIN" + String(i).padStart(14, "0"), price: 1 })) }); });
+    await fetchListings([{ kind: "full", profile: P("a") }], [], {}, {});
+    expect(bodies[1].vins.length).toBe(10);
   });
 });

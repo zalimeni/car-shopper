@@ -149,3 +149,31 @@ describe("full refresh keeps the color list current", () => {
     expect(calls.filter((c) => c.facets).length).toBe(1);
   });
 });
+
+describe("decode step (NeoVIN)", () => {
+  it("decodes each VIN once, keeping the base color when confident enough", async () => {
+    const { decodedColor } = await import("../api/marketcheck.js");
+    calls = [];
+    global.fetch = vi.fn(async (url) => {
+      calls.push(url);
+      const vin = url.split("/neovin/")[1].split("/")[0];
+      const body = vin.endsWith("1") ? { exterior_color: { name: "Shimmering Silver Metallic", base: "Silver", confidence: "0.8" } }
+        : vin.endsWith("2") ? { exterior_color: { name: "Mystery", base: "Gray", confidence: "0.2" } } : {};
+      const text = JSON.stringify(body);
+      return { ok: true, status: 200, headers: { get: () => null }, text: async () => text, json: async () => JSON.parse(text), clone: () => ({ text: async () => text }) };
+    });
+    const r = await step({ kind: "decode", vins: ["KM8JCCD10RU1987A1", "KM8JCCD10RU1987A2", "KM8JCCD10RU1987A3", "not-a-vin"] });
+    expect(calls.length).toBe(3);
+    expect(calls[0]).toMatch(/\/v2\/decode\/car\/neovin\/KM8JCCD10RU1987A1\/specs\?api_key=K/);
+    expect(r.decoded).toEqual({ KM8JCCD10RU1987A1: { color: "Shimmering Silver Metallic", baseColor: "Silver", confidence: 0.8 }, KM8JCCD10RU1987A2: null, KM8JCCD10RU1987A3: null });
+    expect(r.errors).toEqual([]);
+    expect(r.formatSuspect).toBe(false);
+    expect(decodedColor(null)).toBeNull();
+  });
+  it("a VIN NeoVIN can't decode is remembered as 'no color', not a sync error", async () => {
+    global.fetch = vi.fn(async () => ({ ok: false, status: 404, headers: { get: () => null }, text: async () => "not found", json: async () => ({}), clone: () => ({ text: async () => "not found" }) }));
+    const r = await step({ kind: "decode", vins: ["KM8JCCD10RU1987A1"] });
+    expect(r.decoded).toEqual({ KM8JCCD10RU1987A1: null });
+    expect(r.errors).toEqual([]);
+  });
+});

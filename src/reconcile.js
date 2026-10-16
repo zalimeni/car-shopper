@@ -49,6 +49,9 @@ export function reconcile(existing, fetched, todayStr, opts) {
     if (f.fees != null) next.fees = f.fees;
     if (f.dLat != null && f.dLon != null) { next.dLat = f.dLat; next.dLon = f.dLon; }
     if (f.mcSeen) next.mcSeen = f.mcSeen;
+    // Fill a color the listing never had (e.g. decoded from the VIN this sync).
+    if (!l.color && f.color) next.color = f.color;
+    if (!l.baseColor && f.baseColor) { next.baseColor = f.baseColor; if (f.colorSource) next.colorSource = f.colorSource; }
     if (next.mcQ) delete next.mcQ; // per-search tags from the old unchanged-search shortcut
     // One-time basis correction: listings synced before we stored prices
     // pre-fee carry the fee inside `price`. When the new price differs by exactly

@@ -14,6 +14,9 @@
 //   2. The watchlist's VINs that step 1 didn't return are looked up directly,
 //      50 per call. One the lookup doesn't return either is no longer listed —
 //      the only way a car is marked gone, so it's never a guess.
+//   3. Cars whose listing has no color get it from MarketCheck's VIN decoder
+//      (NeoVIN: the factory build data) — one call per car, at most DECODE_MAX a
+//      sync, each VIN only ever once (remembered in settings.mcColors).
 
 import { parseYears, mapPowertrain } from "./queryPlan.js";
 import { mergeReports } from "./quota.js";
@@ -23,6 +26,8 @@ export const VIN_BATCH = 50;
 export const ROWS = 50;          // MarketCheck page size
 export const PAGE_CAP = 10;      // 500-row pagination ceiling
 export const COUNT_WARN = 300;   // a profile matching more than this gets a "narrow it" warning
+export const DECODE_MAX = 10;    // colorless cars decoded (NeoVIN, 1 call each) per sync, at most
+const COLOR_CACHE_DAYS = 90, COLOR_CACHE_MAX = 1000;
 const DAY = 86400000;
 
 // The parts of a profile (and settings) that change what its search returns. A
@@ -131,11 +136,15 @@ export function estimateCost(profiles, meta, listings, opts, nowMs) {
 // profile, since } or { kind: "vins", vins } — and resolves to the proxy's report
 // ({ listings, numFound, errors, notices, rateLimited, calls, ... }).
 // onProgress({ done, total, label, listings }) after each step.
-export async function runSync(steps, tracked, exec, onProgress) {
+// opts.colorCache: settings.mcColors — VIN -> decoded color (or { color: null } for
+// "decoded, none"), so a car is never decoded twice.
+export async function runSync(steps, tracked, exec, onProgress, opts) {
+  const colorCache = (opts && opts.colorCache) || {};
   const report = typeof onProgress === "function" ? onProgress : function () {};
   const out = {
     listings: [], results: [], goneVins: [], errors: [], notices: [], keyQuotas: [], calls: 0,
     apiInfo: null, formatSuspect: false, rateLimited: false, rateLimitInfo: null, quota: null, mock: false,
+    decoded: {}, // VIN -> { color, baseColor } | null, decoded this sync (to remember)
   };
   const seen = {}; // vin -> listing (lowest real price wins)
   const take = function (r) {
@@ -182,10 +191,47 @@ export async function runSync(steps, tracked, exec, onProgress) {
     report({ done: ++done, total: total, label: "watchlist", listings: Object.values(seen) });
     if (out.rateLimited) break;
   }
+  if (out.rateLimited) return finish();
+
+  // Fill missing colors: remembered decodes first, then NeoVIN for the rest (capped).
+  const colorless = Object.keys(seen).filter(function (v) { return !seen[v].color && !seen[v].baseColor; });
+  colorless.forEach(function (v) { if (colorCache[v] && colorCache[v].baseColor) applyColor(v, colorCache[v]); });
+  const toDecode = colorless.filter(function (v) { return !(v in colorCache); }).slice(0, DECODE_MAX);
+  if (toDecode.length) {
+    let r;
+    try { r = await exec({ kind: "decode", vins: toDecode }); } catch (e) { r = failed(e); }
+    take(r);
+    Object.keys(r.decoded || {}).forEach(function (v) {
+      out.decoded[v] = r.decoded[v];
+      if (r.decoded[v]) applyColor(v, r.decoded[v]);
+    });
+    report({ done: ++done, total: total + 1, label: "colors", listings: Object.values(seen) });
+  }
   return finish();
+
+  function applyColor(v, c) {
+    seen[v] = Object.assign({}, seen[v], { color: c.color, baseColor: c.baseColor, colorSource: "neovin" });
+  }
 
   function finish() {
     out.listings = Object.values(seen);
     return out;
   }
+}
+
+// Fold this sync's decodes into settings.mcColors (VIN -> { color, baseColor, at },
+// color null = decoded, none found), dropping entries past 90 days and keeping
+// the newest 1,000 so the blob stays bounded.
+export function mergeColorCache(cache, decoded, nowIso) {
+  const out = Object.assign({}, cache || {});
+  Object.keys(decoded || {}).forEach(function (v) {
+    const d = decoded[v];
+    out[v] = d ? { color: d.color, baseColor: d.baseColor, at: nowIso } : { color: null, at: nowIso };
+  });
+  const cutoff = Date.parse(nowIso) - COLOR_CACHE_DAYS * DAY;
+  const keys = Object.keys(out).filter(function (v) { return !(Date.parse(out[v].at) < cutoff); });
+  keys.sort(function (a, b) { return String(out[b].at).localeCompare(String(out[a].at)); });
+  const kept = {};
+  keys.slice(0, COLOR_CACHE_MAX).forEach(function (v) { kept[v] = out[v]; });
+  return kept;
 }

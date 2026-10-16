@@ -69,6 +69,13 @@ sync) does as little as it can:
       vin=<up to 50, comma-separated> lookups. A VIN the lookup doesn't return
       either is no longer listed: the ONLY way a car is marked gone (goneAt), so
       it's never a guess from a search that simply didn't include it.
+   3. Cars with no color in their listing (often marketplace-relayed) → NeoVIN, the
+      VIN decoder (/v2/decode/car/neovin/{vin}/specs; free plan, one call per VIN,
+      no batch form): its factory exterior color fills color/baseColor (marked
+      colorSource "neovin"). At most 10 a sync; each VIN decoded once ever —
+      settings.mcColors remembers the answer, "none" included (90 days, ≤1,000).
+      Verified live: KM8JCCD10RU198791 → "Shimmering Silver Metallic" (Silver, 0.8).
+      NeoVIN has no build date.
    One /api/marketcheck request per step (POST { kind, profile, since, vins, … }),
    each its own function invocation, clear of the 60 s limit.
    Keys: requests carry spentKeys (from the stored quota and earlier steps), so the
