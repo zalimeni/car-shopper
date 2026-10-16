@@ -54,17 +54,21 @@ authenticates the direct Postgres connection that runs the DDL. API keys
 (`anon`/`service_role`, `sb_publishable_*`/`sb_secret_*`) are data-API
 credentials and cannot run migrations.
 
-## Sign-in email template (one-time code)
+## Signing in from an iPhone Home Screen bookmark
 
-The sign-in screen accepts either the emailed link or a typed one-time code. The
-code is what makes an iPhone **Home Screen** bookmark work: iOS gives a Home Screen
-web app its own storage, separate from Safari, and email links always open in
-Safari, so a link signs Safari in and leaves the Home Screen app signed out.
+iOS gives a Home Screen web app its own storage, separate from Safari, and email
+links always open in Safari — so tapping the sign-in link signs Safari in and
+leaves the Home Screen app signed out. Two ways around it, both on the sign-in
+screen:
 
-Hosted projects don't read templates from this repo — set it once in the dashboard:
-
-1. Supabase Dashboard → **Authentication → Emails → Magic Link**.
-2. Paste the body of [`templates/magic_link.html`](templates/magic_link.html) (it
-   keeps the `{{ .ConfirmationURL }}` link and adds `{{ .Token }}`, the code).
-3. Save. Code length follows **Authentication → Providers → Email → Email OTP
-   length** (default 6; the app accepts 6–10 digits).
+- **Paste the link (works as is):** in Mail, long-press the sign-in link → **Copy
+  Link**, then paste it into the app ("Paste link"). The app verifies the link's
+  one-time token itself (`verifyOtp({ token_hash })` — `src/authLink.js`). Don't
+  open the link first: that uses it up. No Supabase changes needed.
+- **Type a code (optional):** needs the "Magic Link" email template to include
+  `{{ .Token }}` — and Supabase only allows editing templates once the project
+  uses **custom SMTP** (Authentication → SMTP; e.g. Gmail with an app password,
+  or Resend). Then paste the body of
+  [`templates/magic_link.html`](templates/magic_link.html) into Authentication →
+  Emails → Magic Link. Code length follows Authentication → Providers → Email →
+  Email OTP length (default 6; the app accepts 6–10 digits).
