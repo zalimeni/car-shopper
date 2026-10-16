@@ -866,7 +866,7 @@ function stripMedia(row) {
 // ── Mock data (?mock=1): two synthetic listings per active profile ──
 function mockListings(profiles, hubs) {
   const hub = (hubs && hubs[0]) || {};
-  const hubName = hub.n || hub.z || "Boston MA"; // a hub may carry only a ZIP
+  const hubName = hub.n || hub.z || "Durham NC"; // a hub may carry only a ZIP
   const out = [];
   (profiles || []).forEach(function (pr, i) {
     const p = pr.params || {};
