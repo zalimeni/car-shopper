@@ -7,7 +7,7 @@ import { travelFacts, DRIVE_MAX_MI, AIRPORT_NEAR_MI } from "./travel";
 import { SALT_STATES, isSaltState } from "./regions";
 import { layoutColumns, moveColumn, togglePin } from "./compareCols";
 import { trimHideReason, trimState, setTrimState, nextTrimState, facetChoices } from "./trims";
-import { shareUnder, capChoices, estimateMatches, toggleYear, yearChoices, yearList, formatYears, defaultName } from "./profileWizard";
+import { shareUnder, capChoices, estimateMatches, rangeYears, yearOptions, yearChoices, defaultName } from "./profileWizard";
 import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBaseline, generatePriceAssessment, suggestProfile, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
 import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
 import { listSnapshots, restoreSnapshot } from "./snapshots";
@@ -2406,6 +2406,9 @@ export function ProfileWizard({ data, keyOk, onExplore, onCreate, onBlank, onClo
     excludeColors: (st.defaultExcludeColors || []).slice(), includeUnlistedColor: true, mustHave: "", niceToHave: "", dealbreakers: "" });
   var [name, setName] = useState("");
   var [role, setRole] = useState("");
+  // Years: a From–To range (two selects — wheels on iOS), then any years inside
+  // it left out with a tap. Open ends mean "any" until Explore knows the market.
+  var [yr, setYr] = useState({ from: "", to: "", skip: [] });
   var [market, setMarket] = useState(null); // the explore answer + the search it was for
   var [busy, setBusy] = useState(false);
   var [err, setErr] = useState("");
@@ -2417,13 +2420,17 @@ export function ProfileWizard({ data, keyOk, onExplore, onCreate, onBlank, onClo
   (data.profiles || []).forEach(function (x) { if (x.params && x.params.make) makes[x.params.make] = true; if (x.params && x.params.model) models[x.params.model] = true; });
   (data.listings || []).forEach(function (l) { var w = String(l.vehicle || "").split(" "); if (w[0]) makes[w[0]] = true; if (w.length > 1) models[w.slice(1).join(" ")] = true; });
 
-  var searchKey = [p.make, p.model, p.powertrain, p.years].map(function (x) { return String(x || "").trim().toLowerCase(); }).join("|");
+  var facetYears = Object.keys((market && market.years && market.years.counts) || {}).map(Number).filter(function (y) { return y > 1900; });
+  var bounds = facetYears.length ? { min: Math.min.apply(null, facetYears), max: Math.max.apply(null, facetYears) } : null;
+  var years = rangeYears(yr.from, yr.to, yr.skip, bounds);
+  // What Explore searched: the car and the range (leaving a year out needs no new call).
+  var searchKey = [p.make, p.model, p.powertrain, yr.from, yr.to].map(function (x) { return String(x || "").trim().toLowerCase(); }).join("|");
   var stale = market && market.key !== searchKey;
   async function explore() {
     if (!p.make.trim() || !p.model.trim()) { setErr("Enter a make and a model first."); return; }
     setBusy(true); setErr("");
     try {
-      var r = await onExplore({ id: "wizard", name: defaultName(p), params: { make: p.make.trim(), model: p.model.trim(), powertrain: p.powertrain, years: p.years } });
+      var r = await onExplore({ id: "wizard", name: defaultName(p), params: { make: p.make.trim(), model: p.model.trim(), powertrain: p.powertrain, years: rangeYears(yr.from, yr.to, [], { min: 1990, max: yOpts[0] }) } });
       if (!r || r.numFound == null) throw new Error(((r && r.errors) || [])[0] || "MarketCheck didn't answer — try again");
       setMarket({ key: searchKey, count: r.numFound, colors: r.colors, trims: r.trims, drivetrains: r.drivetrains, years: r.years, stats: r.stats });
       var pc = capChoices(r.stats && r.stats.price, 500), mc = capChoices(r.stats && r.stats.miles, 5000);
@@ -2434,7 +2441,7 @@ export function ProfileWizard({ data, keyOk, onExplore, onCreate, onBlank, onClo
   }
   function askAi() {
     setAi({ busy: true });
-    suggestProfile({ params: p }, { count: market.count, trims: market.trims, years: market.years, stats: market.stats, homeBase: st.homeBase ? st.homeBase.n : null })
+    suggestProfile({ params: Object.assign({}, p, { years: years }) }, { count: market.count, trims: market.trims, years: market.years, stats: market.stats, homeBase: st.homeBase ? st.homeBase.n : null })
       .then(function (s) {
         setAi({ s: s });
         set({ mustHave: p.mustHave || s.mustHave, niceToHave: p.niceToHave || s.niceToHave, dealbreakers: p.dealbreakers || s.dealbreakers });
@@ -2442,14 +2449,15 @@ export function ProfileWizard({ data, keyOk, onExplore, onCreate, onBlank, onClo
       .catch(function (e) { setAi({ error: e.code === "no_key" ? "Add your Anthropic key in Settings first." : (e.message || "Suggestion failed") }); });
   }
   function create() {
-    var params = Object.assign({}, p, { make: p.make.trim(), model: p.model.trim(), years: p.years.trim() });
+    var params = Object.assign({}, p, { make: p.make.trim(), model: p.model.trim(), years: years });
     onCreate({ id: "p-" + Date.now(), name: name.trim() || defaultName(params) || "Profile", role: role.trim(), active: true, params: params }, market);
   }
 
-  // Year chips: an empty years box means "any", so every facet year counts as on.
-  var facetYears = Object.keys((market && market.years && market.years.counts) || {}).map(Number);
-  var yearsOrAll = p.years.trim() ? p.years : formatYears(facetYears);
-  var yChoices = market ? yearChoices(market.years, yearsOrAll) : [];
+  // Leave-out chips: the market's years inside the range.
+  var yChoices = market ? yearChoices(market.years, years, yr.from, yr.to) : [];
+  function skipYear(y) { setYr(function (prev) { return Object.assign({}, prev, { skip: prev.skip.indexOf(y) > -1 ? prev.skip.filter(function (x) { return x !== y; }) : prev.skip.concat(y) }); }); }
+  var yearCount = function (y) { var c = market && market.years && market.years.counts && market.years.counts[y]; return c != null ? " · " + Number(c).toLocaleString() : ""; };
+  var yOpts = yearOptions(bounds ? Math.min(bounds.min, 2000) : 2000);
   var yearTotal = yChoices.length ? yChoices.filter(function (y) { return y.on; }).reduce(function (a, y) { return a + y.count; }, 0) : (market ? market.count : null);
   var est = market ? estimateMatches(yearTotal, market.stats, p.maxPrice, p.maxMiles) : null;
   var priceStat = market && market.stats && market.stats.price, milesStat = market && market.stats && market.stats.miles;
@@ -2472,9 +2480,22 @@ export function ProfileWizard({ data, keyOk, onExplore, onCreate, onBlank, onClo
         <div style={S.grid2}>
           <div style={S.field}><label style={S.lbl}>Make</label><input style={S.inp} list="wiz-makes" value={p.make} onChange={function (e) { set({ make: e.target.value }); }} placeholder="Subaru" /></div>
           <div style={S.field}><label style={S.lbl}>Model</label><input style={S.inp} list="wiz-models" value={p.model} onChange={function (e) { set({ model: e.target.value }); }} placeholder="Outback" /></div>
-          <div style={S.field}><label style={S.lbl}>Years (blank = any)</label><input style={S.inp} value={p.years} onChange={function (e) { set({ years: e.target.value }); }} placeholder="2020-2022" /></div>
+          <div style={S.field}><label style={S.lbl}>Years</label>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              {[["from", "From"], ["to", "To"]].map(function (end, i) {
+                return (<Fragment key={end[0]}>
+                  {i > 0 && <span style={{ color: "#6b6b76", fontSize: 12 }}>to</span>}
+                  <select aria-label={end[1] + " year"} style={Object.assign({}, S.inp, { flex: 1, minWidth: 0 })} value={yr[end[0]]}
+                    onChange={function (e) { var v = e.target.value ? Number(e.target.value) : ""; setYr(function (prev) { return Object.assign({}, prev, { [end[0]]: v }); }); }}>
+                    <option value="">{i === 0 ? "Any" : "Newest"}</option>
+                    {yOpts.map(function (y) { return (<option key={y} value={y}>{y}{yearCount(y)}</option>); })}
+                  </select>
+                </Fragment>);
+              })}
+            </div>
+          </div>
           <div style={S.field}><label style={S.lbl}>Powertrain</label>
-            <select style={S.inp} value={p.powertrain} onChange={function (e) { set({ powertrain: e.target.value }); }}>
+            <select aria-label="Powertrain" style={S.inp} value={p.powertrain} onChange={function (e) { set({ powertrain: e.target.value }); }}>
               {[["", "Any"], ["Hybrid", "Hybrid"], ["PHEV", "Plug-in hybrid"], ["Electric", "Electric"], ["Gas", "Gas"]].map(function (o) { return (<option key={o[0]} value={o[0]}>{o[1]}</option>); })}
             </select>
           </div>
@@ -2494,10 +2515,10 @@ export function ProfileWizard({ data, keyOk, onExplore, onCreate, onBlank, onClo
               {stale && <p style={{ fontSize: 12, color: "#e8c96a", margin: "0 0 6px" }}>You changed the car since exploring — Explore again for numbers that match.</p>}
               {yChoices.length > 0 && (
                 <div>
-                  <label style={S.lbl}>Years — tap to include or leave out</label>
+                  <label style={S.lbl}>Years in your range — tap one to leave it out</label>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 4 }}>
                     {yChoices.map(function (y) {
-                      return (<button key={y.year} type="button" aria-pressed={y.on} style={pick(y.on)} onClick={function () { set({ years: toggleYear(yearsOrAll, y.year) }); }}>
+                      return (<button key={y.year} type="button" aria-pressed={y.on} style={Object.assign({}, pick(y.on), y.on ? {} : { textDecoration: "line-through", color: "#6b6b76" })} onClick={function () { skipYear(y.year); }}>
                         <Check on={y.on} />{y.year} · {y.count.toLocaleString()}</button>);
                     })}
                   </div>
@@ -2550,10 +2571,11 @@ export function ProfileWizard({ data, keyOk, onExplore, onCreate, onBlank, onClo
                     <div style={{ fontSize: 12, color: "#c8c8d0", marginTop: 8, lineHeight: 1.5 }}>
                       {ai.s.summary && <div style={{ marginBottom: 4 }}>{ai.s.summary}</div>}
                       {ai.s.avoidYears.map(function (a) {
-                        var on = yearList(yearsOrAll).indexOf(a.year) > -1;
+                        var inRange = yChoices.some(function (y) { return y.year === a.year; });
+                        var on = inRange && yr.skip.indexOf(a.year) < 0;
                         return (<div key={a.year} style={{ display: "flex", gap: 6, alignItems: "baseline", marginTop: 3 }}>
                           <button type="button" style={Object.assign({}, S.smBtn, { fontSize: 11, color: on ? "#e8c96a" : "#6b6b76" })} disabled={!on}
-                            onClick={function () { set({ years: toggleYear(yearsOrAll, a.year) }); }}>{on ? "Leave out " + a.year : a.year + " left out"}</button>
+                            onClick={function () { skipYear(a.year); }}>{on ? "Leave out " + a.year : inRange ? a.year + " left out" : a.year + " not in your range"}</button>
                           <span>{a.reason}</span></div>);
                       })}
                       {ai.s.trimNotes.length > 0 && <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>{ai.s.trimNotes.map(function (t) { return (<li key={t.trim}><b>{t.trim}</b> — {t.note}</li>); })}</ul>}

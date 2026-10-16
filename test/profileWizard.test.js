@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shareUnder, capChoices, estimateMatches, formatYears, toggleYear, yearChoices, defaultName } from "../src/profileWizard.js";
+import { shareUnder, capChoices, estimateMatches, formatYears, rangeYears, yearOptions, yearChoices, defaultName } from "../src/profileWizard.js";
 
 // Tucson Hybrid 2022-24, live (Oct 2026).
 const price = { min: 11799, max: 41497, median: 28178,
@@ -37,13 +37,22 @@ describe("years", () => {
     expect(formatYears([2024, 2020, 2021, 2022])).toBe("2020-2022, 2024");
     expect(formatYears([])).toBe("");
   });
-  it("toggles a year in the text", () => {
-    expect(toggleYear("2020-2022", 2021)).toBe("2020, 2022");
-    expect(toggleYear("2020, 2022", 2021)).toBe("2020-2022");
+  it("range minus skipped years; open ends take the market's bounds", () => {
+    expect(rangeYears(2019, 2023, [2021])).toBe("2019-2020, 2022-2023");
+    expect(rangeYears(2023, 2019, [])).toBe("2019-2023");
+    expect(rangeYears("", "", [])).toBe("");
+    expect(rangeYears(2020, "", [], { min: 2016, max: 2024 })).toBe("2020-2024");
+    expect(rangeYears("", "", [2019], { min: 2017, max: 2020 })).toBe("2017-2018, 2020");
+    expect(rangeYears(2020, "", [])).toBe(""); // open end, no market yet: any year
   });
-  it("year chips from the facet, oldest first", () => {
-    expect(yearChoices({ counts: { "2022": 1485, "2020": 1359, "2021": 1072 } }, "2021-2022")).toEqual([
-      { year: 2020, count: 1359, on: false }, { year: 2021, count: 1072, on: true }, { year: 2022, count: 1485, on: true }]);
+  it("year options: next model year down", () => {
+    expect(yearOptions(2024, new Date("2026-10-16"))).toEqual([2027, 2026, 2025, 2024]);
+  });
+  it("year chips from the facet, oldest first, inside the range", () => {
+    const f = { counts: { "2022": 1485, "2020": 1359, "2021": 1072, "2019": 9 } };
+    expect(yearChoices(f, "2020, 2022", 2020, 2022)).toEqual([
+      { year: 2020, count: 1359, on: true }, { year: 2021, count: 1072, on: false }, { year: 2022, count: 1485, on: true }]);
+    expect(yearChoices(f, "").length).toBe(4);
   });
   it("default name", () => {
     expect(defaultName({ make: "Hyundai", model: "Tucson", powertrain: "Hybrid" })).toBe("Hyundai Tucson Hybrid");

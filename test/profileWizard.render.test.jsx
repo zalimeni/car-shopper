@@ -47,12 +47,16 @@ describe("new-profile wizard", () => {
     const dlg = screen.getByRole("dialog", { name: "New profile" });
     fireEvent.change(within(dlg).getByPlaceholderText("Subaru"), { target: { value: "Hyundai" } });
     fireEvent.change(within(dlg).getByPlaceholderText("Outback"), { target: { value: "Tucson" } });
-    fireEvent.change(within(dlg).getByDisplayValue("Any"), { target: { value: "Hybrid" } });
+    fireEvent.change(within(dlg).getByLabelText("Powertrain"), { target: { value: "Hybrid" } });
+    fireEvent.change(within(dlg).getByLabelText("From year"), { target: { value: "2022" } });
     fireEvent.click(within(dlg).getByText("Explore (1 call)"));
 
     await within(dlg).findByText(/1,001 Hyundai Tucson for sale nationwide/);
     expect(steps[0]).toMatchObject({ kind: "count", profile: { params: { make: "Hyundai", model: "Tucson", powertrain: "Hybrid" } } });
     expect(steps[0].profile.params.maxPrice).toBeUndefined(); // explore has no caps
+    expect(steps[0].profile.params.years).toMatch(/^2022-20\d\d$/); // From 2022, To open → through next model year
+    // the To select now shows each year's count
+    expect(within(within(dlg).getByLabelText("To year")).getByText("2024 · 301")).toBeTruthy();
     // caps default to the median price and 75th-percentile miles
     expect(within(dlg).getByDisplayValue("28500")).toBeTruthy();
     expect(within(dlg).getByDisplayValue("55000")).toBeTruthy();

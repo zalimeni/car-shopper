@@ -74,19 +74,36 @@ export function formatYears(list) {
 
 export function yearList(years) { return parseYears(years).split(",").filter(Boolean).map(Number); }
 
-// Add or drop one year from a profile's years text.
-export function toggleYear(years, y) {
-  const list = yearList(years);
-  return formatYears(list.indexOf(y) > -1 ? list.filter(function (x) { return x !== y; }) : list.concat(y));
+// A From–To range minus skipped years, as a profile's years text. An open end
+// takes `bounds` (the years actually for sale); nothing chosen = "" (any year).
+export function rangeYears(from, to, skip, bounds) {
+  const b = bounds || {};
+  const lo = Number(from) || Number(b.min) || 0, hi = Number(to) || Number(b.max) || 0;
+  const sk = (skip || []).map(Number);
+  if (!from && !to && !sk.length) return "";
+  if (!lo || !hi) return "";
+  const list = [];
+  for (let y = Math.min(lo, hi); y <= Math.max(lo, hi); y++) if (sk.indexOf(y) < 0) list.push(y);
+  return formatYears(list);
 }
 
-// Year chips from the explore's year facet (oldest first), marking which are in
-// the profile's years. -> [{ year, count, on }]
-export function yearChoices(facet, years) {
+// Year choices for the From / To selects: newest first, from next model year
+// down to `oldest`.
+export function yearOptions(oldest, now) {
+  const top = (now || new Date()).getFullYear() + 1;
+  const out = [];
+  for (let y = top; y >= (oldest || 2000); y--) out.push(y);
+  return out;
+}
+
+// Year chips from the explore's year facet (oldest first) inside the chosen
+// From–To range, marking which are in the profile's years. -> [{ year, count, on }]
+export function yearChoices(facet, years, from, to) {
   const on = yearList(years);
   const counts = (facet && facet.counts) || {};
-  return Object.keys(counts).map(Number).filter(function (y) { return y > 1900; }).sort(function (a, b) { return a - b; })
-    .map(function (y) { return { year: y, count: counts[y], on: on.indexOf(y) > -1 }; });
+  const lo = Number(from) || 0, hi = Number(to) || 9999;
+  return Object.keys(counts).map(Number).filter(function (y) { return y > 1900 && y >= lo && y <= hi; }).sort(function (a, b) { return a - b; })
+    .map(function (y) { return { year: y, count: counts[y], on: !years || on.indexOf(y) > -1 }; });
 }
 
 // "Toyota RAV4 Hybrid" — the wizard's default profile name.
