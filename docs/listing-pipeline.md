@@ -38,8 +38,17 @@ otherwise have to spend calls rediscovering:
   `miles_range`, `car_type=used`, `state` (CSV), `vin` (CSV, ≤50), `sort_by` +
   `sort_order` (`dos_active` = days at this dealer), `start`/`rows` (≤50 per
   call), `rows=0` + `facets=base_exterior_color` (counts per base color in one
-  call). No location at all = nationwide (rows still carry dealer lat/lon; no
+  call). `facets` takes a list — one call returns `base_exterior_color`,
+  `version` and `drivetrain` together — and `stats=price,miles` returns min/max/
+  mean/median and percentiles (5…99) of the match set on the free plan (for the
+  planned profile wizard's suggested caps). Each facet lists at most 20 values.
+  No location at all = nationwide (rows still carry dealer lat/lon; no
   `dist`). Radius > 100 mi is rejected on the free plan.
+- **Trim fields:** `build.trim` is the clean grade ("Limited", 7 for Outback
+  2020–22); `build.version` is finer and is what we store and show ("Limited XT",
+  "SEL Convenience HEV AWD") — only it separates turbo / drivetrain / powertrain
+  variants. `version` is `"-"` when absent (every Outback Base) → fall back to
+  `trim`. `build.drivetrain` is `4WD` / `FWD` / `RWD`; AWD reports as `4WD`.
 - **Row fields we read:** see `normalize()` — notably `base_ext_color`
   (normalized base color; missing on some marketplace-relayed rows) beside the
   dealer's marketing `exterior_color`, `dos_active` (days at this dealer; `dom_active` fallback), `vdp_url`, `dealer.*`.
@@ -111,7 +120,7 @@ card shows it and warns past 300 (narrow price/miles/years). Typical: a
 new-listings pass is ~1 call per profile, the watchlist lookup ~1, and a full
 refresh one per 50 matching cars — a few calls a sync for small profiles.
 
-**Colors, filtered on our side.** Each listing keeps MarketCheck's normalized
+**Colors, trims, drivetrains — filtered on our side.** Each listing keeps MarketCheck's normalized
 `base_ext_color` as `baseColor` (some listings, often marketplace-relayed, have no
 color at all — shown as "Color not listed"). A profile's hidden colors and its
 "include cars with no color listed" switch (default on) hide candidates locally,
@@ -119,7 +128,11 @@ like trim excludes, so an unexpected or missing color is never silently dropped 
 the search. The editor's color list comes from a `facets=base_exterior_color` on a
 rows=0 count (verified live to list every base color — Outback: 11, Purple: 1),
 taken when a profile is saved with new search filters (1 call) and refreshed by
-every full refresh (the facet rides on its page 1 — no extra call).
+every full refresh (the facet rides on its page 1 — no extra call). Trims
+(`version`) and drivetrains ride on the same call and work the same way
+(`src/trims.js`): chips with counts, hidden ones filtered locally, preferred (★)
+trims fed to AI scoring. Because a facet lists at most 20 values, the trim chips
+also offer any trim seen on the profile's synced cars.
 
 **Travel flags, not filters.** Nothing is filtered on distance (a far car can be
 shipped). `src/travel.js` flags each listing from the dealer's coordinates:

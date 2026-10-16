@@ -91,8 +91,8 @@ export function nextProfileMeta(meta, results, opts, nowIso) {
     const sig = searchSig(r.profile, opts);
     const m = Object.assign({}, out[id] || {});
     if (r.numFound != null) { m.count = r.numFound; m.countSig = sig; m.countAt = nowIso; }
-    // A full refresh also brings the profile's color breakdown (the editor's chips).
-    if (r.colors) m.colors = Object.assign({}, r.colors, { at: nowIso });
+    // A full refresh (or count) also brings the color / trim / drivetrain breakdown (the editor's chips).
+    ["colors", "trims", "drivetrains"].forEach(function (f) { if (r[f]) m[f] = Object.assign({}, r[f], { at: nowIso }); });
     if (r.ok) {
       m.lastAt = nowIso;
       if (r.kind === "full") { m.fullAt = nowIso; m.sig = sig; }
@@ -175,7 +175,7 @@ export async function runSync(steps, tracked, exec, onProgress, opts) {
     try { r = await exec(s); } catch (e) { r = failed(e); }
     take(r);
     const ok = !(r.errors && r.errors.length) && !r.rateLimited;
-    out.results.push({ profile: s.profile, kind: s.kind, numFound: r.numFound != null ? r.numFound : null, colors: r.colors || null, ok: ok });
+    out.results.push({ profile: s.profile, kind: s.kind, numFound: r.numFound != null ? r.numFound : null, colors: r.colors || null, trims: r.trims || null, drivetrains: r.drivetrains || null, ok: ok });
     report({ done: ++done, total: total, label: s.profile.name || s.profile.id, listings: Object.values(seen) });
     if (out.rateLimited) return finish();
   }

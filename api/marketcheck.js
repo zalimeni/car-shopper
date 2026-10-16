@@ -495,15 +495,24 @@ export function decodedColor(j) {
 //   vins  — the listed rows for up to 50 VINs (vin= takes a list), every page.
 //   local — the old radius search around one hub (Price Check's live comps).
 //   decode — NeoVIN for up to 10 VINs, one call each -> { decoded: { VIN: { color, baseColor } } }.
-// A page's base_exterior_color facet -> { counts: { Black: 261, … }, unlisted }
-// (unlisted = matching cars with no color at all), or null without the facet.
-function colorsOf(pg) {
-  const f = pg && pg.facets && Array.isArray(pg.facets.base_exterior_color) ? pg.facets.base_exterior_color : null;
+// A page's facet for one field -> { counts: { Black: 261, … }, unlisted }
+// (unlisted = matching cars not in any bucket), or null without the facet.
+// Facets list at most 20 values each — `version` can overflow on a broad search,
+// which is why the trim chips also offer values seen on synced cars.
+function facetOf(pg, field) {
+  const f = pg && pg.facets && Array.isArray(pg.facets[field]) ? pg.facets[field] : null;
   if (!f) return null;
   const counts = {};
   let total = 0;
   f.forEach(function (x) { if (x && x.item) { counts[x.item] = Number(x.count) || 0; total += counts[x.item]; } });
   return { counts: counts, unlisted: pg.numFound != null ? Math.max(0, pg.numFound - total) : null };
+}
+function colorsOf(pg) { return facetOf(pg, "base_exterior_color"); }
+// Every facet a profile's chips use, asked for together (verified live, Oct 2026:
+// one call returns all three — Outback: 9 versions, Tucson Hybrid: 1 drivetrain).
+export const PROFILE_FACETS = "base_exterior_color,version,drivetrain";
+function profileFacetsOf(pg) {
+  return { colors: colorsOf(pg), trims: facetOf(pg, "version"), drivetrains: facetOf(pg, "drivetrain") };
 }
 
 export async function runStep(s, step) {
@@ -511,7 +520,7 @@ export async function runStep(s, step) {
   const profile = step.profile && step.profile.params ? step.profile : null;
   const seen = {};
   let numFound = null;
-  let colors = null; // count step: { counts: { Black: 261, … }, unlisted: 34 }
+  let facets = { colors: null, trims: null, drivetrains: null }; // count / full page 1: { counts: { Black: 261, … }, unlisted: 34 } each
   const keep = function (row) {
     const norm = normalize(row, profile ? profile.id : null);
     if (!norm || !norm.vin) return;
@@ -541,13 +550,13 @@ export async function runStep(s, step) {
   // Full refresh over a list of states, halving it while the result is too big.
   async function fullOver(list) {
     const make = nat({ state: list.join(",") });
-    // The top-level page 1 also asks for the color breakdown of the whole match
-    // set (a facet: same call, nothing extra), so each full refresh keeps the
-    // profile's color list current.
+    // The top-level page 1 also asks for the color / trim / drivetrain breakdown of
+    // the whole match set (facets: same call, nothing extra), so each full refresh
+    // keeps the profile's chips current.
     const top = list === states;
-    const p1 = await getPage(s, function (k) { const u = make(k, 0); return top ? u + "&facets=base_exterior_color" : u; }, label);
+    const p1 = await getPage(s, function (k) { const u = make(k, 0); return top ? u + "&facets=" + PROFILE_FACETS : u; }, label);
     if (!p1) return null;
-    if (top) colors = colorsOf(p1);
+    if (top) facets = profileFacetsOf(p1);
     p1.rows.forEach(keep);
     const n = p1.numFound;
     if (n != null && n > PAGE_LIMIT && list.length > 1) {
@@ -593,12 +602,13 @@ export async function runStep(s, step) {
   } else if (!profile) {
     s.errors.push("No profile to search");
   } else if (step.kind === "count") {
-    // Plus the color breakdown across the whole match set (a facet: same call, no
-    // paging). Verified live to list every base color (11 for Outback, Purple: 1).
-    const pg = await getPage(s, function (k) { return nat({ state: states.join(","), rows: "0", facets: "base_exterior_color" })(k, 0); }, label);
+    // Plus the color / trim / drivetrain breakdown across the whole match set
+    // (facets: same call, no paging). Verified live to list every base color (11
+    // for Outback, Purple: 1).
+    const pg = await getPage(s, function (k) { return nat({ state: states.join(","), rows: "0", facets: PROFILE_FACETS })(k, 0); }, label);
     if (pg) {
       numFound = pg.numFound;
-      colors = colorsOf(pg);
+      facets = profileFacetsOf(pg);
     }
   } else if (step.kind === "new") {
     const since = Math.max(1, Number(step.since) || 1);
@@ -621,7 +631,7 @@ export async function runStep(s, step) {
   } else {
     numFound = await fullOver(states);
   }
-  return Object.assign(sessionReport(s), { listings: Object.values(seen), numFound: numFound, colors: colors });
+  return Object.assign(sessionReport(s), { listings: Object.values(seen), numFound: numFound, colors: facets.colors, trims: facets.trims, drivetrains: facets.drivetrains });
 }
 
 // ── MarketCheck query construction ──
@@ -724,8 +734,11 @@ export function normalize(row, profileId) {
     vehicle: vehicle,
     year: Number(build.year) || 0,
     // version is the fuller variant (e.g. "Hybrid LE AWD") — surfaces the
-    // powertrain on the card; fall back to the plain trim.
-    trim: build.version || build.trim || "",
+    // powertrain on the card; fall back to the plain trim. MarketCheck writes "-"
+    // for "no version" (every Outback Base) — that's no version, not a trim.
+    trim: (build.version && build.version !== "-" ? build.version : "") || build.trim || "",
+    // "4WD" (MarketCheck's word for AWD too), "FWD", "RWD" — per-profile chips.
+    drivetrain: build.drivetrain || null,
     price: price,
     fees: feeAmt || null,
     mileage: Number(row.miles) || 0,

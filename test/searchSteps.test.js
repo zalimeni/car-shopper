@@ -124,9 +124,24 @@ describe("count step returns the color breakdown", () => {
   it("reads the base_exterior_color facet and how many cars list no color", async () => {
     mockFetch(() => ({ num_found: 1001, listings: [], facets: { base_exterior_color: [{ item: "Black", count: 261 }, { item: "Gray", count: 204 }, { item: "White", count: 186 }, { item: "Silver", count: 168 }, { item: "Blue", count: 148 }] } }));
     const r = await step({ kind: "count", profile: tucson });
-    expect(calls[0].facets).toBe("base_exterior_color");
+    expect(calls[0].facets).toBe("base_exterior_color,version,drivetrain");
     expect(r.numFound).toBe(1001);
     expect(r.colors).toEqual({ counts: { Black: 261, Gray: 204, White: 186, Silver: 168, Blue: 148 }, unlisted: 34 });
+  });
+  it("reads the trim (version) and drivetrain facets from the same call", async () => {
+    mockFetch(() => ({ num_found: 3916, listings: [], facets: {
+      version: [{ item: "Limited", count: 1125 }, { item: "Touring XT", count: 356 }, { item: "-", count: 113 }],
+      drivetrain: [{ item: "4WD", count: 3916 }] } }));
+    const r = await step({ kind: "count", profile: tucson });
+    expect(calls.length).toBe(1);
+    expect(r.trims.counts).toEqual({ Limited: 1125, "Touring XT": 356, "-": 113 });
+    expect(r.drivetrains).toEqual({ counts: { "4WD": 3916 }, unlisted: 0 });
+  });
+  it("normalize: version as the trim ('-' falls back to the plain trim), drivetrain kept", async () => {
+    mockFetch(() => ({ num_found: 2, listings: [car("A", { build: { make: "Subaru", model: "Outback", year: 2021, trim: "Base", version: "-", drivetrain: "4WD" } }),
+      car("B", { build: { make: "Subaru", model: "Outback", year: 2021, trim: "Limited", version: "Limited XT", drivetrain: "4WD" } })] }));
+    const r = await step({ kind: "full", profile: tucson });
+    expect(r.listings.map((l) => [l.trim, l.drivetrain])).toEqual([["Base", "4WD"], ["Limited XT", "4WD"]]);
   });
   it("normalize keeps MarketCheck's base color", async () => {
     mockFetch(() => ({ num_found: 1, listings: [car("C", { exterior_color: "Phantom Black Pearl", base_ext_color: "Black" })] }));
@@ -140,7 +155,7 @@ describe("full refresh keeps the color list current", () => {
     mockFetch((q) => ({ num_found: 120, listings: page(120, Number(q.start), Math.min(50, 120 - Number(q.start))),
       facets: q.facets ? { base_exterior_color: [{ item: "Gray", count: 70 }, { item: "Blue", count: 45 }] } : undefined }));
     const r = await step({ kind: "full", profile: tucson });
-    expect(calls.map((c) => c.facets || null)).toEqual(["base_exterior_color", null, null]);
+    expect(calls.map((c) => c.facets || null)).toEqual(["base_exterior_color,version,drivetrain", null, null]);
     expect(r.colors).toEqual({ counts: { Gray: 70, Blue: 45 }, unlisted: 5 });
   });
   it("split searches don't re-ask for it", async () => {
