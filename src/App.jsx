@@ -13,6 +13,7 @@ import { localPriceCheck } from "./priceCheck";
 import { sortRows, nextSort, sortIndicator } from "./tableSort";
 import { homeMiles } from "./geo";
 import { parseMarkdown, clampMemo, MEMO_MAX } from "./markdown";
+import { addTag, removeTag, allTags, hasTag, TAG_MAX } from "./tags";
 import { summarize, ingestSnaps, recordSyncCalls, syncsLeft, gaugeTone, dedupeKeyEntries, spentKeyIds, FREE_PLAN_CALLS } from "./quota";
 import { loadLocations, searchLocations, hubFromZip } from "./locations";
 
@@ -2693,6 +2694,7 @@ function CompareTab({ data }) {
   var profs = data.profiles || [];
   var [sel, setSel] = useState(function () { return profs.map(function (p) { return p.id; }); });
   var [cmpDealer, setCmpDealer] = useState("all");
+  var [cmpTag, setCmpTag] = useState("all");
   var [detail, setDetail] = useState(null); // { listing, crit|null, score, text }
   var [sort, setSort] = useState({ key: "score", dir: "desc" }); // best-scoring first
   function toggle(id) { setSel(function (prev) { return prev.indexOf(id) > -1 ? prev.filter(function (x) { return x !== id; }) : prev.concat(id); }); }
@@ -2704,7 +2706,9 @@ function CompareTab({ data }) {
   base.forEach(function (l) { if (l.dealerType && l.dealerType !== "CPO" && dealerOpts.indexOf(l.dealerType) === -1) dealerOpts.push(l.dealerType); });
   dealerOpts.sort();
   var anyCpo = base.some(isCpo);
+  var cmpTagOpts = allTags(base);
   var filtered = base.filter(function (l) {
+    if (cmpTag === NO_TAGS ? (Array.isArray(l.tags) && l.tags.length) : (cmpTag !== "all" && !hasTag(l, cmpTag))) return false;
     if (cmpDealer === DEALER_CPO) return isCpo(l);
     if (cmpDealer !== "all") return (l.dealerType || "") === cmpDealer;
     return true;
@@ -2802,13 +2806,16 @@ function CompareTab({ data }) {
           <button style={S.smBtn} onClick={function () { setSel(profs.map(function (p) { return p.id; })); }}>All</button>
           <button style={S.smBtn} onClick={function () { setSel([]); }}>None</button>
         </div>
-        {(dealerOpts.length >= 2 || anyCpo) && (
+        {(dealerOpts.length >= 2 || anyCpo || cmpTagOpts.length > 0 || cmpTag !== "all") && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 8 }}>
-            <select style={Object.assign({}, S.inp, { flex: "0 0 auto", padding: "5px 8px", fontSize: 12 })} value={cmpDealer} onChange={function (e) { setCmpDealer(e.target.value); }}>
-              <option value="all">All dealers</option>
-              {dealerOpts.map(function (d) { return (<option key={d} value={d}>{dealerLabel(d)}</option>); })}
-              {anyCpo && <option value={DEALER_CPO}>CPO (certified)</option>}
-            </select>
+            {(dealerOpts.length >= 2 || anyCpo) && (
+              <select style={Object.assign({}, S.inp, { flex: "0 0 auto", padding: "5px 8px", fontSize: 12 })} value={cmpDealer} onChange={function (e) { setCmpDealer(e.target.value); }}>
+                <option value="all">All dealers</option>
+                {dealerOpts.map(function (d) { return (<option key={d} value={d}>{dealerLabel(d)}</option>); })}
+                {anyCpo && <option value={DEALER_CPO}>CPO (certified)</option>}
+              </select>
+            )}
+            {(cmpTagOpts.length > 0 || cmpTag !== "all") && <TagFilter value={cmpTag} onChange={setCmpTag} tags={cmpTagOpts} />}
           </div>
         )}
       </div>
@@ -2930,6 +2937,7 @@ function HelpTab() {
         <h3 style={S.cardH}>Listings &amp; scores</h3>
         <p style={li}>The big number on a card is the <span style={b}>composite score</span> (your weighted criteria). AI per-criterion scores feed into it; the <span style={b}>✨ AI assessment</span> box shows the summary and a per-criterion breakdown.</p>
         <p style={li}><span style={b}>Notes</span> — every listing card has <span style={b}>📝 Add notes</span> for free-form notes in Markdown (headings, <span style={b}>**bold**</span>, lists, <span style={b}>- [ ]</span> checklists, links), up to 4,000 characters — about a page. They're separate from the rejection reason and from the price-change log sync keeps. AI scoring reads them as first-hand information about that car (a test drive, a dealer call) whenever it next scores that listing. Editing notes never triggers or flags a re-score — use ✨ Re-score on the card when a note matters.</p>
+        <p style={li}><span style={b}>Tags</span> — tap <span style={b}>+ tag</span> on a watchlist card to label it however you like ("called dealer", "test drive booked", "waiting on Carfax"). Tags you've used before are suggested, so spellings stay consistent. Filter by tag on Results and Compare (or "No tags" to see what's untouched). AI scoring sees them too; like notes, editing tags never flags a re-score.</p>
         <p style={li}><span style={b}>Statuses</span>: Watchlist (active), Rejected (with a reason, restorable), and <span style={b}>Sold</span> (no longer available — archived, restorable). Stale watched listings surface under "Needs check" — confirm with <span style={b}>Still avail</span>.</p>
         <p style={li}><span style={b}>Title note</span>: "✓ Carfax clean title" means confirmed; "ⓘ Title not Carfax-confirmed" just means the dealer didn't state it (verify yourself) — it's not a salvage flag and doesn't affect the score.</p>
       </div>
@@ -2958,6 +2966,9 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   var [showImport, setShowImport] = useState(false);
   var [filterRole, setFilterRole] = useState("all");
   var [filterDealer, setFilterDealer] = useState("all");
+  var [filterTag, setFilterTag] = useState("all");
+  var tagOpts = allTags(data.listings);
+  if (filterTag !== "all" && filterTag !== NO_TAGS && !tagOpts.some(function (t) { return t.toLowerCase() === filterTag.toLowerCase(); })) tagOpts = tagOpts.concat([filterTag]);
   var [sortBy, setSortBy] = useState("score");
 
   function sortFn(a, b) {
@@ -2978,6 +2989,8 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       }
       if (filterDealer === DEALER_CPO) { if (!isCpo(l)) return false; }
       else if (filterDealer !== "all" && (l.dealerType || "") !== filterDealer) return false;
+      if (filterTag === NO_TAGS) { if (Array.isArray(l.tags) && l.tags.length) return false; }
+      else if (filterTag !== "all" && !hasTag(l, filterTag)) return false;
       return true;
     });
   }
@@ -3113,6 +3126,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
               {anyCpo && <option value={DEALER_CPO}>CPO (certified)</option>}
             </select>
           )}
+          {tagOpts.length > 0 && <TagFilter value={filterTag} onChange={setFilterTag} tags={tagOpts} />}
           <select style={Object.assign({}, S.inp, { flex: "0 0 auto", padding: "5px 8px", fontSize: 12 })} value={sortBy} onChange={function (e) { setSortBy(e.target.value); }}>
             <option value="score">Sort: Score ↓</option>
             <option value="price">Sort: Price ↑</option>
@@ -3129,7 +3143,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
               onClick={function () { scoreItems(shownCands, watchFilteredAll); }}>
               {scoreBusy ? "Scoring…" : ("✨ Re-score filtered (" + reScoreCount + ")" + (staleCount > 0 ? " · " + staleCount + " changed" : ""))}</button>
           )}
-          {(filterProf !== "all" || filterRole !== "all" || filterDealer !== "all") && (
+          {(filterProf !== "all" || filterRole !== "all" || filterDealer !== "all" || filterTag !== "all") && (
             <span style={{ fontSize: 11, color: "#6b6b76" }}>{totalShown} of {totalAll}</span>
           )}
         </div>
@@ -3843,6 +3857,61 @@ function LForm({ profiles, criteria, onSave, initial }) {
   );
 }
 
+// Freeform tags on a saved listing (src/tags.js): chips with ×, and "+ tag" opens a
+// box that suggests tags already in use (one tap) or takes a new one. For
+// filtering and tracking progress ("called dealer", "test drive booked"). AI
+// scoring sees them, but editing them never marks a score stale.
+// Filter by tag (Results + Compare): any tag in use, or listings with none.
+var NO_TAGS = "\u0000none";
+function TagFilter({ value, onChange, tags }) {
+  return (
+    <select style={Object.assign({}, S.inp, { flex: "0 0 auto", padding: "5px 8px", fontSize: 12 })} value={value} onChange={function (e) { onChange(e.target.value); }} aria-label="Filter by tag">
+      <option value="all">All tags</option>
+      {tags.map(function (t) { return (<option key={t} value={t}>🏷 {t}</option>); })}
+      <option value={NO_TAGS}>No tags</option>
+    </select>
+  );
+}
+
+export function TagEditor({ tags, known, onChange }) {
+  var [open, setOpen] = useState(false);
+  var [text, setText] = useState("");
+  var list = Array.isArray(tags) ? tags : [];
+  var q = text.trim().toLowerCase();
+  var suggestions = (known || []).filter(function (t) { return !hasTag({ tags: list }, t) && (!q || t.toLowerCase().indexOf(q) > -1); }).slice(0, 8);
+  function add(t) { var next = addTag(list, t, known); if (next.length !== list.length) onChange(next); setText(""); }
+  var chip = { display: "inline-flex", alignItems: "center", gap: 4, background: "#1b2236", border: "1px solid #2a3554", borderRadius: 10, padding: "1px 4px 1px 8px", fontSize: 11, color: "#b8c4e0" };
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center", marginTop: 6 }}>
+      {list.map(function (t) {
+        return (<span key={t} style={chip}>🏷 {t}
+          <button style={Object.assign({}, S.smBtn, { padding: "0 4px", fontSize: 11, color: "#6b6b76" })} title={"Remove tag " + t} onClick={function () { onChange(removeTag(list, t)); }}>×</button></span>);
+      })}
+      {!open ? (
+        <button style={Object.assign({}, S.smBtn, { fontSize: 11, color: "#6b9bf2" })} onClick={function () { setOpen(true); }}>+ tag</button>
+      ) : (
+        <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 5, alignItems: "center" }}>
+          <input style={Object.assign({}, S.inp, { padding: "3px 8px", fontSize: 12, width: 150 })} autoFocus value={text} maxLength={TAG_MAX}
+            placeholder="New or existing tag" aria-label="Tag"
+            onChange={function (e) { setText(e.target.value); }}
+            onKeyDown={function (e) {
+              if (e.key === "Enter") { e.preventDefault(); if (text.trim()) add(text); else setOpen(false); }
+              else if (e.key === "Escape") { setOpen(false); setText(""); }
+            }} />
+          {suggestions.map(function (t) {
+            return (<button key={t} style={Object.assign({}, S.smBtn, { fontSize: 11, color: "#b8c4e0", border: "1px dashed #2a3554", borderRadius: 10, padding: "1px 8px" })}
+              onClick={function () { add(t); }}>{t}</button>);
+          })}
+          {text.trim() && !suggestions.some(function (t) { return t.toLowerCase() === text.trim().toLowerCase(); }) && (
+            <button style={Object.assign({}, S.smBtn, { fontSize: 11 })} onClick={function () { add(text); }}>Add "{text.trim()}"</button>
+          )}
+          <button style={Object.assign({}, S.smBtn, { fontSize: 11, color: "#6b6b76" })} onClick={function () { setOpen(false); setText(""); }}>Done</button>
+        </span>
+      )}
+    </div>
+  );
+}
+
 function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, stale, onScore, scoreBusy, keyOk, scoring, criteriaStale }) {
   var l = listing;
   var prof = data.profiles.find(function (p) { return p.id === l.profileId; });
@@ -3920,6 +3989,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
       {l.notes && <div style={{ fontSize: 12, color: "#6b6b76", fontStyle: "italic", marginTop: 4 }}>{l.notes}</div>}
       {l.rejectReason && <div style={{ fontSize: 12, color: "#c44", marginTop: 4 }}>Rejected: {l.rejectReason}</div>}
 
+      <TagEditor tags={l.tags} known={allTags(data.listings)} onChange={function (t) { onUpd({ tags: t }); }} />
       <ListingMemo l={l} onSave={function (v) { onUpd({ memo: v }); }} />
 
       <AiBox listing={l} criteria={data.criteria} />
