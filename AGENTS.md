@@ -230,6 +230,18 @@ per environment (Preview vs Production) — set keys in the env you're testing.
   16px on coarse pointers (no zoom); HTML5 drag-and-drop doesn't work with touch,
   so drags use pointer events on a `touch-action: none` grip (Compare headers).
 
+## Pending cleanup
+
+- **Old trim text filters** (`params.trimInclude` / `params.trimExclude`, fuzzy
+  substrings): replaced by trim chips (`src/trims.js`). The owner is resaving each
+  profile to convert them (profile cards show "⚠ Old trim text filter" until
+  then). Once none are left, delete the legacy path: `legacyTrimHide` /
+  `legacyTrimChips` and their tests, the conversion in `ProfEd`, the legacy
+  branches of `showTrim`, the text inputs + "Only/Exclude trims" summary + ⚠ note
+  on profile cards, and the `trimInclude`/`trimExclude` defaults (convert
+  `DEFAULT_PROFILES`' Outback to `excludeTrims`). Add a `migrate()` step that
+  deletes any leftover keys.
+
 ## Debugging playbook
 
 ### Sync returns "0 found" / query errors
