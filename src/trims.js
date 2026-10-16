@@ -14,32 +14,16 @@
 //   preferTrims: [trim]        ★ — also mirrored into params.trims
 //   excludeTrims: [trim]       hidden from candidates
 //   excludeDrivetrains: [dt]   hidden from candidates
-//   trimInclude / trimExclude  the old fuzzy text filters — still honored until
-//                              the editor converts them to chips (legacyTrimChips)
+// (These replaced fuzzy trimInclude/trimExclude text; migrate v9 dropped it.)
 
 const key = function (s) { return String(s == null ? "" : s).trim().toLowerCase(); };
 const has = function (list, v) { const k = key(v); return !!k && (list || []).some(function (x) { return key(x) === k; }); };
-const terms = function (s) { return String(s || "").split(",").map(function (x) { return x.trim().toLowerCase(); }).filter(Boolean); };
-
-// Old fuzzy filters: a term matches if it's anywhere in the trim (or vehicle) text.
-export function legacyTrimHide(l, params) {
-  const p = params || {};
-  const t = ((l && l.trim) || "") + " " + ((l && l.vehicle) || "");
-  const tl = t.toLowerCase();
-  const exc = terms(p.trimExclude).filter(function (e) { return tl.indexOf(e) > -1; });
-  if (exc.length) return "matches trim exclude: " + exc.join(", ");
-  const inc = terms(p.trimInclude);
-  if (inc.length && !inc.some(function (e) { return tl.indexOf(e) > -1; })) return "trim not in include list";
-  return null;
-}
 
 // Why the profile's trim/drivetrain chips hide this listing, or null.
 // -> { kind: "trim" | "drivetrain", text } | null
 export function trimHideReason(l, params) {
   const p = params || {};
   if (l && l.trim && has(p.excludeTrims, l.trim)) return { kind: "trim", text: "hidden trim: " + l.trim };
-  const legacy = legacyTrimHide(l, p);
-  if (legacy) return { kind: "trim", text: legacy };
   if (l && l.drivetrain && has(p.excludeDrivetrains, l.drivetrain)) return { kind: "drivetrain", text: "hidden drivetrain: " + l.drivetrain };
   return null;
 }
@@ -78,25 +62,4 @@ export function facetChoices(facet, seen, kept) {
   (seen || []).slice().sort().forEach(function (v) { push(v, null); });
   (kept || []).forEach(function (v) { push(v, counts ? 0 : null); });
   return out;
-}
-
-// The old text filters as chip states over the known trims: an exclude term hides
-// every trim containing it; an include list hides every trim matching none of it;
-// a preferred-trims term stars the trims containing it.
-// -> { preferTrims, excludeTrims, trims, trimInclude: "", trimExclude: "" } | null (nothing to convert)
-export function legacyTrimChips(params, values) {
-  const p = params || {};
-  const exc = terms(p.trimExclude), inc = terms(p.trimInclude);
-  const prefTerms = (p.preferTrims && p.preferTrims.length) ? [] : terms(p.trims);
-  if (!exc.length && !inc.length && !prefTerms.length) return null;
-  const vals = values || [];
-  const hit = function (v, list) { const t = key(v); return list.some(function (e) { return t.indexOf(e) > -1; }); };
-  let exclude = (p.excludeTrims || []).slice();
-  let prefer = (p.preferTrims || []).slice();
-  vals.forEach(function (v) {
-    if (has(exclude, v) || has(prefer, v)) return;
-    if (hit(v, exc) || (inc.length && !hit(v, inc))) exclude.push(v);
-    else if (prefTerms.length && hit(v, prefTerms)) prefer.push(v);
-  });
-  return { preferTrims: prefer, excludeTrims: exclude, trims: prefer.length ? prefer.join(", ") : (p.trims || ""), trimInclude: "", trimExclude: "" };
 }

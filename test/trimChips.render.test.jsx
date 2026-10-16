@@ -3,13 +3,12 @@ import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 
-// Profile editor trim chips: old text filters convert to chip states, a tap
-// cycles ☆ → ★ → hidden, drivetrain chips show when there's more than one, and
-// Save writes the arrays (and clears the old text).
+// Profile editor trim chips: saved states render, a tap cycles ☆ → ★ → hidden,
+// drivetrain chips show when there's more than one, and Save writes the arrays.
 const state = {
   version: 8, onboarded: true,
   profiles: [{ id: "ob", name: "Outback", active: true, params: { make: "Subaru", model: "Outback", years: "2020-2022", maxPrice: 25000, maxMiles: 100000,
-    trims: "Premium", trimExclude: "XT" } }],
+    trims: "Premium", preferTrims: ["Premium"], excludeTrims: ["Touring XT"] } }],
   criteria: [{ id: "price", name: "Price", weight: 25 }],
   listings: [{ id: "l1", vin: "4S4BTANC0L3000001", year: 2020, vehicle: "Subaru Outback", trim: "Base", drivetrain: "4WD", price: 20000, mileage: 50000, profileId: "ob", status: "watch" }],
   skipped: [], candidates: [],
@@ -36,19 +35,17 @@ vi.mock("../src/snapshots", () => ({ listSnapshots: async () => [], restoreSnaps
 const App = (await import("../src/App.jsx")).default;
 
 describe("profile trim chips", () => {
-  it("convert old filters, cycle on tap, and save as arrays", async () => {
+  it("show saved states, cycle on tap, and save as arrays", async () => {
     localStorage.clear();
     render(React.createElement(App));
     await screen.findByText("Car Shopper", {}, { timeout: 4000 });
     fireEvent.click(screen.getAllByText("Profiles")[0]);
     fireEvent.click(await screen.findByText("Edit"));
 
-    // facet trims by count, then "Base" seen on a synced car; old filters converted
+    // facet trims by count, then "Base" seen on a synced car
     expect(screen.getByLabelText("Touring XT (hidden)")).toBeTruthy();
     expect(screen.getByLabelText("Premium (preferred)")).toBeTruthy();
     expect(screen.getByLabelText("Base")).toBeTruthy();
-    expect(screen.getByText(/Converted from your old trim text filters/)).toBeTruthy();
-    expect(screen.queryByText("Trim exclude (fuzzy, comma-sep)")).toBeNull();
 
     fireEvent.click(screen.getByLabelText("Limited"));            // → preferred
     fireEvent.click(screen.getByLabelText("Base"));               // → preferred
@@ -61,7 +58,6 @@ describe("profile trim chips", () => {
     expect(p.excludeTrims).toEqual(["Touring XT", "Base"]);
     expect(p.preferTrims).toEqual(["Premium", "Limited"]);
     expect(p.trims).toBe("Premium, Limited");
-    expect(p.trimExclude).toBe("");
     expect(p.excludeDrivetrains).toEqual(["FWD"]);
   });
 });
