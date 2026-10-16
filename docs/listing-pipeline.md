@@ -22,22 +22,38 @@ No consumer site (CarGurus, Cars.com, Carvana, CarMax) offers a public listings
 API, and self-scraping is fragile + against ToS. We use **MarketCheck**, an
 automotive-listings aggregator covering US/Canada dealer inventory.
 
-- **Endpoint:** `GET https://api.marketcheck.com/v2/search/car/active`
-- **Auth:** API key (passed as `api_key` query param — *confirm against live
-  docs*). Server-side only.
-- **Filtering:** 100+ params; the ones we need —
-  `make`, `model`, `year` (range via `year_range` or min/max), `price` (max),
-  `miles` (max), `latitude`+`longitude`+`radius`, `car_type=used`,
-  `seller_type=dealer`, pagination (`start`/`rows`).
-- **Response (per listing, fields to confirm):** `vin`, `price`, `miles`,
-  `dom` (days on market), `dealer` (name, type), `inventory_type`/`seller_type`,
-  `vdp_url` (listing URL), plus `build` (year/make/model/trim), `exterior_color`,
-  city/state.
-- **Cost:** paid; free trial tier to start. Pricing per request — see §9.
+Verified against the live API (free plan, Oct 2026) — what an agent would
+otherwise have to spend calls rediscovering:
 
-> ⚠️ Field/param names above are from the public docs summary and **must be
-> verified against the live API** during implementation; the normalization
-> layer (§5) is the single place that depends on them.
+- **Endpoints:** `GET https://api.marketcheck.com/v2/search/car/active`
+  (search, VIN lists, counts, facets) and `/v2/decode/car/neovin/{vin}/specs`
+  (VIN decoder: factory exterior color with a confidence; no build date). No
+  CARFAX / history access.
+- **Auth:** `api_key` query param. The proxy redacts it from every debug output.
+- **Version pin:** an `x-version` request header (`v4.8.0`); responses carry
+  `served-by-version` / `requested-from-version` / `auto-upgraded-version` and
+  `deprecation` / `sunset`. An unknown version is rejected (the proxy retries
+  unpinned and the app shows a banner).
+- **Params we rely on:** `make`, `model`, `year` (exact-year CSV), `price_range`,
+  `miles_range`, `car_type=used`, `state` (CSV), `vin` (CSV, ≤50), `sort_by` +
+  `sort_order` (`dos_active` = days at this dealer), `start`/`rows` (≤50 per
+  call), `rows=0` + `facets=base_exterior_color` (counts per base color in one
+  call). No location at all = nationwide (rows still carry dealer lat/lon; no
+  `dist`). Radius > 100 mi is rejected on the free plan.
+- **Row fields we read:** see `normalize()` — notably `base_ext_color`
+  (normalized base color; missing on some marketplace-relayed rows) beside the
+  dealer's marketing `exterior_color`, `dos_active` (days at this dealer; `dom_active` fallback), `vdp_url`, `dealer.*`.
+- **Quota:** free plan = 500 calls/month per key, 5 requests/second, and a
+  500-row pagination ceiling per query. **Every call is billed** — errors,
+  `rows=0` counts and decodes included. Each response carries `quota-limit`,
+  `quota-remaining` and `quota-reset-time`; there is no free "check my quota"
+  call, so the app only learns the quota from real calls (`src/quota.js`).
+  `quota-reset-time` looks like `2026-11-01 00:00:00 UTC` — **not** ISO, and
+  Safari's `Date` can't parse it; always go through `parseMcTime`/`isoMcTime`.
+- **429 is ambiguous:** it's both the per-second throttle (retry after a moment)
+  and a spent month. The proxy treats it as spent only when `quota-remaining`
+  is 0, `Retry-After` ≥ 1 h, or the body mentions the monthly quota; 402 is
+  always spent (`readQuota`).
 
 ## 3. Architecture — nationwide sync
 
@@ -117,8 +133,8 @@ optional scheduled sync (§4a), which runs the same plan server-side.
 
 ## 4. Runtime & secrets
 
-- **Where:** one Vercel serverless function `api/marketcheck.js` (the proxy).
-  No cron in v1.
+- **Where:** `api/marketcheck.js` (the proxy, one sync step per request) and
+  `api/cron-sync.js` (the optional daily scheduled sync, §4a).
 - **Secrets (Vercel env vars only — never committed, never shipped to client):**
   - `MARKETCHECK_API_KEY` — the aggregator key. A data-API credential, fully
     separate from the user's personal Anthropic/Claude account. **This is the
@@ -147,27 +163,27 @@ optional scheduled sync (§4a), which runs the same plan server-side.
 - The browser keeps using the existing **anon key + Supabase session** to read
   and write `app_state`; RLS continues to enforce that the user only touches
   their own row. The reconcile logic (§6) moves client-side.
-- **Why no service-role key:** that key bypasses RLS and would only be needed by
-  a *sessionless* background job. Sync-on-open always has a session, so it
-  doesn't need it. Keeping it out means there is no RLS-bypassing credential
-  anywhere in the system.
+- **Service-role key:** the in-app sync never needs it (it has the user's
+  session). Only the sessionless paths hold `SUPABASE_SECRET_KEY`: the Anthropic
+  key vault and the scheduled sync (§4a).
 - **Auth note (for the deferred LLM phase):** Anthropic has no third-party
   consumer OAuth; programmatic access is API-key / Workload Identity Federation,
   both server-side. When we add enrichment, the clean path is a small server
   endpoint holding the Claude key, gated behind the existing Supabase login —
   no browser-exposed key, no copy-paste.
 
-### 4a. Follow-up: background cron + email-on-update (planned)
+### 4a. Scheduled sync (shipped; email deferred)
 
-A later phase adds unattended refresh so new matches arrive without opening the
-app. This is the piece that *does* need elevated server credentials:
+Unattended refresh so new matches arrive without opening the app:
 
-- Vercel Cron → `POST /api/sync` (shared `CRON_SECRET` so only cron can call it).
-- The function loads/writes the user's row with the Supabase Secret key
-  (`SUPABASE_SECRET_KEY`, server-side only) — because cron has no user session —
-  scoped to `SYNC_USER_ID`.
-- On *newly discovered* candidates (or notable price drops), send an email
-  (e.g. Resend/Postmark) summarizing the matches + links.
+- Vercel Cron (`vercel.json`, daily 10:00 UTC) → `/api/cron-sync`, gated by
+  `CRON_SECRET` (unset = off; the cron then only pings Supabase as a keepalive).
+- Runs for the accounts in `CRON_SYNC_EMAILS`, loading/writing each row with
+  `SUPABASE_SECRET_KEY` (no user session), compare-and-swap on `app_state.rev`
+  so an active app session wins.
+- New VINs go onto the synced review queue (`data.candidates`, flagged
+  `fromScheduled`); price changes land on the watchlist as an in-app sync would.
+- Email on new matches is still deferred (provider + threshold undecided).
 - The plan (`src/syncPlan.js`) and reconcile logic (§6) are shared between the
   client and this function, so neither is rewritten. The scheduled sync takes the
   automatic path (full refresh only when due).
@@ -258,30 +274,27 @@ item, justified only if the blob gets large or we want real query history.
 
 ## 10. Rollout / testing
 
-1. Verify MarketCheck auth + response shape against the live API (adjust §5).
-2. Implement `/api/sync` with a `dryRun` mode that returns the diff without
-   writing — validate mapping/reconcile against real data.
-3. Wire Vercel Cron + env vars; run once manually via "Sync now".
-4. Enable the schedule once a dry run looks right.
+Shipped. Tests: `test/README.md`. To exercise the flow without spending quota,
+use the proxy's `?mock=1`; for one live response, the footer's **Debug raw**.
 
 ## 11. Out of scope / deferred
 
-- **Background cron + email-on-update** — planned follow-up, designed in §4a.
-  Needs the service-role key + a `CRON_SECRET`; shipped after sync-on-open.
+- **Email on new matches** — the scheduled sync shipped (§4a); email didn't.
 - FB Marketplace / private-party sourcing (buyer prefers dealers).
 - LLM enrichment (auto-scoring, history summaries, dealer-question drafting) —
   deferred; will be a separate, server-gated phase (§4 auth note).
-- Normalized listing tables and realtime cross-device sync.
+- Normalized listing tables and realtime push between open devices (each device
+  reads the synced blob on load; concurrent saves resolve by `rev`).
 
 ## 12. Open questions
 
-1. Confirm MarketCheck auth mechanism, exact param names, response schema, and
-   trial limits against the live API.
-2. Auto-purge aggressiveness — mark `sold` after one absent run, or require two
-   consecutive misses to avoid flapping on transient inventory gaps?
+1. ~~Confirm MarketCheck auth, params, schema and limits~~ — done, see §2.
+2. ~~Auto-purge aggressiveness — mark `sold` after one absent run, or require two
+   consecutive misses to avoid flapping on transient inventory gaps?~~ — neither:
+   a car is marked gone only when a direct VIN lookup can't find it (§3).
 3. (Follow-up §4a) Email provider for update alerts — Resend vs. Postmark vs.
    Supabase's built-in — and what threshold triggers a send (any new candidate?
    price drop ≥ X%?).
 
-*Resolved:* v1 trigger is sync-on-open + a "Sync now" button (no service-role
-key). Unattended refresh + email moves to the §4a follow-up.
+*Resolved:* no sync on app open (it spent quota every visit) — the ↻ Sync
+button plus the optional scheduled sync (§4a).

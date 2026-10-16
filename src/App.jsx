@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback, useRef, Fragment } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, Fragment, cloneElement } from "react";
 import storage from "./storage";
 import { signOut } from "./Auth";
 import { fetchListings, postStep, fetchPriceComps, fetchRawSample, reconcile } from "./sync";
 import { planSync, trackedVins, nextProfileMeta, estimateCost, profileStatus, searchSig, mergeColorCache, COUNT_WARN, ROWS as MC_ROWS, FULL_REFRESH_DAYS, DECODE_MAX } from "./syncPlan";
 import { travelFacts, DRIVE_MAX_MI, AIRPORT_NEAR_MI } from "./travel";
 import { SALT_STATES, isSaltState } from "./regions";
+import { layoutColumns, moveColumn, togglePin } from "./compareCols";
 import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBaseline, generatePriceAssessment, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
 import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
 import { listSnapshots, restoreSnapshot } from "./snapshots";
@@ -97,6 +98,7 @@ var DEFAULT_SETTINGS = {
   mcApi: null, // MarketCheck API version + deprecation/sunset headers from the last response (drift banner)
   mcProfiles: null, // { profileId: { fullAt, lastAt, sig, count, countSig, countAt, colors } } — src/syncPlan.js
   mcColors: null, // { VIN: { color, baseColor, at } } colors decoded from VINs (NeoVIN), so none is decoded twice
+  compareCols: null, // Compare table layout { order: [colKey], pinned: [colKey] } (src/compareCols.js); null = default
 };
 function getSettings(data) { return Object.assign({}, DEFAULT_SETTINGS, (data && data.settings) || {}); }
 // Ordered list of the user's MarketCheck key strings (empty -> server uses its shared key).
@@ -1292,6 +1294,12 @@ export default function App() {
   useEffect(function () { return function () { clearTimeout(undoTimer.current); }; }, []);
 
   var markChk = useCallback(function (id) { updListing(id, { lastChecked: today() }); }, [updListing]);
+  // Compare's column order + pins (src/compareCols.js), synced like other settings. null resets.
+  var saveCompareCols = useCallback(function (cc) {
+    var d = dataRef.current;
+    if (!d) return;
+    save(Object.assign({}, d, { settings: Object.assign({}, d.settings, { compareCols: cc }) }));
+  }, [save]);
   // Acknowledge a sync update: move it out of the review section back to the watchlist.
   var ackReview = useCallback(function (id) { updListing(id, { reviewPending: false }); }, [updListing]);
   var ackAllReviews = useCallback(function () {
@@ -1417,7 +1425,7 @@ export default function App() {
             scoreModel={scoreModel} setScoreModel={setScoreModel} goSettings={function () { setTab("Settings"); }} />
         )}
         {tab === "Help" && <HelpTab />}
-        {tab === "Compare" && <CompareTab data={data} cardCtx={{ data: data, edListing: edListing, setEdListing: setEdListing, updListing: updListing, delListing: delListing,
+        {tab === "Compare" && <CompareTab data={data} saveCols={saveCompareCols} cardCtx={{ data: data, edListing: edListing, setEdListing: setEdListing, updListing: updListing, delListing: delListing,
           markChk: markChk, scoreItems: scoreItems, scoreBusy: scoreBusy, keyStatus: keyStatus, scoringActive: scoringActive }} />}
         {tab === "Price" && <PriceCheckTab data={data} candidates={candidates} keyStatus={keyStatus} onQuota={noteQuota} goSettings={function () { setTab("Settings"); }} />}
         {tab === "Settings" && <SettingsTab data={data} save={save} keyStatus={keyStatus} setKeyStatus={setKeyStatus} />}
@@ -2905,7 +2913,7 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings, onQuota
   );
 }
 
-function CompareTab({ data, cardCtx }) {
+function CompareTab({ data, cardCtx, saveCols }) {
   var profs = data.profiles || [];
   var [sel, setSel] = useState(function () { return profs.map(function (p) { return p.id; }); });
   var [cmpDealer, setCmpDealer] = useState("all");
@@ -2935,14 +2943,14 @@ function CompareTab({ data, cardCtx }) {
   // Primary-attribute columns. `best` marks which direction "wins" (highlight).
   var homeBase = getSettings(data).homeBase || null;
   var specs = [
-    { label: "Price", get: function (l) { return l.price; }, fmt: function (v) { return "$" + v.toLocaleString(); }, best: "min" },
-    { label: "Mileage", get: function (l) { return l.mileage; }, fmt: function (v) { return v.toLocaleString() + " mi"; }, best: "min" },
-    { label: "Year", get: function (l) { return l.year; }, fmt: function (v) { return String(v); }, best: "max" },
-    { label: "Dealer", get: function (l) { return l.dealer ? l.dealer + " (" + (l.dealerType || "?") + ")" : ""; }, fmt: function (v) { return v; } },
-    { label: "Location", get: function (l) { return [l.location, l.state].filter(Boolean).join(", ") + (isSalt(l.state) ? " 🧂" : ""); }, fmt: function (v) { return v; } },
-    { label: homeBase ? "Miles from home" : "Distance", get: function (l) { var m = homeMiles(l, homeBase); return m != null ? m : l.distMi; }, fmt: function (v) { return v + " mi"; }, best: "min" },
-    { label: "Color", get: function (l) { return l.color; }, fmt: function (v) { return v; } },
-    { label: "Days listed (this dealer)", get: function (l) { return l.dom; }, fmt: function (v) { return String(v); }, best: "min" },
+    { id: "price", label: "Price", get: function (l) { return l.price; }, fmt: function (v) { return "$" + v.toLocaleString(); }, best: "min" },
+    { id: "mileage", label: "Mileage", get: function (l) { return l.mileage; }, fmt: function (v) { return v.toLocaleString() + " mi"; }, best: "min" },
+    { id: "year", label: "Year", get: function (l) { return l.year; }, fmt: function (v) { return String(v); }, best: "max" },
+    { id: "dealer", label: "Dealer", get: function (l) { return l.dealer ? l.dealer + " (" + (l.dealerType || "?") + ")" : ""; }, fmt: function (v) { return v; } },
+    { id: "location", label: "Location", get: function (l) { return [l.location, l.state].filter(Boolean).join(", ") + (isSalt(l.state) ? " 🧂" : ""); }, fmt: function (v) { return v; } },
+    { id: "distance", label: homeBase ? "Miles from home" : "Distance", get: function (l) { var m = homeMiles(l, homeBase); return m != null ? m : l.distMi; }, fmt: function (v) { return v + " mi"; }, best: "min" },
+    { id: "color", label: "Color", get: function (l) { return l.color; }, fmt: function (v) { return v; } },
+    { id: "dom", label: "Days listed (this dealer)", get: function (l) { return l.dom; }, fmt: function (v) { return String(v); }, best: "min" },
   ];
 
   function bestVal(get, dir) {
@@ -2954,7 +2962,7 @@ function CompareTab({ data, cardCtx }) {
 
   // Columns: total score, primary attributes, CPO, then each scoring criterion.
   var cols = [{ key: "score", label: "Score", kind: "score", best: "max", get: function (l) { return l.compositeScore || 0; } }]
-    .concat(specs.map(function (s) { return { key: "spec:" + s.label, label: s.label, kind: "spec", best: s.best, get: s.get, fmt: s.fmt }; }))
+    .concat(specs.map(function (s) { return { key: "spec:" + s.id, label: s.label, kind: "spec", best: s.best, get: s.get, fmt: s.fmt }; }))
     .concat([{ key: "cpo", label: "CPO", kind: "cpo", best: "max", get: isCpo }])
     .concat((data.criteria || []).map(function (c) { return { key: "crit:" + c.id, label: c.name + " (" + c.weight + ")", kind: "crit", best: "max", crit: c, get: function (l) { return l.scores && l.scores[c.id]; } }; }));
   var bestByCol = {};
@@ -2966,10 +2974,69 @@ function CompareTab({ data, cardCtx }) {
   var activeCol = sortCols.find(function (c) { return c.key === sort.key; }) || null;
   var listings = sortRows(filtered, activeCol, sort.dir);
 
+  // Column layout (src/compareCols.js): the user's order + pins from settings.
+  // Pinned columns sit right after Listing and stay put while the table scrolls.
+  var colPref = getSettings(data).compareCols || null;
+  var lay = layoutColumns(cols, colPref);
+  var shownCols = lay.pinned.concat(lay.rest);
+  var pinnedKeys = lay.pinned.map(function (c) { return c.key; });
+  var lastPinned = pinnedKeys[pinnedKeys.length - 1];
+
+  // Sticky `left` offsets for the pinned columns, from their rendered widths.
+  var thRefs = useRef({});
+  var [lefts, setLefts] = useState({});
+  useLayoutEffect(function () {
+    var next = {};
+    var x = thRefs.current.listing ? thRefs.current.listing.offsetWidth : 0;
+    pinnedKeys.forEach(function (k) { next[k] = x; var el = thRefs.current[k]; x += el ? el.offsetWidth : 0; });
+    if (JSON.stringify(next) !== JSON.stringify(lefts)) setLefts(next);
+  });
+  function pinStyle(col, head) {
+    if (pinnedKeys.indexOf(col.key) < 0) return {};
+    return Object.assign({ position: "sticky", left: lefts[col.key] || 0, zIndex: head ? 3 : 1, background: "#161820" },
+      col.key === lastPinned ? { boxShadow: "inset -1px 0 0 #2a3058" } : {});
+  }
+
+  // Reorder by dragging a header: the mouse can grab anywhere on it, touch uses
+  // the ⋮⋮ grip (so a swipe elsewhere still scrolls the table). A drag that ends
+  // on another header moves the column there; a plain click still sorts.
+  var [drag, setDrag] = useState(null); // { key, over, live }
+  var justDragged = useRef(false);
+  function startDrag(e, col, grip) {
+    if (e.button > 0 || (!grip && e.pointerType !== "mouse")) return;
+    if (grip) { e.preventDefault(); e.stopPropagation(); }
+    var x0 = e.clientX, y0 = e.clientY;
+    var st = { key: col.key, over: null, live: !!grip };
+    if (st.live) setDrag(st);
+    function overAt(x, y) {
+      var el = document.elementFromPoint(x, y);
+      var th = el && el.closest ? el.closest("[data-colkey]") : null;
+      return th ? th.getAttribute("data-colkey") : null;
+    }
+    function move(ev) {
+      if (!st.live && Math.abs(ev.clientX - x0) + Math.abs(ev.clientY - y0) < 6) return;
+      var over = overAt(ev.clientX, ev.clientY);
+      if (!st.live || over !== st.over) { st = { key: st.key, over: over, live: true }; setDrag(st); }
+    }
+    function end(ev) {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      setDrag(null);
+      if (!st.live) return;
+      justDragged.current = true; // swallow the click that follows a mouse drag
+      setTimeout(function () { justDragged.current = false; }, 0);
+      if (ev.type === "pointerup" && st.over && st.over !== st.key) saveCols(moveColumn(cols, colPref, st.key, st.over));
+    }
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+  }
+
   function headerProps(col) {
     return {
       className: "cs-sort",
-      onClick: function () { setSort(function (prev) { return nextSort(prev, col); }); },
+      onClick: function () { if (justDragged.current) return; setSort(function (prev) { return nextSort(prev, col); }); },
       title: "Sort by " + col.label,
     };
   }
@@ -3009,7 +3076,7 @@ function CompareTab({ data, cardCtx }) {
     <div>
       <div style={S.secH}><h2 style={S.secT}>Compare</h2></div>
       <div style={S.card}>
-        <p style={S.help}>Watchlist listings (rows) for the selected profiles, with each listing's price/mileage and a CPO column. Filter by dealer type below. Click any column heading to sort by it — click again to reverse; listings missing that value stay at the bottom either way. Best value per column is highlighted (★ / green). Tap an underlined score (or a row's total) for the AI rationale; tap anywhere else on a row to open its card (edit tags, notes, status).</p>
+        <p style={S.help}>Watchlist listings (rows) for the selected profiles, with each listing's price/mileage and a CPO column. Filter by dealer type below. Click any column heading to sort by it — click again to reverse; listings missing that value stay at the bottom either way. Best value per column is highlighted (★ / green). Tap an underlined score (or a row's total) for the AI rationale; tap anywhere else on a row to open its card (edit tags, notes, status). Drag a column heading (or its ⋮⋮ grip on touch) to move it; 📌 pins a column to the left so it stays in view while you scroll. Your layout syncs across devices.{colPref ? <span> <button style={S.linkBtn} onClick={function () { saveCols(null); }}>Reset columns</button></span> : null}</p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
           {profs.map(function (p) {
             var on = sel.indexOf(p.id) > -1;
@@ -3045,11 +3112,28 @@ function CompareTab({ data, cardCtx }) {
           <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%" }}>
             <thead>
               <tr>
-                <th {...headerProps(idCol)} style={Object.assign({}, rowLabel, { color: "#6b6b76", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 500, borderBottom: "1px solid #2a2d38" })}>
+                <th {...headerProps(idCol)} ref={function (el) { thRefs.current.listing = el; }} style={Object.assign({}, rowLabel, { zIndex: 3,  color: "#6b6b76", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 500, borderBottom: "1px solid #2a2d38" })}>
                   {listings.length} listing{listings.length > 1 ? "s" : ""}{sortIndicator(sort, idCol)}
                 </th>
-                {cols.map(function (col) {
-                  return (<th key={col.key} {...headerProps(col)} style={Object.assign({}, cell, { fontSize: 11, fontWeight: 600, borderBottom: "1px solid #2a2d38", color: col.kind === "crit" ? "#b89edd" : "#8a8a96", verticalAlign: "bottom" })}>{col.label}{sortIndicator(sort, col)}</th>);
+                {shownCols.map(function (col) {
+                  var pinned = pinnedKeys.indexOf(col.key) > -1;
+                  var dragging = drag && drag.key === col.key, over = drag && drag.over === col.key && drag.key !== col.key;
+                  return (
+                    <th key={col.key} data-colkey={col.key} {...headerProps(col)} ref={function (el) { thRefs.current[col.key] = el; }}
+                      onPointerDown={function (e) { startDrag(e, col, false); }}
+                      style={Object.assign({}, cell, { fontSize: 11, fontWeight: 600, borderBottom: "1px solid #2a2d38", color: col.kind === "crit" ? "#b89edd" : "#8a8a96", verticalAlign: "bottom" },
+                        pinStyle(col, true), dragging ? { opacity: 0.45 } : {}, over ? { background: "#1e2a4a", color: "#f0f0f3" } : {})}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <span aria-label={"Drag to move " + col.label} title="Drag to move this column" onPointerDown={function (e) { startDrag(e, col, true); }} onClick={function (e) { e.stopPropagation(); }}
+                          style={{ cursor: "grab", touchAction: "none", color: "#4a4a56", padding: "2px 1px", letterSpacing: "-2px" }}>⋮⋮</span>
+                        <span>{col.label}{sortIndicator(sort, col)}</span>
+                        <button type="button" aria-pressed={pinned} title={pinned ? "Unpin this column" : "Pin this column to the left"}
+                          onPointerDown={function (e) { e.stopPropagation(); }}
+                          onClick={function (e) { e.stopPropagation(); saveCols(togglePin(cols, colPref, col.key)); }}
+                          style={{ background: "none", border: "none", padding: "0 2px", cursor: "pointer", fontSize: 11, opacity: pinned ? 1 : 0.3, filter: pinned ? "none" : "grayscale(1)" }}>📌</button>
+                      </span>
+                    </th>
+                  );
                 })}
               </tr>
             </thead>
@@ -3076,7 +3160,7 @@ function CompareTab({ data, cardCtx }) {
                         </div>
                       )}
                     </td>
-                    {cols.map(function (col) { return renderCell(l, col); })}
+                    {shownCols.map(function (col) { var td = renderCell(l, col); return cloneElement(td, { style: Object.assign({}, td.props.style, pinStyle(col, false)) }); })}
                   </tr>
                 );
               })}
