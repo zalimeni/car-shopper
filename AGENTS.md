@@ -21,7 +21,8 @@ over architecture.
 - **Frontend:** React 18 + Vite 8, plain JS (no TypeScript). One big component
   file (`src/App.jsx`).
 - **Backend:** Vercel **serverless functions** in `api/` (Node 22, ESM).
-- **Data/auth:** Supabase — magic-link auth + `app_state` (one JSONB blob per
+- **Data/auth:** Supabase — email auth (magic link or one-time code; the Magic
+  Link email template must include `{{ .Token }}` — `supabase/templates/`) + `app_state` (one JSONB blob per
   user) and a server-only `user_anthropic_keys` vault (encrypted per-user
   Anthropic key). RLS + an email allowlist.
 - **External APIs:** MarketCheck (dealer inventory) and Anthropic (AI scoring),
@@ -41,7 +42,7 @@ over architecture.
 | `src/score.js` | Client side of AI scoring + Anthropic-key management; `scoreSet`, model list. |
 | `src/storage.js` | Supabase-backed get/set/delete of the per-user JSONB blob. |
 | `src/supabaseClient.js` | Supabase client + default URL/anon key. |
-| `src/Auth.jsx` | Magic-link auth gate + the "not authorized" screen. |
+| `src/Auth.jsx` | Email auth gate (magic link **or** the one-time code from the same email — the code is how an iOS Home Screen web app signs in) + the "not authorized" screen. |
 | `src/main.jsx`, `src/index.css` | Entry point + global styles. |
 | `src/locations.js` | Home-base picker logic: parse/search `public/locations.txt` (city or ZIP suggestions with coordinates). Pure, tested. |
 | `src/syncPlan.js` | **What a sync does and costs.** Per active profile: a full refresh (due after 3 days, an edit, or a manual Sync) or a new-listings pass; then a VIN lookup of watchlist cars the searches didn't return (the only "gone" signal). `planSync`, `runSync` (orchestration with an injected step runner — shared by the browser and the scheduled sync), `estimateCost`, `nextProfileMeta` (`settings.mcProfiles`). Pure, tested. |
@@ -76,7 +77,7 @@ over architecture.
   bundles. Never read; rebuild instead.
 - `package-lock.json` — generated lockfile (~36K). Only consult for a specific
   dependency version; never read in full.
-- `public/` — static assets (favicon).
+- `public/` — static assets (favicon, Home Screen icons + `manifest.webmanifest`).
 
 There is **no generated source** in `src/` or `api/` — it's all authored by hand.
 
