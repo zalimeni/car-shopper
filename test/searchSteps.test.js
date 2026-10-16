@@ -134,3 +134,18 @@ describe("count step returns the color breakdown", () => {
     expect(r.listings[0]).toMatchObject({ color: "Phantom Black Pearl", baseColor: "Black" });
   });
 });
+
+describe("full refresh keeps the color list current", () => {
+  it("asks for the color facet on the top-level page 1 only, and returns it", async () => {
+    mockFetch((q) => ({ num_found: 120, listings: page(120, Number(q.start), Math.min(50, 120 - Number(q.start))),
+      facets: q.facets ? { base_exterior_color: [{ item: "Gray", count: 70 }, { item: "Blue", count: 45 }] } : undefined }));
+    const r = await step({ kind: "full", profile: tucson });
+    expect(calls.map((c) => c.facets || null)).toEqual(["base_exterior_color", null, null]);
+    expect(r.colors).toEqual({ counts: { Gray: 70, Blue: 45 }, unlisted: 5 });
+  });
+  it("split searches don't re-ask for it", async () => {
+    mockFetch((q) => { const n = q.state.split(",").length > 18 ? 900 : 300; return { num_found: n, listings: [] }; });
+    await step({ kind: "full", profile: tucson });
+    expect(calls.filter((c) => c.facets).length).toBe(1);
+  });
+});
