@@ -2287,8 +2287,8 @@ function ProfilesTab({ data, save, keyOk, scoreModel, refreshFacets }) {
                 <strong style={{ fontSize: 15, color: "#e4e4e7" }}>{p.name}</strong>
               </div>
               <div style={S.profA}>
-                <button style={S.smBtn} onClick={function () { toggleActive(p.id); }}>{p.active ? "Off" : "On"}</button>
-                <button style={S.smBtn} onClick={function () { setEd(ed === p.id ? null : p.id); }}>{ed === p.id ? "Done" : "Edit"}</button>
+                <button style={S.smBtn} onClick={function () { toggleActive(p.id); }}><Swap labels={["On", "Off"]} show={p.active ? 1 : 0} /></button>
+                <button style={S.smBtn} onClick={function () { setEd(ed === p.id ? null : p.id); }}><Swap labels={["Edit", "Done"]} show={ed === p.id ? 1 : 0} /></button>
                 <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { delProf(p.id); }}>Del</button>
               </div>
             </div>
@@ -2677,6 +2677,15 @@ function AdminTab() {
 // A toggle's check mark that keeps its space when off, so toggling never
 // resizes the button (and reflows its neighbours).
 function Check({ on }) { return (<span aria-hidden="true" style={{ visibility: on ? "visible" : "hidden" }}>✓ </span>); }
+// A button label that switches between texts ("On"/"Off") at the width of the
+// longest, so the button — and the buttons beside it — don't shift.
+function Swap({ labels, show }) {
+  return (
+    <span style={{ display: "inline-grid" }}>
+      {labels.map(function (t, i) { return (<span key={i} aria-hidden={i !== show} style={{ gridArea: "1 / 1", visibility: i === show ? "visible" : "hidden" }}>{t}</span>); })}
+    </span>
+  );
+}
 function scoreHue(v) { return v >= 7 ? "#2d8659" : v >= 5 ? "#d4a017" : "#c44"; }
 
 // Is a list price fair? Checks a VIN-or-description against comparable cars in

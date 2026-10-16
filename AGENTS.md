@@ -219,8 +219,10 @@ per environment (Preview vs Production) — set keys in the env you're testing.
   `QuotaModal`, `ListingModal`.
 - **Listing cards:** `cardProps(listing, ctx, stale, criteriaStale)` builds
   `LCard`'s props from the App's handlers, so any view can show the Results card.
-- **Toggles:** render `<Check on={…} />` instead of a conditional "✓ " so the
-  button keeps its width; keep border widths constant between states.
+- **Toggles keep their size:** render `<Check on={…} />` instead of a
+  conditional "✓ ", and `<Swap labels={["On", "Off"]} show={i} />` instead of a
+  conditional label (it sizes to the longest), so nothing beside the button
+  shifts; keep border widths constant between states.
 - **Sortable tables:** `sortRows` / `nextSort` / `sortIndicator` + the `cs-sort`
   class (Compare, Price Check comps).
 - **Touch / iOS Home Screen:** the owner uses it as an iPhone web app. Inputs are
