@@ -634,7 +634,8 @@ export default function App() {
   var [candidates, setCandidates] = useState([]); // restored from data.candidates on load
   var [importText, setImportText] = useState("");
   var [importResult, setImportResult] = useState(null);
-  var [filterProf, setFilterProf] = useState(function () { var h = tabFromHash(); return (h && h.prof) || "all"; });
+  // Results' profile filter: "active" (default — the active profiles), "all", or one profile id.
+  var [filterProf, setFilterProf] = useState(function () { var h = tabFromHash(); return (h && h.prof) || "active"; });
   var init = useRef(false);
   // Latest state for long-running async flows: `data` captured in a callback
   // closure goes stale while a multi-location sync's fetches run, and saving
@@ -715,7 +716,7 @@ export default function App() {
   // so it's bookmarkable, and follow manual hash edits / back-nav.
   useEffect(function () {
     try {
-      var h = tab.toLowerCase() + (tab === "Results" && filterProf !== "all" ? "/" + encodeURIComponent(filterProf) : "");
+      var h = tab.toLowerCase() + (tab === "Results" && filterProf !== "active" ? "/" + encodeURIComponent(filterProf) : "");
       if (window.location.hash.slice(1) !== h) history.replaceState(null, "", "#" + h);
     } catch (e) { /* older browsers */ }
   }, [tab, filterProf]);
@@ -731,7 +732,7 @@ export default function App() {
   }, []);
   // A stale/foreign profile id in the hash would filter everything out — reset it.
   useEffect(function () {
-    if (data && filterProf !== "all" && !(data.profiles || []).some(function (p) { return p.id === filterProf; })) setFilterProf("all");
+    if (data && filterProf !== "all" && filterProf !== "active" && !(data.profiles || []).some(function (p) { return p.id === filterProf; })) setFilterProf("active");
   }, [data, filterProf]);
 
   useEffect(function () {
@@ -1111,13 +1112,15 @@ export default function App() {
     setCandidates(function (prev) { return prev.filter(function (c) { return c !== cand; }); });
   }, [data, save]);
 
-  var approveAll = useCallback(function () {
+  // Approve the candidates the Results view shows (its filters applied), or the
+  // whole queue when called without a list. Hidden (trim/color) ones stay.
+  var approveAll = useCallback(function (only) {
     if (!data || !candidates.length) return;
     var profById = {};
     data.profiles.forEach(function (p) { profById[p.id] = p; });
     var newList = data.listings.slice();
     var approved = [];
-    candidates.forEach(function (cand) {
+    (Array.isArray(only) ? only : candidates).forEach(function (cand) {
       var p = profById[cand.profileId];
       if (candHideReason(cand, p)) return; // leave trim/color-hidden candidates in the queue
       var nl = Object.assign({}, cand, {
@@ -3631,6 +3634,7 @@ function HelpTab() {
         <p style={li}>Add your <span style={b}>Anthropic API key</span> in the <span style={b}>Settings</span> tab to have each listing scored 1–10 per criterion with a short rationale and an overall summary.</p>
         <p style={li}><span style={b}>Model</span> — pick Sonnet 5.5 (default, balanced), Opus 5.5 (most nuanced), or Haiku 5.5 (fastest/cheapest). <span style={b}>Auto-score on sync</span> scores only unscored candidates and listings whose price materially changed (never untouched or skipped ones), and is <span style={b}>skipped when there are more than 20 to score</span> — use Score all / per-card then, to avoid burning credits.</p>
         <p style={li}>Score (or Re-score) any single card with its ✨ button, or use <span style={b}>Score all</span> on the candidate queue. After you edit criteria, per-criterion guidance, or the scoring prompt, cards scored under the old settings show <span style={b}>⟳ Re-score (changed)</span>; <span style={b}>✨ Re-score filtered</span> (in the filter bar) re-applies to every candidate + watchlist listing matching the current filters at once.</p>
+        <p style={li}><span style={b}>Filter bar</span> (Results): shows your <span style={b}>active profiles</span> by default — pick All profiles, or any single one (inactive ones included), plus category, dealer and tag. Everything follows it: candidates, the hidden-by-filters list, skipped cars, the watchlist, rejected and sold. <span style={b}>Approve All</span> approves just the candidates shown.</p>
         <p style={note}>Scoring runs in batches and fills in results as each batch finishes, so partial progress is kept. If a large run is interrupted (e.g. the tab is backgrounded), the finished ones stay scored and the rest are picked up on the next sync/score. The key is validated, stored encrypted server-side, and never shown again — it's only used to score your own listings under your own account. Note: the API is pay-as-you-go and needs credits in the Anthropic Console; a Claude Pro/Max subscription does not include API access.</p>
       </div>
 
@@ -3687,9 +3691,15 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
     return (b.compositeScore || 0) - (a.compositeScore || 0);
   }
 
+  // Cars of inactive profiles are left out of the default "Active profiles" view
+  // (manual listings with no profile stay in).
+  var inactiveIds = {};
+  data.profiles.forEach(function (p) { if (!p.active) inactiveIds[p.id] = true; });
+  var profFixed = filterProf !== "all" && filterProf !== "active"; // a single profile pins the category
   function applyFilter(list) {
     return list.filter(function (l) {
-      if (filterProf !== "all" && l.profileId !== filterProf) return false;
+      if (filterProf === "active") { if (l.profileId && inactiveIds[l.profileId]) return false; }
+      else if (filterProf !== "all" && l.profileId !== filterProf) return false;
       if (filterRole !== "all") {
         var pr = data.profiles.find(function (p) { return p.id === l.profileId; });
         if (pr && pr.role !== filterRole) return false;
@@ -3727,8 +3737,11 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   function hideOf(c) { return candHideReason(c, data.profiles.find(function (x) { return x.id === c.profileId; })); }
   function candTrimPass(c) { return !hideOf(c); }
   function hideText(c) { var h = hideOf(c); return h ? h.text : "filtered"; }
-  var shownCands = candidates.filter(candTrimPass).slice().sort(sortFn);
-  var hiddenCands = candidates.filter(function (c) { return !candTrimPass(c); }).slice().sort(sortFn);
+  // Candidates, hidden ones and skipped ones all follow the filter bar too.
+  var viewCands = applyFilter(candidates);
+  var shownCands = viewCands.filter(candTrimPass).slice().sort(sortFn);
+  var hiddenCands = viewCands.filter(function (c) { return !candTrimPass(c); }).slice().sort(sortFn);
+  var viewSkipped = applyFilter(skipped || []);
 
   // The active evaluation set the "Re-score filtered" button re-applies criteria
   // to: every visible candidate + watchlist listing matching the current filters
@@ -3786,24 +3799,25 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       <AiPanel keyStatus={keyStatus} autoScore={autoScore} setAutoScore={setAutoScore}
         scoreBusy={scoreBusy} scoreMsg={scoreMsg} scoreModel={scoreModel} setScoreModel={setScoreModel} goSettings={goSettings} />
 
-      {/* Filter & Sort bar */}
-      {totalAll > 0 && (
+      {/* Filter & Sort bar — also when only candidates / skipped cars exist */}
+      {(totalAll > 0 || candidates.length > 0 || (skipped || []).length > 0) && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12, alignItems: "center" }}>
           <select style={Object.assign({}, S.inp, { flex: "0 0 auto", padding: "5px 8px", fontSize: 12 })} value={filterProf} onChange={function (e) {
             var v = e.target.value;
             setFilterProf(v);
             // A specific profile implies its category, so pin the category filter
             // to that profile's role (disabled below); reset it when back to All.
-            if (v === "all") { setFilterRole("all"); }
+            if (v === "all" || v === "active") { setFilterRole("all"); }
             else { var pr = data.profiles.find(function (p) { return p.id === v; }); setFilterRole(pr && pr.role ? pr.role : "all"); }
           }}>
+            <option value="active">Active profiles</option>
             <option value="all">All profiles</option>
-            {activeProfiles.map(function (p) { return (<option key={p.id} value={p.id}>{p.name}</option>); })}
+            {activeProfiles.concat(data.profiles.filter(function (p) { return !p.active; })).map(function (p) { return (<option key={p.id} value={p.id}>{p.name}{p.active ? "" : " (inactive)"}</option>); })}
           </select>
           {roleOpts.length >= 2 && (
-            <select disabled={filterProf !== "all"}
-              style={Object.assign({}, S.inp, { flex: "0 0 auto", padding: "5px 8px", fontSize: 12 }, filterProf !== "all" ? { opacity: 0.55, cursor: "default" } : {})}
-              title={filterProf !== "all" ? "Category is set by the selected profile — choose All profiles to filter by category" : ""}
+            <select disabled={profFixed}
+              style={Object.assign({}, S.inp, { flex: "0 0 auto", padding: "5px 8px", fontSize: 12 }, profFixed ? { opacity: 0.55, cursor: "default" } : {})}
+              title={profFixed ? "Category is set by the selected profile — choose Active or All profiles to filter by category" : ""}
               value={filterRole} onChange={function (e) { setFilterRole(e.target.value); }}>
               <option value="all">All categories</option>
               {roleOpts.map(function (r) { return (<option key={r} value={r}>{r} only</option>); })}
@@ -3833,7 +3847,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
               onClick={function () { scoreItems(shownCands, watchFilteredAll); }}>
               {scoreBusy ? "Scoring…" : ("✨ Re-score filtered (" + reScoreCount + ")" + (staleCount > 0 ? " · " + staleCount + " changed" : ""))}</button>
           )}
-          {(filterProf !== "all" || filterRole !== "all" || filterDealer !== "all" || filterTag !== "all") && (
+          {totalShown < totalAll && (
             <span style={{ fontSize: 11, color: "#6b6b76" }}>{totalShown} of {totalAll}</span>
           )}
         </div>
@@ -3849,7 +3863,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
                 <button style={Object.assign({}, S.secBtn, scoreBusy ? { opacity: 0.6 } : {})} disabled={scoreBusy}
                   onClick={function () { scoreItems(shownCands, []); }}>{scoreBusy ? "Scoring…" : "✨ Score all"}</button>
               )}
-              {shownCands.length > 1 && (<button style={S.priBtn} onClick={approveAll}>Approve All</button>)}
+              {shownCands.length > 1 && (<button style={S.priBtn} onClick={function () { approveAll(shownCands); }}>Approve All</button>)}
             </div>
           </div>
           <div className="cs-wide cs-tiles">
@@ -3903,13 +3917,13 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       )}
 
       {/* Skipped candidates — restorable */}
-      {skipped.length > 0 && (
+      {viewSkipped.length > 0 && (
         <div style={S.card}>
           <h3 style={Object.assign({}, S.cardH, { cursor: "pointer", margin: 0, display: "flex", alignItems: "center", gap: 6 })}
             onClick={function () { setShowSkipped(!showSkipped); }}>
-            {showSkipped ? "▾" : "▸"} Skipped ({skipped.length})
+            {showSkipped ? "▾" : "▸"} Skipped ({viewSkipped.length})
           </h3>
-          {showSkipped && skipped.map(function (s, i) {
+          {showSkipped && viewSkipped.map(function (s, i) {
             return (
               <div key={(s.vin || "") + i} style={{ borderTop: "1px solid #1e2028", paddingTop: 8, marginTop: 8 }}>
                 <div style={{ fontSize: 13, color: "#c8c8d0" }}>
