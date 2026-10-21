@@ -7,10 +7,12 @@ import { render, screen, waitFor, fireEvent, within } from "@testing-library/rea
 // shows — where tags can be edited and the listing link still works.
 const state = {
   version: 8, onboarded: true,
-  profiles: [{ id: "p1", name: "Tucson", active: true, params: { make: "Hyundai", model: "Tucson" } }],
+  profiles: [{ id: "p1", name: "Tucson", active: true, params: { make: "Hyundai", model: "Tucson" } },
+             { id: "p2", name: "Outback", active: false, params: { make: "Subaru", model: "Outback" } }],
   criteria: [{ id: "price", name: "Price", weight: 25 }],
   listings: [{ id: "l1", vin: "KM8JCCD10RU198791", year: 2023, vehicle: "Hyundai Tucson", trim: "SEL", price: 25000, mileage: 30000,
-    profileId: "p1", status: "watch", link: "https://dealer.example/car/1", tags: ["Called dealer"], lastChecked: "2026-10-15" }],
+    profileId: "p1", status: "watch", link: "https://dealer.example/car/1", tags: ["Called dealer"], lastChecked: "2026-10-15" },
+    { id: "l2", vin: "4S4BTANC0L3000002", year: 2021, vehicle: "Subaru Outback", price: 22000, mileage: 40000, profileId: "p2", status: "watch" }],
   skipped: [], settings: {}, candidates: [],
 };
 const writes = [];
@@ -57,5 +59,10 @@ describe("Compare rows", () => {
 
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
+
+    // only active profiles start selected; tapping the inactive one adds its cars
+    expect(screen.getAllByTitle("Open this listing").length).toBe(1);
+    fireEvent.click(screen.getByText("Outback"));
+    expect(screen.getAllByTitle("Open this listing").length).toBe(2);
   });
 });

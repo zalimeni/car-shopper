@@ -3237,7 +3237,11 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings, onQuota
 
 function CompareTab({ data, cardCtx, saveCols }) {
   var profs = data.profiles || [];
-  var [sel, setSel] = useState(function () { return profs.map(function (p) { return p.id; }); });
+  // Active profiles start selected (all of them if none is active); "All" adds the rest.
+  var [sel, setSel] = useState(function () {
+    var act = profs.filter(function (p) { return p.active; });
+    return (act.length ? act : profs).map(function (p) { return p.id; });
+  });
   var [cmpDealer, setCmpDealer] = useState("all");
   var [cmpTag, setCmpTag] = useState("all");
   var [detail, setDetail] = useState(null); // { listing, crit|null, score, text }
@@ -3462,7 +3466,7 @@ function CompareTab({ data, cardCtx, saveCols }) {
     <div>
       <div style={S.secH}><h2 style={S.secT}>Compare</h2></div>
       <div style={S.card}>
-        <p style={S.help}>Watchlist listings (rows) for the selected profiles, with each listing's price/mileage and a CPO column. Filter by dealer type below. Click any column heading to sort by it — click again to reverse; listings missing that value stay at the bottom either way. Best value per column is highlighted (★ / green). Tap an underlined score (or a row's total) for the AI rationale; tap anywhere else on a row to open its card (edit tags, notes, status). Drag a column heading (on a phone, its ⋮⋮ grip) to move it — or tap the ⋮⋮, then tap where it should go; 📌 pins a column to the left so it stays in view while you scroll (on a narrow screen, only as many pins as leave room to scroll). Your layout syncs across devices.{colPref ? <span> <button style={S.linkBtn} onClick={function () { saveCols(null); }}>Reset columns</button></span> : null}</p>
+        <p style={S.help}>Watchlist listings (rows) for the selected profiles (your active ones to start with), with each listing's price/mileage and a CPO column. Filter by dealer type below. Click any column heading to sort by it — click again to reverse; listings missing that value stay at the bottom either way. Best value per column is highlighted (★ / green). Tap an underlined score (or a row's total) for the AI rationale; tap anywhere else on a row to open its card (edit tags, notes, status). Drag a column heading (on a phone, its ⋮⋮ grip) to move it — or tap the ⋮⋮, then tap where it should go; 📌 pins a column to the left so it stays in view while you scroll (on a narrow screen, only as many pins as leave room to scroll). Your layout syncs across devices.{colPref ? <span> <button style={S.linkBtn} onClick={function () { saveCols(null); }}>Reset columns</button></span> : null}</p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
           {profs.map(function (p) {
             var on = sel.indexOf(p.id) > -1;
