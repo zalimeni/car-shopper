@@ -83,7 +83,7 @@ export function WelcomeModal({ onClose }) {
   return (
     <div onMouseDown={onClose} style={D.backdrop}>
       <div role="dialog" aria-modal="true" aria-label="Welcome" onMouseDown={function (e) { e.stopPropagation(); }} style={D.dialog}>
-        <h2 style={D.h1}>Welcome 👋</h2>
+        <h2 style={D.h1}>👋 Welcome</h2>
         <p style={D.p}>Thanks for checking out my app! It's the tracker I built for my own used-car search: profiles for the cars I'm after, dealer inventory pulled from MarketCheck nationwide, AI scores against my own criteria, and a watchlist that follows prices until a car sells.</p>
         <p style={D.p}>What you're seeing is a copy of my real data (with keys and personal notes removed). Poke at anything — edits work, but they live only in this tab. <b>↻ Sync</b> on Results is simulated: it "finds" a few held-back listings, drops a couple of prices, and marks a car sold. Live MarketCheck and AI calls are off.</p>
 
@@ -96,7 +96,7 @@ export function WelcomeModal({ onClose }) {
           <li style={li}><b>Schema changes:</b> SQL migrations, checked and applied by GitHub Actions on merge.</li>
           <li style={li}><b>This demo:</b> one public, read-only row I publish from my account. Nothing you do here is sent back.</li>
         </ul>
-        <p style={Object.assign({}, D.p, { marginBottom: 4 })}>Enjoy, and thanks again for stopping by.</p>
+        <p style={Object.assign({}, D.p, { marginBottom: 4 })}>Enjoy, and thanks again for stopping by!</p>
         <p style={Object.assign({}, D.p, { color: "#e4e4e7" })}>— Michael</p>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <button style={D.btn} onClick={onClose}>Take a look</button>
