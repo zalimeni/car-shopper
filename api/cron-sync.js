@@ -31,32 +31,36 @@ import { planSync, runSync, trackedVins, nextProfileMeta, mergeColorCache } from
 const QUEUE_MAX = 300; // the review queue's cap (same as the app's), so the blob stays bounded
 
 export default async function handler(req, res) {
+  const secret = process.env.CRON_SECRET || "";
+  const header = req.headers.authorization || "";
+  const token = header.indexOf("Bearer ") === 0 ? header.slice(7).trim() : "";
+  const enabled = secret.length >= 16;
+  // Once CRON_SECRET is set, only Vercel Cron (which sends it) gets past here —
+  // not even the keepalive runs for anyone else.
+  if (enabled && !safeEqual(token, secret)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
   // Keepalive: touch the database on every daily cron run so a free-tier
   // Supabase project doesn't auto-pause after ~7 days of inactivity (a paused
-  // project's host stops resolving, which breaks sign-in). Runs regardless of
-  // whether scheduled sync is enabled; best-effort, never fails the request.
+  // project's host stops resolving, which breaks sign-in). Runs whether or not
+  // scheduled sync is enabled; best-effort, never fails the request.
   try {
     const ka = adminClient() || anonClient();
     if (ka) await ka.from("app_state").select("user_id", { head: true, count: "exact" });
   } catch (e) { /* keepalive is best-effort */ }
 
-  const secret = process.env.CRON_SECRET || "";
-  const header = req.headers.authorization || "";
-  const token = header.indexOf("Bearer ") === 0 ? header.slice(7).trim() : "";
   // Disabled by default: no CRON_SECRET → scheduled sync is off. Return a clean
   // no-op (not an error) so the daily cron invocation is harmless until enabled.
-  if (secret.length < 16) {
+  if (!enabled) {
     res.status(200).json({ ok: true, disabled: true, message: "Scheduled sync is disabled — set CRON_SECRET (>= 16 chars) to enable." });
-    return;
-  }
-  if (!safeEqual(token, secret)) {
-    res.status(401).json({ error: "Unauthorized" });
     return;
   }
 
   const db = adminClient();
   if (!db) { res.status(500).json({ error: "Supabase secret key is not configured on the server" }); return; }
-  // The shared key is only a fallback now — a user's own keys are enough on their own.
+  // The shared key, used only for accounts with no MarketCheck keys of their own.
   const apiKey = process.env.MARKETCHECK_API_KEY || "";
 
   const emails = (process.env.CRON_SYNC_EMAILS || DEFAULT_ALLOW)

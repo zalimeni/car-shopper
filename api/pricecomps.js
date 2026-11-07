@@ -7,8 +7,9 @@
 // Price Check tool can widen a thin local comp pool with real current-market
 // asking prices. Reuses the inventory sync's search engine (a "local" step:
 // a radius search around one location), with a synthetic single-vehicle profile. Counts
-// against the caller's MarketCheck quota (their own keys first, then the shared
-// server key) — user-initiated, so quota burn stays in their control.
+// against the caller's MarketCheck quota (their own keys, or the shared server
+// key only when they have none) — user-initiated, so quota burn stays in their
+// control.
 
 import { authorize } from "./_auth.js";
 import { createSession, runStep, keyId, resolveKeys } from "./marketcheck.js";

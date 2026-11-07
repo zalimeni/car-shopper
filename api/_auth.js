@@ -25,15 +25,7 @@
 
 import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
-
-const SUPABASE_URL =
-  process.env.SUPABASE_URL ||
-  process.env.VITE_SUPABASE_URL ||
-  "https://dispkandrvmycwccavvl.supabase.co";
-const SUPABASE_ANON_KEY =
-  process.env.SUPABASE_ANON_KEY ||
-  process.env.VITE_SUPABASE_ANON_KEY ||
-  "sb_publishable_TlJnt8hWo6eeQ1yJV9r0KQ_IbZwbfDk";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./_supabaseAdmin.js";
 
 export const DEFAULT_ALLOW = "mzalimeni@gmail.com";
 const DEBUG_TOKEN = process.env.DEBUG_TOKEN || "";
