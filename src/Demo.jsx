@@ -85,7 +85,7 @@ export function WelcomeModal({ onClose }) {
       <div role="dialog" aria-modal="true" aria-label="Welcome" onMouseDown={function (e) { e.stopPropagation(); }} style={D.dialog}>
         <h2 style={D.h1}>👋 Welcome</h2>
         <p style={D.p}>Thanks for checking out my project! This is the tracker I built for my own used-car search: profiles for the cars I'm shopping, dealer inventory pulled from MarketCheck nationwide, AI scores against my own criteria, and a watchlist that follows prices until a car sells. I made an actual SUV purchase using this app in October 2026!</p>
-        <p style={D.p}>What you're seeing is a copy of my real search data, with keys and some personal notes removed. Poke at anything — edits work, but they live only in this tab. <b>↻ Sync</b> on Results is simulated: it "finds" a few held-back listings, drops a couple of prices, and marks a car sold. Live MarketCheck and AI calls are disabled. (If you're interested in access and know me at work or personally, let me know and I can invite you to sign up, or you can self-host with your own accounts!)</p>
+        <p style={D.p}>What you're seeing is a copy of my real search data, with keys and some personal notes removed. Poke at anything — edits work, but they live only in this tab. <b>↻ Sync</b> on Results is simulated: it "finds" a few held-back listings, drops a couple of prices, and marks a car as no longer listed. Live MarketCheck and AI calls are disabled. (If you're interested in access and know me at work or personally, let me know and I can invite you to sign up, or you can self-host with your own accounts!)</p>
 
         <h3 style={D.h3}>How this app uses Supabase</h3>
         <ul style={{ margin: "0 0 12px", paddingLeft: 18, fontSize: 13, color: "#c8c8d0" }}>
@@ -138,7 +138,7 @@ export function DemoPublishModal({ data, candidates, onClose }) {
         <h2 style={D.h1}>Publish demo</h2>
         <p style={D.p}>Replaces the public demo at <code>/?demo</code> with a copy of your data as it is now: {counts}. Removed always: MarketCheck keys, quota records, API-version info. Kept: profiles, criteria, listings, prices, tags, AI scores, home base.</p>
         <h3 style={D.h3}>Your notes ({items.length})</h3>
-        <p style={Object.assign({}, D.p, { fontSize: 12 })}>Unchecked notes are cleared (price-change notes sync wrote are always kept).</p>
+        <p style={Object.assign({}, D.p, { fontSize: 12 })}>Unchecked notes and typed reject reasons are cleared (price-change notes sync wrote are always kept).</p>
         {items.length > 0 && (
           <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
             <button style={D.small} onClick={function () { var k = {}; items.forEach(function (i) { k[i.key] = true; }); setKeep(k); }}>Keep all</button>
@@ -154,6 +154,7 @@ export function DemoPublishModal({ data, candidates, onClose }) {
                   <b style={{ color: "#e4e4e7" }}>{i.name}</b>
                   {i.memo && <span style={{ display: "block", color: "#a8a8b3", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{i.memo}</span>}
                   {i.notes && <span style={{ display: "block", color: "#8a8a96", overflowWrap: "anywhere" }}>{i.notes}</span>}
+                  {i.reason && <span style={{ display: "block", color: "#c88", overflowWrap: "anywhere" }}>Rejected: {i.reason}</span>}
                 </span>
               </label>
             );
