@@ -23,8 +23,22 @@ Dashboard → SQL editor. The migrations are idempotent, so re-running is safe.
 - `20260614180900_user_allowlist.sql` — server-enforced user allowlist:
   `allowed_emails` table, `is_allowed()` helper, and `app_state` RLS policies
   tightened to also require allowlist membership. See the file header for details.
+- `20260616190000_user_anthropic_keys.sql` — the server-only vault for each
+  user's encrypted Anthropic key (RLS on, no client policies).
+- `20260713220500_app_state_history.sql` — `app_state_history` and the trigger
+  that keeps the latest 30 snapshots per user (at most one per hour, plus one
+  before every delete). Server-only.
+- `20260713223000_app_state_rev.sql` — the `rev` counter for compare-and-swap
+  writes (`src/storage.js`).
+- `20261107120000_demo_snapshot.sql` — the one-row public demo snapshot
+  (anyone can read it; only the service role writes it).
+- `20261107190000_tighten_grants_and_rls.sql` — revokes the default
+  anon/authenticated grants on the server-only tables, keeps SELECT only on
+  `demo_snapshot`, and wraps the `app_state` policies' `auth.uid()` /
+  `is_allowed()` calls in `(select …)` (the Performance Advisor's
+  `auth_rls_initplan` lint). `is_allowed()` now ignores letter case.
 
-Both are idempotent and ordered by filename, so applying the full set against an
+All are idempotent and ordered by filename, so applying the full set against an
 existing database is safe.
 
 ## CI
@@ -34,7 +48,17 @@ existing database is safe.
 - **validate** (every push / PR, no secrets): applies the CI shim
   (`ci/shim.sql`, which stubs the Supabase `auth` schema + roles) and then every
   migration — twice — against a throwaway Postgres to prove they run cleanly and
-  are idempotent.
+  are idempotent. Then `ci/rls_checks.sql` acts as the `anon` and
+  `authenticated` roles (with JWT claims set the way PostgREST sets them) and
+  checks the RLS policies and grants: each user sees only their own row, a user
+  not on the allowlist sees nothing, the server-only tables refuse both roles,
+  and the demo snapshot is read-only. Run it locally the same way:
+
+  ```bash
+  psql "$PGURL" -f supabase/ci/shim.sql
+  for f in supabase/migrations/*.sql; do psql "$PGURL" -v ON_ERROR_STOP=1 -f "$f"; done
+  psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/ci/rls_checks.sql
+  ```
 - **apply** (merge to `main` only): `supabase db push --db-url "$SUPABASE_DB_URL"`
   against the real project. Dormant until the secret below is set; without it the
   job logs a skip and passes.

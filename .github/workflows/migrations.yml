@@ -49,6 +49,8 @@ jobs:
             echo "── re-applying $f"
             psql "$PGURL" -v ON_ERROR_STOP=1 -f "$f"
           done
+      - name: Check RLS policies and grants
+        run: psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/ci/rls_checks.sql
 
   # Push pending migrations to the real Supabase project on merge to main, via
   # the IPv4 session-mode pooler (GitHub runners are IPv4-only; the direct DB
