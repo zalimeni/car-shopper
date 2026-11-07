@@ -26,7 +26,7 @@ import { loadLocations, searchLocations, hubFromZip } from "./locations";
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
 
 var STORAGE_KEY = "car-search-data";
-var VERSION = 9;
+var VERSION = 10;
 var STALE_DAYS = 5;
 var STALE_MC_DAYS = 3; // flag a listing MarketCheck itself last confirmed this many days ago
 // A synced listing unseen in results for this long is almost certainly sold —
@@ -501,6 +501,16 @@ export function migrate(data) {
       delete np.trimExclude;
       return Object.assign({}, p, { params: np });
     });
+  }
+  if (v < 10) {
+    // Early syncs wrote "N days on market" into a new car's notes, frozen at that
+    // day; cards now show the live count (`dom`), so drop those notes.
+    var noDom = function (l) {
+      if (!l || typeof l.notes !== "string" || !/days? on market/.test(l.notes)) return l;
+      var kept = l.notes.split(" · ").filter(function (x) { return !/^\s*\d+ days? on market\s*$/.test(x); }).join(" · ");
+      return kept === l.notes ? l : Object.assign({}, l, { notes: kept });
+    };
+    ["listings", "candidates", "skipped"].forEach(function (k) { if (Array.isArray(data[k])) data[k] = data[k].map(noDom); });
   }
   // v6: budget/tax/tagline moved into data.settings (was hardcoded).
   data.settings = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
