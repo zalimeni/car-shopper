@@ -7,6 +7,7 @@
 // /api/score, which decrypts the key server-side to call Anthropic.
 
 import { supabase } from "./supabaseClient";
+import { DEMO, demoScoreSet } from "./demoRuntime";
 
 const CHUNK = 4; // listings per /api/score request; bounds request time/size
 const REQUEST_TIMEOUT_MS = 75000; // > server function budget, so a real hang surfaces
@@ -81,6 +82,8 @@ export async function getScorePrompt() {
 // ── Key management ──
 
 export async function getKeyStatus() {
+  // Demo: a pretend key, so scoring (simulated — demoScoreSet) can be tried.
+  if (DEMO) return { configured: true, valid: true, last4: "DEMO", demo: true };
   try {
     const res = await fetch("/api/anthropic-key", { method: "GET", headers: await authHeaders() });
     if (!res.ok) return { configured: false, valid: false, last4: "" };
@@ -119,6 +122,7 @@ const CONCURRENCY = 3; // chunks in flight at once (speed vs. Anthropic rate lim
 // get re-scored on the next run. Only a key-level failure throws (with .code)
 // so the caller can prompt for a fresh key. Returns all pairs when done.
 export async function scoreSet(items, ctx, opts) {
+  if (DEMO) return demoScoreSet(items, ctx, opts);
   opts = opts || {};
   const groups = {};
   items.forEach(function (it) {

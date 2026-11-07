@@ -890,6 +890,8 @@ export default function App() {
     var profileById = {};
     (data.profiles || []).forEach(function (p) { profileById[p.id] = p; });
     var ctx = { criteria: data.criteria, globalReqs: data.globalReqs || [], profileById: profileById, model: data.scoreModel || DEFAULT_SCORE_MODEL, system: data.scorePrompt || "", homeBase: getSettings(data).homeBase || null };
+    // Demo: scores are modeled on the cars already scored (src/demo.js demoScore).
+    if (DEMO) ctx.demoRefs = (data.listings || []).concat(candidates || [], data.skipped || []);
     setScoreBusy(true);
     setScoringActive(all.map(function (x) { return x.id || x.vin || null; }).filter(Boolean));
     setScoreMsg({ busy: true, text: "Scoring " + all.length + " listing" + (all.length > 1 ? "s" : "") + "…" });
@@ -925,7 +927,7 @@ export default function App() {
       setScoreBusy(false);
       setScoringActive([]);
     }
-  }, [data, scoreBusy, patchListings]);
+  }, [data, scoreBusy, patchListings, candidates]);
 
   // Pull dealer inventory via the proxy and reconcile. New VINs flow into the
   // candidate queue (same review path as Import); known VINs get price/last-seen
@@ -966,7 +968,7 @@ export default function App() {
       }
       var po = planOpts(data);
       var steps = planSync(active, getSettings(data).mcProfiles || {}, Object.assign({ manual: !auto }, po));
-      var res = DEMO ? await demoFetchListings((dataRef.current || data).listings) : await fetchListings(steps, trackedVins(data.listings), opts, { franchiseOnly: po.franchiseOnly, excludeSalt: po.excludeSalt, marketcheckKeys: mcKeys(data), spentKeys: mcSpent(data), colorCache: getSettings(data).mcColors || {},
+      var res = DEMO ? await demoFetchListings((dataRef.current || data).listings, steps, onSyncProgress, getSettings(data).mcQuota) : await fetchListings(steps, trackedVins(data.listings), opts, { franchiseOnly: po.franchiseOnly, excludeSalt: po.excludeSalt, marketcheckKeys: mcKeys(data), spentKeys: mcSpent(data), colorCache: getSettings(data).mcColors || {},
         // Queued candidates still without a color get decoded too (they may not come back in this sync).
         alsoDecode: candidates.filter(function (c) { return c.vin && !c.color && !c.baseColor; }).map(function (c) { return c.vin; }) }, onSyncProgress);
       // Reconcile + save against the LATEST state, not the `data` snapshot from
@@ -1008,7 +1010,7 @@ export default function App() {
       if (!res.rateLimited) syncPatch.lastSynced = new Date().toISOString();
       // Keep each key's latest monthly quota (MarketCheck reports it on every
       // response) and — for a clean, complete run — what the sync actually cost.
-      if (!res.mock && !res.demo) {
+      if (!res.mock) {
         var nowIso = new Date().toISOString();
         var mq1 = ingestSnaps(getSettings(base).mcQuota, res.keyQuotas, nowIso);
         // A query error still paid for its call, so the count stands; only a run cut
@@ -1377,7 +1379,7 @@ export default function App() {
         <div style={S.hRow}>
           <h1 style={S.title}>Car Shopper</h1>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            {!DEMO && <QuotaGauge summary={quotaSummary} onClick={function () { setQuotaOpen(true); }} />}
+            <QuotaGauge summary={quotaSummary} onClick={function () { setQuotaOpen(true); }} />
             <span style={S.badge}>{DEMO ? "Demo · not saved" : saving ? "Saving..." : "Saved ✓"}</span>
           </div>
         </div>
@@ -3677,7 +3679,7 @@ function HelpTab() {
         <p style={li}><span style={b}>Setup wizard</span> (footer) re-runs the guided setup (budget, home base, profiles, rules) without wiping data. Budget, home base, salt-belt handling, and tagline also live in the <span style={b}>Settings</span> card on the Profiles tab.</p>
         <p style={li}><span style={b}>Export Listings</span> (footer) dumps your listings as JSON to copy and back up. <span style={b}>Import</span> (Results) accepts the same shape.</p>
         <p style={li}><span style={b}>Export prices (CSV)</span> (footer) downloads every recorded price observation across <span style={b}>all</span> listings — watchlist, rejected, sold, skipped, and candidates — one row per price/date, with year/trim/mileage/dealer-type/CPO/status. Built for offline pricing analysis (e.g. uploading to Claude to reason about model/trim/mileage pricing, including private listings you're evaluating elsewhere).</p>
-        <p style={li}><span style={b}>Demo</span> — <span style={b}>/?demo</span> (or "Try the demo" on the sign-in screen) opens a public, read-only copy of the owner's data with no sign-in: edits stay in that tab, ↻ Sync is simulated, and no MarketCheck or AI call is made. Admins refresh it with <span style={b}>Publish demo</span> (footer), which removes keys and clears any notes left unchecked.</p>
+        <p style={li}><span style={b}>Demo</span> — <span style={b}>/?demo</span> (or "Try the demo" on the sign-in screen) opens a public, read-only copy of the owner's data with no sign-in: edits stay in that tab, ↻ Sync and ✨ Score are simulated (paced like the real calls; scores are modeled on similar cars already scored; a pretend MarketCheck quota counts down), and no MarketCheck or AI call is made. Admins refresh it with <span style={b}>Publish demo</span> (footer), which removes keys and clears any notes left unchecked.</p>
         <p style={li}><span style={b}>Backups</span> (footer) lists automatic server-side snapshots of your whole app state (up to 30, at most one per hour of activity) — restore any of them in two taps; the pre-restore state is snapshotted too, so a restore is undoable.</p>
         <p style={li}>Your data syncs to your account, so signing in elsewhere loads the same watchlist. <span style={b}>Reset All Data</span> (footer) wipes everything and restarts the wizard.</p>
       </div>
@@ -4152,16 +4154,11 @@ function AiPanel({ keyStatus, autoScore, setAutoScore, scoreBusy, scoreMsg, scor
   var configured = keyStatus.configured;
   var valid = keyStatus.valid;
 
-  var statusText = !configured ? "No Anthropic key set"
+  var statusText = keyStatus.demo ? "Demo — simulated from similar scored cars, no AI call"
+    : !configured ? "No Anthropic key set"
     : (valid ? "Key ••••" + (keyStatus.last4 || "") + " active"
              : "Key ••••" + (keyStatus.last4 || "") + " rejected — re-enter in Settings");
   var statusColor = !configured ? "#888" : (valid ? "#2d8659" : "#c44");
-
-  if (DEMO) return (
-    <div style={Object.assign({}, S.card, { padding: 12, marginBottom: 12, fontSize: 12, color: "#a8a8b3", lineHeight: 1.5 })}>
-      <span style={{ fontSize: 13, color: "#c8c8d0", fontWeight: 600 }}>✨ AI scoring</span> — off in the demo. The scores and assessments you see were made with Claude on the owner's own Anthropic key.
-    </div>
-  );
 
   return (
     <div style={Object.assign({}, S.card, { padding: 12, marginBottom: 12 })}>

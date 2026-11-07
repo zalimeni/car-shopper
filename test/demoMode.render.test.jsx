@@ -36,8 +36,9 @@ vi.mock("../src/supabaseClient", () => ({ supabase: {
 const apiCalls = [];
 window.fetch = async (u) => { apiCalls.push(String(u)); return new Response("{}", { status: 200 }); };
 
-const { installFetchGuard } = await import("../src/demoRuntime.js");
+const { installFetchGuard, setDemoDelay } = await import("../src/demoRuntime.js");
 installFetchGuard();
+setDemoDelay(0);
 const { DemoShell } = await import("../src/Demo.jsx");
 const App = (await import("../src/App.jsx")).default;
 

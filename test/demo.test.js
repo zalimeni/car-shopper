@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isDemoUrl, buildDemoSnapshot, reviewableNotes, autoNotes, userNotes, shiftDateStr, shiftDates, daysSince, prepareDemo, simulateSync, scoreFieldsOf } from "../src/demo.js";
+import { demoScore, isDemoUrl, buildDemoSnapshot, reviewableNotes, autoNotes, userNotes, shiftDateStr, shiftDates, daysSince, prepareDemo, simulateSync, scoreFieldsOf } from "../src/demo.js";
 import { reconcile } from "../src/reconcile.js";
 
 var car = function (id, o) {
@@ -79,8 +79,9 @@ describe("dates", () => {
     expect(p.data.lastSynced).toBe("2026-11-07T09:00:00Z");
     expect(p.data.listings[0].lastSeen).toBe("2026-11-05");
     expect(p.pool[0].addedDate).toBe("2026-10-07");
-    expect(p.data.settings.marketcheckKeys).toBeUndefined();
-    expect(p.data.autoScore).toBe(false);
+    expect(p.data.settings.marketcheckKeys).toEqual([{ key: "demo-key-DEMO", label: "Demo key" }]);
+    expect(p.data.settings.mcQuota.snaps.DEMO).toMatchObject({ remaining: 382, limit: 500, reset: "2026-12-01T00:00:00.000Z" });
+    expect(p.data.autoScore).toBe(true); // simulated scoring
     expect(prepareDemo(null)).toBeNull();
   });
 });
@@ -113,5 +114,30 @@ describe("simulateSync", () => {
     expect(rec.summary.notSeen).toBe(1);
     expect(rec.candidates.map((c) => c.vin)).toEqual(["VINp1", "VINp2", "VINp3"]);
     expect(Object.assign({}, rec.candidates[0], scoreFieldsOf(pool[0])).scores).toEqual({ price: 9 });
+  });
+});
+
+describe("demoScore", () => {
+  var crit = [{ id: "price" }, { id: "mileage" }, { id: "color" }];
+  var refs = [
+    car("r1", { profileId: "p1", trim: "Premium", price: 22000, miles: 40000, scoredAt: "x", scores: { price: 6, mileage: 6, color: 8 } }),
+    car("r2", { profileId: "p2", trim: "Premium", price: 21000, miles: 41000, scoredAt: "x", scores: { price: 2, mileage: 2, color: 2 } }),
+    car("r3", { profileId: "p1", price: 9000, miles: 40000, scores: { price: 10 } }), // not scored
+  ];
+  it("copies the nearest scored car in the same profile, nudging price and mileage", () => {
+    var r = demoScore(car("x", { profileId: "p1", trim: "Premium", price: 19000, miles: 64000 }), refs, crit);
+    expect(r.ok).toBe(true);
+    expect(r.scores).toEqual({ price: 8, mileage: 4, color: 8 });
+    expect(r.rationales.price).toBe("Demo estimate: $19,000 vs $22,000 on a similar 2021 Subaru Outback Premium.");
+    expect(r.summary).toMatch(/^Demo score — no AI call\. Modeled on a similar 2021 Subaru Outback Premium at \$22,000/);
+  });
+  it("clamps to 1–10 and never models a car on itself", () => {
+    var self = demoScore(car("r1", { profileId: "p1", trim: "Premium", price: 60000, miles: 40000 }), refs, crit);
+    expect(self.scores.color).toBe(2); // modeled on r2 (other profile), not itself
+    expect(self.scores.price).toBe(1);
+    expect(demoScore(car("y", { profileId: "p1", price: 1000 }), refs, crit).scores.price).toBe(10);
+  });
+  it("middle scores with nothing to go on", () => {
+    expect(demoScore(car("z"), [], crit).scores).toEqual({ price: 5, mileage: 5, color: 5 });
   });
 });
