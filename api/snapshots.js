@@ -4,13 +4,19 @@
 //   POST { id }   — restore that snapshot into app_state. The current state is
 //                   snapshotted first (explicitly — not relying on the
 //                   trigger's hourly throttle), so a restore is itself undoable.
+//   POST { demo }  — admins only: publish the public demo (/?demo) — the
+//                   snapshot src/demo.js buildDemoSnapshot() made, re-scrubbed
+//                   here — into public.demo_snapshot (one row, anyone can read).
 //
 // Snapshots are written automatically by a DB trigger on app_state (see
 // supabase/migrations/*_app_state_history.sql). The history table is
 // RLS-locked with no client policies, so this endpoint reaches it via the
 // service-role client — always scoped to the authenticated caller's user_id.
 
-import { authorize } from "./_auth.js";
+import { authorize, isAdmin } from "./_auth.js";
+import { scrubSettings, DEMO_VERSION } from "../src/demo.js";
+
+const DEMO_MAX_BYTES = 3 * 1024 * 1024;
 import { adminClient } from "./_supabaseAdmin.js";
 
 export default async function handler(req, res) {
@@ -38,6 +44,7 @@ export default async function handler(req, res) {
   if (req.method !== "POST") { res.status(405).json({ error: "Use GET or POST" }); return; }
 
   const body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
+  if (body.demo) { await publishDemo(db, auth, body.demo, res); return; }
   const id = Number(body.id);
   if (!id) { res.status(400).json({ error: "Missing snapshot 'id'" }); return; }
 
@@ -77,6 +84,21 @@ export default async function handler(req, res) {
   if (up.error) { res.status(500).json({ error: up.error.message }); return; }
 
   res.status(200).json({ ok: true, restored: snap.data.saved_at });
+}
+
+async function publishDemo(db, auth, demo, res) {
+  if (!isAdmin(auth.user.email)) { res.status(403).json({ error: "Admins only" }); return; }
+  if (!demo || typeof demo !== "object" || !demo.data || typeof demo.data !== "object" || !Array.isArray(demo.data.listings)) {
+    res.status(400).json({ error: "Not a demo snapshot" }); return;
+  }
+  // Belt and braces: the client already scrubbed, but secrets never get stored.
+  const data = Object.assign({}, demo.data, { settings: scrubSettings(demo.data.settings), autoScore: false });
+  const snap = { demoVersion: DEMO_VERSION, exportedAt: typeof demo.exportedAt === "string" ? demo.exportedAt : new Date().toISOString(), data: data, pool: Array.isArray(demo.pool) ? demo.pool : [] };
+  const size = JSON.stringify(snap).length;
+  if (size > DEMO_MAX_BYTES) { res.status(413).json({ error: "Demo snapshot is too large (" + Math.round(size / 1024) + " KB)" }); return; }
+  const { error } = await db.from("demo_snapshot").upsert({ id: 1, data: snap, updated_at: new Date().toISOString(), updated_by: auth.user.id }, { onConflict: "id" });
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.status(200).json({ ok: true, bytes: size, listings: data.listings.length, pool: snap.pool.length });
 }
 
 function safeParse(s) { try { return JSON.parse(s); } catch (e) { return {}; } }

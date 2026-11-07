@@ -54,6 +54,7 @@ over architecture.
 | `src/tags.js` | Freeform listing tags (`listing.tags`): add/remove (case-insensitive, adopts an existing tag's spelling), `allTags` for suggestions + the Results/Compare tag filter. AI scoring sees them; editing never marks a score stale. Pure, tested. |
 | `src/compareCols.js` | Compare table column layout: user order (drag a header) + pins (sticky on the left), stored in `settings.compareCols`. `layoutColumns`/`moveColumn`/`togglePin`. Pure, tested. |
 | `src/profileWizard.js` | The new-profile wizard's arithmetic over one Explore answer (a `count` step: facets + `stats=price,miles` percentiles): `shareUnder` (≈ share of cars under a cap), `capChoices` (25/50/75/90th-percentile quick picks), `estimateMatches`, years as a From–To range minus skipped years (`rangeYears`/`yearOptions`/`yearChoices`/`formatYears`). UI: `ProfileWizard` in `App.jsx`. Pure, tested. |
+| `src/demo.js`, `src/demoRuntime.js`, `src/Demo.jsx` | **Demo mode** (`/?demo`, no sign-in). `demo.js` (pure, tested): `buildDemoSnapshot` (scrub secrets + unchecked notes, hold back the newest queued cars as a sync `pool`), `prepareDemo` (shift every date so it reads as today), `simulateSync`. `demoRuntime.js`: `DEMO` flag, loads `public.demo_snapshot`, `installFetchGuard` (answers every `/api` call locally + toasts), `demoFetchListings`. `Demo.jsx`: banner, welcome / "how this app uses Supabase" modal, toasts, admins' `DemoPublishModal`. |
 | `src/markdown.js` | Safe Markdown parser for listing notes (text → typed tree, never HTML; http(s)-only links) + the `MEMO_MAX` (4,000-char) limit. Pure, tested. Rendered by `MarkdownView` / `ListingMemo` in `App.jsx`. |
 | `src/quota.js` | MarketCheck quota bookkeeping for the header gauge + modal: per-key snapshots (from syncs / live searches — never its own calls), capacity across keys (used in order), sync-cost estimates. Pure, tested. |
 | `public/locations.txt` | Flat file (`ST|City|ZIP|lat|lon`, ~41k rows) behind the location picker; lazy-loaded, not bundled. Built by `scripts/build-locations.mjs` from GeoNames (CC BY 4.0). |
@@ -64,7 +65,7 @@ over architecture.
 | `api/_crypto.js` | AES-256-GCM encrypt/decrypt for the Anthropic-key vault. |
 | `api/_supabaseAdmin.js` | Service-role (`SUPABASE_SECRET_KEY`) client for the key vault. |
 | `api/anthropic-key.js` | Validate / store (encrypted) / remove the per-user Anthropic key. |
-| `api/snapshots.js` | List/restore the automatic app-state backups (`app_state_history`). |
+| `api/snapshots.js` | List/restore the automatic app-state backups (`app_state_history`); admins also publish the demo snapshot here (`POST { demo }`). |
 | `api/cron-sync.js` | Scheduled background sync (Vercel Cron; `CRON_SECRET`-gated, `CRON_SYNC_EMAILS` accounts). |
 | `api/score.js` | Batch listing scoring with the user's decrypted key. |
 | `api/profile-suggest.js`, `api/_suggest.js` | The wizard's optional AI step (user's key): must-haves / dealbreakers / years to avoid / trim notes from the vehicle + Explore's market snapshot. Prompt, schema, `coerceSuggestion` in `_suggest.js` (tested). Same model plumbing as `api/baseline.js`. |
@@ -226,6 +227,13 @@ per environment (Preview vs Production) — set keys in the env you're testing.
   conditional "✓ ", and `<Swap labels={["On", "Off"]} show={i} />` instead of a
   conditional label (it sizes to the longest), so nothing beside the button
   shifts; keep border widths constant between states.
+- **Demo mode** (`DEMO` from `src/demoRuntime.js`): `storage.js` swaps in an
+  in-memory store, so edits just work and vanish on reload — keep persisting
+  through `save()`. Every `/api` request is answered locally with a 403; give a
+  new endpoint a message in `BLOCKED` (`demoRuntime.js`). Hide owner-only
+  chrome with `!DEMO` (quota gauge, Backups, Debug raw). The snapshot is
+  published by admins via `POST /api/snapshots { demo }` into
+  `public.demo_snapshot` (anyone can read; only the service role writes).
 - **New profiles** go through `ProfileWizard` ("+ Add"; "start from a blank
   profile" keeps the old path). Its Explore is `refreshProfileFacets(p,
   { quotaOnly: true })`; create stores the facets in `mcProfiles` and then runs
