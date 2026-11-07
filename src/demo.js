@@ -119,11 +119,69 @@ export function prepareDemo(snap, now) {
   if (!snap || typeof snap !== "object" || !snap.data || typeof snap.data !== "object") return null;
   var days = daysSince(snap.exportedAt, now);
   var data = shiftDates(snap.data, days);
-  // A demo visitor can't run the real thing: nothing scores on its own and no
-  // secret slipped in by an older publish survives.
-  data.settings = scrubSettings(data.settings);
-  data.autoScore = false;
+  // No secret slipped in by an older publish survives; in their place a demo
+  // key with a made-up quota, so the gauge and quota modal have something to show.
+  // Auto-score is on: demo scoring is simulated (demoScore), no AI call.
+  data.settings = Object.assign(scrubSettings(data.settings), {
+    marketcheckKeys: [{ key: DEMO_KEY, label: "Demo key" }],
+    mcQuota: demoQuota(now || new Date(), data.lastSynced),
+  });
+  data.autoScore = true;
   return { data: data, pool: shiftDates(Array.isArray(snap.pool) ? snap.pool : [], days) };
+}
+
+// ── MarketCheck quota (made up; the real key never leaves the owner's account) ──
+export var DEMO_KEY = "demo-key-DEMO";
+export var DEMO_KEY_ID = "DEMO";
+export var DEMO_QUOTA_LIMIT = 500;
+export var DEMO_QUOTA_USED = 118;
+export function demoQuota(now, lastSynced) {
+  var n = now || new Date();
+  var reset = new Date(Date.UTC(n.getUTCFullYear(), n.getUTCMonth() + 1, 1)).toISOString();
+  var at = lastSynced || n.toISOString();
+  return {
+    snaps: (function () { var o = {}; o[DEMO_KEY_ID] = { remaining: DEMO_QUOTA_LIMIT - DEMO_QUOTA_USED, limit: DEMO_QUOTA_LIMIT, reset: reset, exhausted: false, at: at }; return o; })(),
+    lastSync: { calls: 9, at: at, full: 3, searches: 3 },
+  };
+}
+
+// ── Scoring (simulated) ──
+// A demo score copies the closest already-scored car's scores — same profile
+// first, then trim, year, price, miles — and nudges price / mileage by how this
+// car compares. Rationales say so. Never an AI call.
+function carDist(a, b) {
+  return (a.profileId === b.profileId ? 0 : 100)
+    + (String(a.trim || "").toLowerCase() === String(b.trim || "").toLowerCase() ? 0 : 3)
+    + Math.abs((+a.year || 0) - (+b.year || 0)) * 2
+    + Math.abs((+a.price || 0) - (+b.price || 0)) / 1500
+    + Math.abs((+a.miles || 0) - (+b.miles || 0)) / 15000;
+}
+function clampScore(n) { return Math.max(1, Math.min(10, Math.round(n))); }
+function money(n) { return "$" + Math.round(n || 0).toLocaleString("en-US"); }
+function milesStr(n) { return Math.round(n || 0).toLocaleString("en-US") + " mi"; }
+export function demoScore(item, refs, criteria) {
+  var key = item && (item.id || item.vin);
+  var pool = (refs || []).filter(function (r) { return r && r.scoredAt && r.scores && Object.keys(r.scores).length && (r.id || r.vin) !== key; });
+  var ref = pool.slice().sort(function (a, b) { return carDist(item, a) - carDist(item, b); })[0];
+  var scores = {}, rationales = {};
+  var like = ref ? "a similar " + carName(ref) + (ref.price ? " at " + money(ref.price) : "") : "";
+  (criteria || []).forEach(function (c) {
+    var base = ref && ref.scores[c.id] != null ? ref.scores[c.id] : 5;
+    var s = base, why = ref ? "Same as " + like + "." : "No scored car to compare with — middle score.";
+    if (ref && c.id === "price" && item.price && ref.price) {
+      s = base + (ref.price - item.price) / 1500;
+      why = money(item.price) + " vs " + money(ref.price) + " on " + like.replace(/ at \$[\d,]+$/, "") + ".";
+    } else if (ref && c.id === "mileage" && item.miles != null && ref.miles != null) {
+      s = base + (ref.miles - item.miles) / 12000;
+      why = milesStr(item.miles) + " vs " + milesStr(ref.miles) + " on " + like.replace(/ at \$[\d,]+$/, "") + ".";
+    }
+    scores[c.id] = clampScore(s);
+    rationales[c.id] = "Demo estimate: " + why;
+  });
+  return {
+    ok: true, scores: scores, rationales: rationales,
+    summary: "Demo score — no AI call. " + (ref ? "Modeled on " + like + ", adjusted for price and mileage." : "Nothing scored yet to model it on."),
+  };
 }
 
 // ── Sync ──
