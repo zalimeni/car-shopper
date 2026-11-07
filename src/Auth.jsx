@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
 import { parseSignInLink } from "./authLink";
+import { demoAvailable } from "./demoRuntime";
 
 // Gates the app behind Supabase email auth (magic link or one-time code). Renders a sign-in
 // screen until there's a session, then renders children. Signing in with the
@@ -111,6 +112,8 @@ function SignIn() {
   const [status, setStatus] = useState("idle"); // idle | sending | verifying | error
   const [error, setError] = useState("");
   const standalone = isStandalone();
+  const [demo, setDemo] = useState(false); // a published demo to offer?
+  useEffect(() => { let on = true; demoAvailable().then((ok) => { if (on) setDemo(ok); }); return () => { on = false; }; }, []);
 
   async function send(e) {
     e.preventDefault();
@@ -247,6 +250,12 @@ function SignIn() {
           </div>
         )}
         {status === "error" && <p style={S.error}>{error}</p>}
+        {demo && (
+          <div style={{ borderTop: "1px solid #1e2028", marginTop: 18, paddingTop: 14 }}>
+            <p style={Object.assign({}, S.sub, { margin: "0 0 8px" })}>Just looking? Try it with real listings — no account needed.</p>
+            <a href="/?demo" style={Object.assign({}, S.button, S.secondary, { display: "block", width: "100%", boxSizing: "border-box", textAlign: "center", textDecoration: "none" })}>Try the demo</a>
+          </div>
+        )}
       </div>
     </div>
   );

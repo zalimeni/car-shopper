@@ -15,6 +15,7 @@
 // localStorage-only version is migrated up to Supabase, then cleared.
 
 import { supabase } from "./supabaseClient";
+import { DEMO, loadDemo } from "./demoRuntime";
 
 const TABLE = "app_state";
 const LEGACY_KEY = "car-search-data";
@@ -35,7 +36,19 @@ function missingRevColumn(error) {
   return code === "42703" || code === "PGRST204" || /'rev' column/i.test(msg);
 }
 
-const storage = {
+// Demo mode (/?demo): the published snapshot, edited in memory only — nothing
+// is ever written to Supabase, and a reload starts the demo over.
+const demoStorage = {
+  async get(key) {
+    const d = await loadDemo();
+    if (!d) throw new Error("The demo isn't available right now");
+    return { key, value: JSON.stringify(d.data), rev: 0 };
+  },
+  async set(key, value) { return { key, value, rev: 0 }; },
+  async delete() { return { deleted: true }; },
+};
+
+const storage = DEMO ? demoStorage : {
   async get(key) {
     try {
       const userId = await currentUserId();

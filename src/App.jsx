@@ -1,6 +1,8 @@
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, Fragment, cloneElement } from "react";
 import storage from "./storage";
 import { signOut } from "./Auth";
+import { DEMO, demoFetchListings } from "./demoRuntime";
+import { DemoPublishModal } from "./Demo";
 import { fetchListings, postStep, fetchPriceComps, fetchRawSample, reconcile } from "./sync";
 import { planSync, trackedVins, nextProfileMeta, estimateCost, profileStatus, searchSig, mergeColorCache, COUNT_WARN, ROWS as MC_ROWS, FULL_REFRESH_DAYS, DECODE_MAX } from "./syncPlan";
 import { travelFacts, DRIVE_MAX_MI, AIRPORT_NEAR_MI } from "./travel";
@@ -704,6 +706,7 @@ export default function App() {
   var [rawBusy, setRawBusy] = useState(false);
   var [syncing, setSyncing] = useState(false);
   var [syncMsg, setSyncMsg] = useState(null);
+  var [publishOpen, setPublishOpen] = useState(false); // admins: Publish demo
 
   // Persist the volatile bits so an app-switch reload restores them.
   useEffect(function () { ssSet("cs-tab", tab); }, [tab]);
@@ -953,7 +956,7 @@ export default function App() {
       }
       var po = planOpts(data);
       var steps = planSync(active, getSettings(data).mcProfiles || {}, Object.assign({ manual: !auto }, po));
-      var res = await fetchListings(steps, trackedVins(data.listings), opts, { franchiseOnly: po.franchiseOnly, excludeSalt: po.excludeSalt, marketcheckKeys: mcKeys(data), spentKeys: mcSpent(data), colorCache: getSettings(data).mcColors || {},
+      var res = DEMO ? await demoFetchListings((dataRef.current || data).listings) : await fetchListings(steps, trackedVins(data.listings), opts, { franchiseOnly: po.franchiseOnly, excludeSalt: po.excludeSalt, marketcheckKeys: mcKeys(data), spentKeys: mcSpent(data), colorCache: getSettings(data).mcColors || {},
         // Queued candidates still without a color get decoded too (they may not come back in this sync).
         alsoDecode: candidates.filter(function (c) { return c.vin && !c.color && !c.baseColor; }).map(function (c) { return c.vin; }) }, onSyncProgress);
       // Reconcile + save against the LATEST state, not the `data` snapshot from
@@ -962,6 +965,8 @@ export default function App() {
       var base = dataRef.current || data;
       var rec = reconcile(base.listings, res.listings, today(), { goneVins: res.goneVins });
       var decorated = rec.candidates.map(function (c) {
+        // A demo sync's cars come with the AI scores they had in the owner's data.
+        if (res.scores && res.scores[c.vin]) c = Object.assign({}, c, res.scores[c.vin]);
         return Object.assign({}, c, { compositeScore: calcScore(c.scores, base.criteria), _candidate: true });
       });
       // `added` = candidates genuinely NEW to the queue this run: drop VINs the
@@ -993,7 +998,7 @@ export default function App() {
       if (!res.rateLimited) syncPatch.lastSynced = new Date().toISOString();
       // Keep each key's latest monthly quota (MarketCheck reports it on every
       // response) and — for a clean, complete run — what the sync actually cost.
-      if (!res.mock) {
+      if (!res.mock && !res.demo) {
         var nowIso = new Date().toISOString();
         var mq1 = ingestSnaps(getSettings(base).mcQuota, res.keyQuotas, nowIso);
         // A query error still paid for its call, so the count stands; only a run cut
@@ -1014,7 +1019,7 @@ export default function App() {
       // run those listings were just never checked, so don't report them as gone.
       var summaryOut = Object.assign({}, rec.summary, { newCount: added.length });
       if (res.rateLimited) summaryOut.notSeen = 0;
-      setSyncMsg({ ok: true, summary: summaryOut, skippedSeen: skippedSeen, calls: res.calls, errors: res.errors, notices: res.notices, mock: res.mock, rateLimited: res.rateLimited, rateLimitInfo: res.rateLimitInfo, quota: res.quota });
+      setSyncMsg({ ok: true, summary: summaryOut, skippedSeen: skippedSeen, calls: res.calls, errors: res.errors, notices: res.notices, mock: res.mock, demo: res.demo, rateLimited: res.rateLimited, rateLimitInfo: res.rateLimitInfo, quota: res.quota });
       setSyncing(false);
       // Auto-score only NEW candidates (never skipped, never already-queued, not
       // already scored, and passing their profile's trim filter — no point
@@ -1362,8 +1367,8 @@ export default function App() {
         <div style={S.hRow}>
           <h1 style={S.title}>Car Shopper</h1>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <QuotaGauge summary={quotaSummary} onClick={function () { setQuotaOpen(true); }} />
-            <span style={S.badge}>{saving ? "Saving..." : "Saved ✓"}</span>
+            {!DEMO && <QuotaGauge summary={quotaSummary} onClick={function () { setQuotaOpen(true); }} />}
+            <span style={S.badge}>{DEMO ? "Demo · not saved" : saving ? "Saving..." : "Saved ✓"}</span>
           </div>
         </div>
         <p style={S.sub}>{getSettings(data).tagline}</p>
@@ -1380,6 +1385,7 @@ export default function App() {
         </nav>
       </header>
 
+      {publishOpen && <DemoPublishModal data={data} candidates={candidates} onClose={function () { setPublishOpen(false); }} />}
       {quotaOpen && (
         <QuotaModal data={data} summary={quotaSummary} onClose={function () { setQuotaOpen(false); }} />
       )}
@@ -1398,7 +1404,7 @@ export default function App() {
         </div>
       )}
 
-      {mcKeys(data).length === 0 && tab !== "Settings" && (
+      {!DEMO && mcKeys(data).length === 0 && tab !== "Settings" && (
         <div style={S.conflictBar}>
           <span style={{ flex: 1 }}>No MarketCheck API key set — syncs use the app's shared key and may hit its monthly quota. Add your own for reliable results (once you do, the shared key is no longer used).</span>
           <button style={S.smBtn} onClick={function () { setTab("Settings"); }}>Open Settings</button>
@@ -1450,14 +1456,16 @@ export default function App() {
             downloadText("car-shopper-prices-" + today() + ".csv", r.csv, "text/csv");
             setExportMsg("Exported " + r.points + " price point" + (r.points === 1 ? "" : "s") + " across " + r.listings + " listing" + (r.listings === 1 ? "" : "s") + " (all statuses incl. rejected).");
           }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })} title="Download a CSV of every price observation across all listings (watch, rejected, sold, skipped) — for pricing analysis / feeding to Claude">Export prices (CSV)</button>
-          <button onClick={openSnaps} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>{snapsOpen ? "Close backups" : "Backups"}</button>
-          <button onClick={function () { runRawDebug(); }} disabled={rawBusy} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" }, rawBusy ? { opacity: 0.6 } : {})}>{rawBusy ? "Running…" : "Debug raw"}</button>
+          {!DEMO && <button onClick={openSnaps} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>{snapsOpen ? "Close backups" : "Backups"}</button>}
+          {isAdmin && !DEMO && <button onClick={function () { setPublishOpen(true); }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })} title="Replace the public demo (/?demo) with a scrubbed copy of your data">Publish demo</button>}
+          {!DEMO && <button onClick={function () { runRawDebug(); }} disabled={rawBusy} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" }, rawBusy ? { opacity: 0.6 } : {})}>{rawBusy ? "Running…" : "Debug raw"}</button>}
           <button onClick={function () { save(Object.assign({}, data, { onboarded: false })); }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>Setup wizard</button>
           <button onClick={reset} style={Object.assign({}, S.resetBtn, confirmReset ? { color: "#c44" } : {})}>
             {confirmReset ? "Tap again to confirm reset" : "Reset All Data"}
           </button>
           {confirmReset && <button onClick={function () { setConfirmReset(false); }} style={S.resetBtn}>Cancel</button>}
-          <button onClick={function () { signOut(); }} style={S.resetBtn}>Sign out</button>
+          {DEMO ? <a href="/" style={Object.assign({}, S.resetBtn, { textDecoration: "none" })}>Exit demo</a>
+            : <button onClick={function () { signOut(); }} style={S.resetBtn}>Sign out</button>}
         </div>
         {exportMsg && (
           <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, fontSize: 12, color: "#8ab4f8", textAlign: "left" }}>
@@ -3659,6 +3667,7 @@ function HelpTab() {
         <p style={li}><span style={b}>Setup wizard</span> (footer) re-runs the guided setup (budget, home base, profiles, rules) without wiping data. Budget, home base, salt-belt handling, and tagline also live in the <span style={b}>Settings</span> card on the Profiles tab.</p>
         <p style={li}><span style={b}>Export Listings</span> (footer) dumps your listings as JSON to copy and back up. <span style={b}>Import</span> (Results) accepts the same shape.</p>
         <p style={li}><span style={b}>Export prices (CSV)</span> (footer) downloads every recorded price observation across <span style={b}>all</span> listings — watchlist, rejected, sold, skipped, and candidates — one row per price/date, with year/trim/mileage/dealer-type/CPO/status. Built for offline pricing analysis (e.g. uploading to Claude to reason about model/trim/mileage pricing, including private listings you're evaluating elsewhere).</p>
+        <p style={li}><span style={b}>Demo</span> — <span style={b}>/?demo</span> (or "Try the demo" on the sign-in screen) opens a public, read-only copy of the owner's data with no sign-in: edits stay in that tab, ↻ Sync is simulated, and no MarketCheck or AI call is made. Admins refresh it with <span style={b}>Publish demo</span> (footer), which removes keys and clears any notes left unchecked.</p>
         <p style={li}><span style={b}>Backups</span> (footer) lists automatic server-side snapshots of your whole app state (up to 30, at most one per hour of activity) — restore any of them in two taps; the pre-restore state is snapshotted too, so a restore is undoable.</p>
         <p style={li}>Your data syncs to your account, so signing in elsewhere loads the same watchlist. <span style={b}>Reset All Data</span> (footer) wipes everything and restarts the wizard.</p>
       </div>
@@ -3778,7 +3787,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       <div style={S.secH}>
         <h2 style={S.secT}>Listings</h2>
         <div style={{ display: "flex", gap: 6 }}>
-          <button style={Object.assign({}, S.secBtn, syncing ? { opacity: 0.6 } : {})} disabled={syncing} onClick={function () { var w = syncWarning(data); if (!w || window.confirm(w)) doSync(); }}>{syncing ? "Syncing…" : "↻ Sync"}</button>
+          <button style={Object.assign({}, S.secBtn, syncing ? { opacity: 0.6 } : {})} disabled={syncing} onClick={function () { var w = DEMO ? null : syncWarning(data); if (!w || window.confirm(w)) doSync(); }}>{syncing ? "Syncing…" : "↻ Sync"}</button>
           <button style={S.secBtn} onClick={function () { setShowImport(!showImport); setShowAdd(false); }}>{showImport ? "Close" : "Import"}</button>
           <button style={S.priBtn} onClick={function () { setShowAdd(!showAdd); setShowImport(false); setEdListing(null); }}>{showAdd ? "Cancel" : "+ Add"}</button>
         </div>
@@ -4104,7 +4113,7 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
     if (syncMsg.skippedSeen) parts.push(syncMsg.skippedSeen + " skipped (hidden)");
     if (s.notSeen) parts.push(s.notSeen + " no longer listed");
     var detail = parts.length ? parts.join(" · ") : "no changes";
-    text = (syncMsg.mock ? "Mock sync" : "Synced") + " — " + detail + " (from " + (s.fetched || 0) + " found" + (syncMsg.calls ? ", " + syncMsg.calls + " MarketCheck call" + (syncMsg.calls === 1 ? "" : "s") : "") + ")";
+    text = (syncMsg.demo ? "Demo sync" : syncMsg.mock ? "Mock sync" : "Synced") + " — " + detail + " (from " + (s.fetched || 0) + " found" + (syncMsg.calls ? ", " + syncMsg.calls + " MarketCheck call" + (syncMsg.calls === 1 ? "" : "s") : "") + ")";
     if (syncMsg.errors && syncMsg.errors.length) {
       text += " · " + syncMsg.errors.length + " query error(s): " + String(syncMsg.errors[0]).slice(0, 240);
       color = "#d4a017";
@@ -4137,6 +4146,12 @@ function AiPanel({ keyStatus, autoScore, setAutoScore, scoreBusy, scoreMsg, scor
     : (valid ? "Key ••••" + (keyStatus.last4 || "") + " active"
              : "Key ••••" + (keyStatus.last4 || "") + " rejected — re-enter in Settings");
   var statusColor = !configured ? "#888" : (valid ? "#2d8659" : "#c44");
+
+  if (DEMO) return (
+    <div style={Object.assign({}, S.card, { padding: 12, marginBottom: 12, fontSize: 12, color: "#a8a8b3", lineHeight: 1.5 })}>
+      <span style={{ fontSize: 13, color: "#c8c8d0", fontWeight: 600 }}>✨ AI scoring</span> — off in the demo. The scores and assessments you see were made with Claude on the owner's own Anthropic key.
+    </div>
+  );
 
   return (
     <div style={Object.assign({}, S.card, { padding: 12, marginBottom: 12 })}>
