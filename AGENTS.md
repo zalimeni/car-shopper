@@ -20,15 +20,19 @@ over architecture.
 
 - **Frontend:** React 18 + Vite 8, plain JS (no TypeScript). One big component
   file (`src/App.jsx`).
-- **Backend:** Vercel **serverless functions** in `api/` (Node 22, ESM).
+- **Backend:** Vercel **serverless functions** in `api/` (Node 24, ESM).
 - **Data/auth:** Supabase — email auth (magic link, pasted link, or one-time code
   — see `supabase/README.md`) + `app_state` (one JSONB blob per
   user) and a server-only `user_anthropic_keys` vault (encrypted per-user
   Anthropic key). RLS + an email allowlist.
 - **External APIs:** MarketCheck (dealer inventory) and Anthropic (AI scoring),
-  both called only from `api/` (keys never reach the browser).
+  both called only from `api/`. The Anthropic key and the shared
+  `MARKETCHECK_API_KEY` never reach the browser. MarketCheck keys a user adds
+  in Settings are the exception: they live in `settings.marketcheckKeys` (the
+  user's own blob, so also in its backups) and go to `api/marketcheck` with
+  each request.
 - **Deploy:** Vercel (`vercel.json`). CI for DB migrations via GitHub Actions.
-- Node version: **22** (`.nvmrc`, `package.json` engines).
+- Node version: **24** (`.nvmrc`, `package.json` engines, CI).
 
 ## Repo map — what to read, what to skip
 
@@ -59,23 +63,28 @@ over architecture.
 | `src/quota.js` | MarketCheck quota bookkeeping for the header gauge + modal: per-key snapshots (from syncs / live searches — never its own calls), capacity across keys (used in order), sync-cost estimates. Pure, tested. |
 | `public/locations.txt` | Flat file (`ST|City|ZIP|lat|lon`, ~41k rows) behind the location picker; lazy-loaded, not bundled. Built by `scripts/build-locations.mjs` from GeoNames (CC BY 4.0). |
 | `api/marketcheck.js` | Serverless proxy to MarketCheck (holds the API key). One sync step per request (`runStep`: full / new / count / vins / local) over a `createSession` (key failover, throttle, time budget). `buildUrl`/`normalize`. |
-| `api/_auth.js` | Server-side auth + allowlist (`authorize()`). Shared module. |
+| `api/_auth.js` | Server-side auth + allowlist (`authorize()`, `isAdmin()`). Shared module. |
+| `api/allowlist.js`, `src/admin.js` | Admin tab (admins only, `ADMIN_EMAILS`): list / add / remove `allowed_emails`, optionally send an invite. |
 | `api/me.js` | Allowlist + Anthropic-key-status check for the UI. |
 | `api/_scoring.js` | Scoring prompt/schema/coercion + model allowlist (`resolveScoreModel`). |
 | `api/_crypto.js` | AES-256-GCM encrypt/decrypt for the Anthropic-key vault. |
-| `api/_supabaseAdmin.js` | Service-role (`SUPABASE_SECRET_KEY`) client for the key vault. |
+| `api/_supabaseAdmin.js` | Service-role (`SUPABASE_SECRET_KEY`) client for the key vault; also the server's one copy of the project URL + publishable key. |
 | `api/anthropic-key.js` | Validate / store (encrypted) / remove the per-user Anthropic key. |
-| `api/snapshots.js` | List/restore the automatic app-state backups (`app_state_history`); admins also publish the demo snapshot here (`POST { demo }`). |
+| `api/snapshots.js`, `src/snapshots.js` | List/restore the automatic app-state backups (`app_state_history`); admins also publish the demo snapshot here (`POST { demo }`). |
+| `api/pricecheck.js`, `api/pricecomps.js`, `api/baseline.js` | Price tab: AI fair-price verdict (user's key), live MarketCheck comps around the home base (a `local` step), and AI price baselines per profile. |
+| `src/priceCheck.js`, `src/priceExport.js` | Price tab's local-comps math (pure, 0 API calls) and the price-history CSV export. Pure, tested. |
+| `src/geo.js`, `src/tableSort.js` | Straight-line distance to the home base; shared sortable-table helpers (Compare, Price comps). Pure, tested. |
 | `api/cron-sync.js` | Scheduled background sync (Vercel Cron; `CRON_SECRET`-gated, `CRON_SYNC_EMAILS` accounts). |
 | `api/score.js` | Batch listing scoring with the user's decrypted key. |
 | `api/profile-suggest.js`, `api/_suggest.js` | The wizard's optional AI step (user's key): must-haves / dealbreakers / years to avoid / trim notes from the vehicle + Explore's market snapshot. Prompt, schema, `coerceSuggestion` in `_suggest.js` (tested). Same model plumbing as `api/baseline.js`. |
-| `supabase/migrations/*.sql` | DB schema (baseline + allowlist + anthropic-key vault). |
-| `supabase/ci/shim.sql`, `supabase/config.toml` | CI migration testing + CLI config. |
+| `supabase/migrations/*.sql` | DB schema: `app_state` + RLS, allowlist, Anthropic-key vault, backup history + trigger, `rev`, demo snapshot, grant/RLS tightening. |
+| `supabase/ci/shim.sql`, `supabase/ci/rls_checks.sql`, `supabase/config.toml` | CI: Supabase `auth` stand-in, RLS/grant checks run as `anon`/`authenticated`, CLI config. |
+| `supabase/templates/magic_link.html` | Magic Link email body with the one-time code (paste into the Dashboard; needs custom SMTP). |
 | `.github/workflows/migrations.yml` | Validate + apply migrations. |
 | `docs/listing-pipeline.md` | **Design doc** for the sync pipeline. Read for the "why". |
 | `supabase/README.md` | How to apply migrations + CI secrets. |
 | `.env.example` | Every env var, documented. |
-| `vercel.json` | Build + SPA rewrite. |
+| `vercel.json` | Build, function `maxDuration`s, the daily cron, security headers (CSP etc.), SPA rewrite (not for `/api/*`). |
 
 **Do NOT load into context (generated / vendored / noise):**
 
@@ -192,6 +201,8 @@ Defined/documented in `.env.example`. Summary:
 | `KEY_ENCRYPTION_SECRET` | server only | ≥16 chars; AES-256-GCM key for the stored Anthropic keys. Rotating invalidates them. |
 | `SCORING_MODEL` | server (optional) | Override default scoring model (`claude-sonnet-5-5`); must be allowlisted in `_scoring.js`. |
 | `ALLOWED_EMAILS` | server (optional) | Comma-separated allowlist; union with the `allowed_emails` DB table. |
+| `ADMIN_EMAILS` | server (optional) | Who sees the Admin tab and may publish the demo (default owner). |
+| `SITE_URL` | server (optional) | Invite-email redirect target (default: the request host). |
 | `DEBUG_TOKEN` | server (optional) | ≥24-char bearer bypass for headless `/api` debugging (no DB access). |
 | `CRON_SECRET` | server (optional) | ≥16 chars; authorizes the daily `/api/cron-sync` (Vercel Cron Bearer token). Unset = scheduled sync off. |
 | `CRON_SYNC_EMAILS` | server (optional) | Accounts the scheduled sync runs for (comma-separated; default owner). |
@@ -216,7 +227,8 @@ per environment (Preview vs Production) — set keys in the env you're testing.
 - **Tabs** (`TABS` in `App.jsx`): Dashboard, Profiles (profile editor `ProfEd`:
   search fields, then `TrimChips` / `DrivetrainChips` / `ColorFilter` chips),
   Criteria, Results (candidates `CandCard`, watchlist `LCard`), Compare
-  (sortable table; rows open the card), Price, Settings, Help.
+  (sortable table; rows open the card), Price, Settings, Help — plus Admin for
+  admins.
   User-facing changes get a line in `HelpTab`.
 - **Modals:** fixed backdrop (`zIndex: 200`) that closes on `onMouseDown`, inner
   dialog stops propagation, Escape closes via a `keydown` listener —
@@ -319,7 +331,12 @@ Supabase-idiomatic route is a dedicated password user via
 ### Migrations
 - Validate locally the same way CI does: run a throwaway Postgres, apply
   `supabase/ci/shim.sql` (stubs the `auth` schema/roles), then each
-  `supabase/migrations/*.sql` in order (twice, to confirm idempotency).
+  `supabase/migrations/*.sql` in order (twice, to confirm idempotency), then
+  `supabase/ci/rls_checks.sql`. A new table or policy gets checks there.
+- New tables: Supabase grants every new `public` table to `anon` and
+  `authenticated`. A server-only table also gets `revoke all … from anon,
+  authenticated` (not just RLS with no policies). In policies, write
+  `(select auth.uid())`, not `auth.uid()`, so it runs once per statement.
 - CI: `.github/workflows/migrations.yml` validates on every push/PR and applies
   on merge to `main` via the IPv4 session pooler. See `supabase/README.md`.
 
@@ -346,6 +363,11 @@ runs on some PRs, so others would wait on it forever.
 ## Deploy
 
 Vercel builds from `main` (`npm run build` → `dist/`). The SPA rewrite in
-`vercel.json` sends non-file routes to `index.html`; functions in `api/` take
-precedence and are not rewritten. DB migrations auto-apply via CI on merge to
+`vercel.json` sends non-file routes to `index.html`, except `/api/*` (an
+unknown API path is a 404, not the app's HTML). Every response gets the
+headers in `vercel.json`: a Content-Security-Policy (scripts from this origin
+only; `connect-src` this origin + `*.supabase.co`; images from any `https:`
+host, for dealer photos; Google Fonts), `frame-ancestors 'none'`, `nosniff`,
+and a Referrer-Policy. A new external script, API host or font source needs a
+CSP change there. DB migrations auto-apply via CI on merge to
 `main`.
