@@ -8,7 +8,8 @@
 // Anthropic call can leave the browser.
 
 import { supabase } from "./supabaseClient";
-import { isDemoUrl, prepareDemo, simulateSync, scoreFieldsOf, demoScore, DEMO_KEY_ID, DEMO_QUOTA_LIMIT } from "./demo.js";
+import { isDemoUrl, prepareDemo, simulateSync, scoreFieldsOf, demoScore, demoCount, demoMarketComps, demoPriceAssessment, demoBaseline, demoSuggestion, DEMO_KEY_ID, DEMO_QUOTA_LIMIT } from "./demo.js";
+import { assess } from "./priceCheck.js";
 
 export var DEMO = typeof window !== "undefined" && isDemoUrl(window.location.search);
 export var DEMO_TABLE = "demo_snapshot";
@@ -85,6 +86,62 @@ export async function demoScoreSet(items, ctx, opts) {
     if (o.onProgress) o.onProgress(Math.min(i + 5, items.length), items.length);
   }
   return all;
+}
+
+// The App's live state (registered on render), so market answers use the
+// visitor's in-memory edits, not just the snapshot as loaded.
+var getLive = function () { return null; };
+export function registerDemoData(fn) { getLive = fn; }
+function live() { return getLive() || {}; }
+async function allCars() {
+  var l = live(), d = l.data || {}, snap = await loadDemo();
+  return [].concat(d.listings || [], l.candidates || d.candidates || [], d.skipped || [], (snap && snap.pool) || []);
+}
+// One pretend MarketCheck call off the demo key, as a keyQuotas report.
+function spendQuota(calls) {
+  var d = live().data || {};
+  var snap = d.settings && d.settings.mcQuota && d.settings.mcQuota.snaps && d.settings.mcQuota.snaps[DEMO_KEY_ID];
+  var remaining = Math.max(0, (snap && snap.remaining != null ? snap.remaining : DEMO_QUOTA_LIMIT) - calls);
+  return [{ id: DEMO_KEY_ID, remaining: remaining, limit: (snap && snap.limit) || DEMO_QUOTA_LIMIT, reset: snap && snap.reset, exhausted: remaining <= 0 }];
+}
+
+// postStep (src/sync.js) in the demo: a `count` (wizard Explore, profile save)
+// answered from the demo's cars and the owner's stored breakdowns.
+export async function demoPostStep(step) {
+  await pause(600, 1200);
+  if (!step || step.kind !== "count") return { listings: [], errors: [], notices: [], keyQuotas: spendQuota(1), calls: 1 };
+  var d = live().data || {};
+  var r = demoCount(step.profile, await allCars(), d.profiles, d.settings && d.settings.mcProfiles);
+  if (!r.numFound) demoToast("The demo only knows the cars already in it — try a make and model from its profiles.");
+  return Object.assign(r, { keyQuotas: spendQuota(1), calls: 1 });
+}
+
+// Price Check's live-market button: a few simulated listings near the demo's own.
+export async function demoPriceComps(query) {
+  await pause(900, 1600);
+  return { listings: demoMarketComps(query, await allCars(), 6), errors: [], rateLimited: false, rateLimitInfo: null, quota: null, keyQuotas: spendQuota(1), calls: 1, apiInfo: null, formatSuspect: false };
+}
+
+// The three one-shot AI answers, written locally.
+export async function demoPriceRead(query, comps, stats, confidence) {
+  await pause(1200, 2200);
+  var verdict = query && query.askingPrice && stats ? assess(query.askingPrice, stats, (comps || []).map(function (c) { return c.price; })) : null;
+  return demoPriceAssessment(query, { stats: stats, verdict: verdict, confidence: confidence });
+}
+export async function demoBaselineFor(profile, listings) {
+  await pause(1500, 2500);
+  var p = (profile && profile.params) || {};
+  var v = [p.make, p.model].filter(Boolean).join(" ");
+  return demoBaseline(profile, (listings || []).map(function (l, i) { return Object.assign({ vehicle: v, vin: "B" + i }, l); }));
+}
+export async function demoSuggest(profile, market) {
+  await pause(1500, 2500);
+  return demoSuggestion(profile, market, (live().data || {}).profiles);
+}
+// The scoring prompt the server would send (Criteria's prompt editor).
+export async function demoScorePrompt() {
+  var m = await import("../api/_scoring.js");
+  return { system: m.SCORE_SYSTEM, guidance: m.CRITERION_GUIDANCE };
 }
 
 // ── Toasts ──

@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, Fragment, cloneElement } from "react";
 import storage from "./storage";
 import { signOut } from "./Auth";
-import { DEMO, demoFetchListings } from "./demoRuntime";
+import { DEMO, demoFetchListings, registerDemoData } from "./demoRuntime";
 import { DemoPublishModal } from "./Demo";
 import { fetchListings, postStep, fetchPriceComps, fetchRawSample, reconcile } from "./sync";
 import { planSync, trackedVins, nextProfileMeta, estimateCost, profileStatus, searchSig, mergeColorCache, COUNT_WARN, ROWS as MC_ROWS, FULL_REFRESH_DAYS, DECODE_MAX } from "./syncPlan";
@@ -654,6 +654,10 @@ export default function App() {
   // from it would clobber approvals/edits/AI scores landed mid-sync.
   var dataRef = useRef(null);
   dataRef.current = data;
+  var candRef = useRef([]);
+  candRef.current = candidates;
+  // Demo: the simulated market answers read the visitor's in-memory state.
+  if (DEMO) registerDemoData(function () { return { data: dataRef.current, candidates: candRef.current }; });
 
   // Optimistic concurrency for the single-blob state: `revRef` is the row
   // revision we loaded, writes go through a serialized queue (rapid saves CAS
@@ -2394,7 +2398,7 @@ function ProfilesTab({ data, save, keyOk, scoreModel, refreshFacets }) {
               queued={(data.candidates || []).filter(function (c) { return c.profileId === p.id; })} keyOk={keyOk} model={scoreModel} />) : (
               <div style={{ fontSize: 13, color: "#8a8a96", lineHeight: 1.6 }}>
                 <div>{p.params.make} {p.params.model} · {p.params.years} · {p.params.trims}</div>
-                <div>≤${p.params.maxPrice.toLocaleString()} · ≤{p.params.maxMiles.toLocaleString()} mi</div>
+                <div>≤${Number(p.params.maxPrice || 0).toLocaleString()} · ≤{Number(p.params.maxMiles || 0).toLocaleString()} mi</div>
                 {p.params.mustHave && <div style={{ marginTop: 4 }}><span style={{ fontSize: 11, fontWeight: 600, color: "#2d8659" }}>Must:</span> {p.params.mustHave}</div>}
                 {((p.params.excludeTrims || []).length > 0 || (p.params.excludeDrivetrains || []).length > 0) && (
                   <div style={{ marginTop: 4, fontSize: 12 }}>
@@ -3679,7 +3683,7 @@ function HelpTab() {
         <p style={li}><span style={b}>Setup wizard</span> (footer) re-runs the guided setup (budget, home base, profiles, rules) without wiping data. Budget, home base, salt-belt handling, and tagline also live in the <span style={b}>Settings</span> card on the Profiles tab.</p>
         <p style={li}><span style={b}>Export Listings</span> (footer) dumps your listings as JSON to copy and back up. <span style={b}>Import</span> (Results) accepts the same shape.</p>
         <p style={li}><span style={b}>Export prices (CSV)</span> (footer) downloads every recorded price observation across <span style={b}>all</span> listings — watchlist, rejected, sold, skipped, and candidates — one row per price/date, with year/trim/mileage/dealer-type/CPO/status. Built for offline pricing analysis (e.g. uploading to Claude to reason about model/trim/mileage pricing, including private listings you're evaluating elsewhere).</p>
-        <p style={li}><span style={b}>Demo</span> — <span style={b}>/?demo</span> (or "Try the demo" on the sign-in screen) opens a public, read-only copy of the owner's data with no sign-in: edits stay in that tab, ↻ Sync and ✨ Score are simulated (paced like the real calls; scores are modeled on similar cars already scored; a pretend MarketCheck quota counts down), and no MarketCheck or AI call is made. Admins refresh it with <span style={b}>Publish demo</span> (footer), which removes keys and clears any notes left unchecked.</p>
+        <p style={li}><span style={b}>Demo</span> — <span style={b}>/?demo</span> (or "Try the demo" on the sign-in screen) opens a public, read-only copy of the owner's data with no sign-in: edits stay in that tab, everything that would call MarketCheck or Claude is simulated and paced like the real call — ↻ Sync, ✨ Score (modeled on similar cars already scored), the wizard's Explore and suggestions, a profile's AI price baseline, and the Price tab's live market and AI verdict — while a pretend MarketCheck quota counts down. No real call is ever made; Reset in the banner starts over. Admins refresh it with <span style={b}>Publish demo</span> (footer), which removes keys and clears any notes left unchecked.</p>
         <p style={li}><span style={b}>Backups</span> (footer) lists automatic server-side snapshots of your whole app state (up to 30, at most one per hour of activity) — restore any of them in two taps; the pre-restore state is snapshotted too, so a restore is undoable.</p>
         <p style={li}>Your data syncs to your account, so signing in elsewhere loads the same watchlist. <span style={b}>Reset All Data</span> (footer) wipes everything and restarts the wizard.</p>
       </div>

@@ -56,8 +56,9 @@ export function DemoShell({ children }) {
   return (
     <>
       <div style={D.banner} role="note">
-        <span style={{ flex: 1, minWidth: 0 }}><b style={{ color: "#f0d78a" }}>Demo</b> · real listings, edits stay in this tab (a reload starts over) · no live calls</span>
+        <span style={{ flex: 1, minWidth: 0 }}><b style={{ color: "#f0d78a" }}>Demo</b> · edits stay in this tab · no live calls</span>
         <button style={D.bannerBtn} onClick={function () { setAbout(true); }}>About</button>
+        <button style={D.bannerBtn} title="Start the demo over (edits are kept only in this tab)" onClick={function () { window.location.reload(); }}>Reset</button>
         <a style={D.bannerBtn} href="/">Sign in</a>
       </div>
       {children}
@@ -85,7 +86,7 @@ export function WelcomeModal({ onClose }) {
       <div role="dialog" aria-modal="true" aria-label="Welcome" onMouseDown={function (e) { e.stopPropagation(); }} style={D.dialog}>
         <h2 style={D.h1}>👋 Welcome</h2>
         <p style={D.p}>Thanks for checking out my project! This is the tracker I built for my own used-car search: profiles for the cars I'm shopping, dealer inventory pulled from MarketCheck nationwide, AI scores against my own criteria, and a watchlist that follows prices until a car sells. I made an actual SUV purchase using this app in October 2026!</p>
-        <p style={D.p}>What you're seeing is a copy of my real search data, with keys and some personal notes removed. Poke at anything — edits work, but they live only in this tab. <b>↻ Sync</b> on Results is simulated: it "finds" a few held-back listings, drops a couple of prices, and marks a car sold, counting against a pretend MarketCheck quota. <b>✨ Score</b> works too, but the scores are modeled on similar cars I already scored rather than asked of Claude. No live MarketCheck or AI calls are made. (If you're interested in access and know me at work or personally, let me know and I can invite you to sign up, or you can self-host with your own accounts!)</p>
+        <p style={D.p}>What you're seeing is a copy of my real search data, with keys and some personal notes removed. Poke at anything — edits work, but they live only in this tab. <b>↻ Sync</b> on Results is simulated: it "finds" a few held-back listings, drops a couple of prices, and marks a car sold, counting against a pretend MarketCheck quota. <b>✨ Score</b> works too, but the scores are modeled on similar cars I already scored rather than asked of Claude. The Price tab, the new-profile wizard (+ Add on Profiles) and the AI price baseline are simulated the same way. No live MarketCheck or AI calls are made. (If you're interested in access and know me at work or personally, let me know and I can invite you to sign up, or you can self-host with your own accounts!)</p>
 
         <h3 style={D.h3}>How this app uses Supabase</h3>
         <ul style={{ margin: "0 0 12px", paddingLeft: 18, fontSize: 13, color: "#c8c8d0" }}>
