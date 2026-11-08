@@ -2388,7 +2388,7 @@ function ProfilesTab({ data, save, keyOk, scoreModel, refreshFacets }) {
                 <strong style={{ fontSize: 15, color: "#e4e4e7" }}>{p.name}</strong>
               </div>
               <div style={S.profA}>
-                <button style={S.smBtn} onClick={function () { toggleActive(p.id); }}><Swap labels={["On", "Off"]} show={p.active ? 1 : 0} /></button>
+                <Toggle on={!!p.active} label={(p.active ? "Turn off " : "Turn on ") + p.name} onChange={function () { toggleActive(p.id); }} />
                 <button style={S.smBtn} onClick={function () { setEd(ed === p.id ? null : p.id); }}><Swap labels={["Edit", "Done"]} show={ed === p.id ? 1 : 0} /></button>
                 <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { delProf(p.id); }}>Del</button>
               </div>
@@ -3024,6 +3024,18 @@ function Swap({ labels, show }) {
     <span style={{ display: "inline-grid" }}>
       {labels.map(function (t, i) { return (<span key={i} aria-hidden={i !== show} style={{ gridArea: "1 / 1", visibility: i === show ? "visible" : "hidden" }}>{t}</span>); })}
     </span>
+  );
+}
+// An on/off switch (role="switch"): a fixed-size track with a sliding knob, so
+// flipping it never moves anything beside it.
+function Toggle({ on, onChange, label }) {
+  return (
+    <button type="button" role="switch" aria-checked={on} aria-label={label} title={label} onClick={onChange}
+      style={{ position: "relative", width: 38, height: 22, flex: "0 0 auto", borderRadius: 11, border: "1px solid " + (on ? "#2d8659" : "#3a3d48"),
+        background: on ? "#1f6b45" : "#22252e", padding: 0, cursor: "pointer", transition: "background 0.15s, border-color 0.15s", verticalAlign: "middle" }}>
+      <span aria-hidden="true" style={{ position: "absolute", top: 2, left: on ? 18 : 2, width: 16, height: 16, borderRadius: "50%",
+        background: on ? "#e8f5ee" : "#8a8a96", transition: "left 0.15s, background 0.15s" }} />
+    </button>
   );
 }
 function scoreHue(v) { return v >= 7 ? "#2d8659" : v >= 5 ? "#d4a017" : "#c44"; }
@@ -4835,7 +4847,7 @@ var S = {
   role: { fontSize: 10, fontWeight: 600, color: "#fff", padding: "2px 8px", borderRadius: 4, textTransform: "uppercase", letterSpacing: "0.05em" },
   profH: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 },
   profHL: { display: "flex", alignItems: "center", gap: 8 },
-  profA: { display: "flex", gap: 4, flexWrap: "wrap" },
+  profA: { display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" },
   inlIn: { background: "#1a1c22", border: "1px solid #2a2d38", borderRadius: 4, color: "#e4e4e7", padding: "4px 8px", fontSize: 14, fontFamily: "inherit" },
   grid2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 8 },
   field: { display: "flex", flexDirection: "column", gap: 3 },
