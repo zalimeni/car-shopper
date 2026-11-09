@@ -87,3 +87,8 @@ a {
 .cs-row:hover > td {
   background-color: #1b1e28 !important;
 }
+
+/* Demo banner: on narrow phones keep just "Demo" so its four buttons fit. */
+@media (max-width: 440px) {
+  .cs-demo-more { display: none; }
+}

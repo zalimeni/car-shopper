@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { loadDemo, DEMO_EVENT } from "./demoRuntime";
 import { buildDemoSnapshot, reviewableNotes } from "./demo.js";
 import { supabase } from "./supabaseClient";
+import { startTutorial } from "./tutorial.js";
 
 // Demo mode chrome (/?demo): waits for the published snapshot, then shows the
 // app under a slim banner, with a welcome on the first visit and toasts for
@@ -13,6 +14,7 @@ var REPO = "https://github.com/zalimeni/car-shopper";
 export function DemoShell({ children }) {
   var [state, setState] = useState("loading"); // loading | ready | missing
   var [about, setAbout] = useState(false);
+  var [first, setFirst] = useState(false); // first visit: closing the welcome starts the tutorial
   var [toasts, setToasts] = useState([]);
 
   useEffect(function () {
@@ -21,7 +23,7 @@ export function DemoShell({ children }) {
       if (d) {
         var seen = false;
         try { seen = !!localStorage.getItem(WELCOME_KEY); } catch (e) { /* private mode */ }
-        if (!seen) setAbout(true);
+        if (!seen) { setFirst(true); setAbout(true); }
       }
     });
   }, []);
@@ -38,9 +40,11 @@ export function DemoShell({ children }) {
     return function () { window.removeEventListener(DEMO_EVENT, onToast); };
   }, []);
 
-  function closeAbout() {
+  function closeAbout(tutorial) {
     setAbout(false);
+    setFirst(false);
     try { localStorage.setItem(WELCOME_KEY, "1"); } catch (e) { /* private mode */ }
+    if (tutorial) setTimeout(startTutorial, 150);
   }
 
   if (state === "loading") return <div style={D.center}>Loading the demo…</div>;
@@ -55,14 +59,15 @@ export function DemoShell({ children }) {
   );
   return (
     <>
-      <div style={D.banner} role="note">
-        <span style={{ flex: 1, minWidth: 0 }}><b style={{ color: "#f0d78a" }}>Demo</b> · edits stay in this tab · no live calls</span>
+      <div style={D.banner} role="note" data-tour="banner">
+        <span style={{ flex: 1, minWidth: 0 }}><b style={{ color: "#f0d78a" }}>Demo</b><span className="cs-demo-more"> · nothing is saved</span></span>
+        <button style={D.bannerBtn} onClick={startTutorial}>Tutorial</button>
         <button style={D.bannerBtn} onClick={function () { setAbout(true); }}>About</button>
         <button style={D.bannerBtn} title="Start the demo over (edits are kept only in this tab)" onClick={function () { window.location.reload(); }}>Reset</button>
         <a style={D.bannerBtn} href="/">Sign in</a>
       </div>
       {children}
-      {about && <WelcomeModal onClose={closeAbout} />}
+      {about && <WelcomeModal first={first} onClose={closeAbout} />}
       <div style={D.toasts} aria-live="polite">
         {toasts.map(function (t) { return <div key={t.id} style={D.toast} role="status">{t.msg}</div>; })}
       </div>
@@ -78,11 +83,13 @@ function useEscape(onClose) {
   }, [onClose]);
 }
 
-export function WelcomeModal({ onClose }) {
-  useEscape(onClose);
+// first: the first visit — dismissing it any way but "Explore on my own" starts the tutorial.
+export function WelcomeModal({ onClose, first }) {
+  var dismiss = useCallback(function () { onClose(!!first); }, [onClose, first]);
+  useEscape(dismiss);
   var li = { margin: "0 0 6px", lineHeight: 1.55 };
   return (
-    <div onMouseDown={onClose} style={D.backdrop}>
+    <div onMouseDown={dismiss} style={D.backdrop}>
       <div role="dialog" aria-modal="true" aria-label="Welcome" onMouseDown={function (e) { e.stopPropagation(); }} style={D.dialog}>
         <h2 style={D.h1}>👋 Welcome</h2>
         <p style={D.p}>Thanks for checking out my project! This is the tracker I built for my own used-car search: profiles for the cars I'm shopping, dealer inventory pulled from MarketCheck nationwide, AI scores against my own criteria, and a watchlist that follows prices until a car sells. I made an actual SUV purchase using this app in October 2026!</p>
@@ -97,10 +104,12 @@ export function WelcomeModal({ onClose }) {
           <li style={li}><b>Schema changes:</b> SQL migrations, applied by GitHub Actions on merge.</li>
           <li style={li}><b>This demo:</b> one public, read-only copy I published from my account.</li>
         </ul>
+        <p style={D.p}>A two-minute tutorial walks you through it next; Tutorial in the banner replays it any time.</p>
         <p style={Object.assign({}, D.p, { marginBottom: 4 })}>Enjoy, and thanks again for stopping by!</p>
         <p style={Object.assign({}, D.p, { color: "#e4e4e7" })}>— Michael</p>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <button style={D.btn} onClick={onClose}>Take a look</button>
+          <button style={D.btn} onClick={function () { onClose(true); }}>Start the tutorial</button>
+          <button style={D.small} onClick={function () { onClose(false); }}>{first ? "Explore on my own" : "Close"}</button>
           <a href={REPO} target="_blank" rel="noopener noreferrer" style={D.link}>Source on GitHub ↗</a>
         </div>
       </div>
