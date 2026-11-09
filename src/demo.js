@@ -16,8 +16,10 @@ export var RELEASE_PER_SYNC = 3;   // pool cars each demo sync "finds"
 export var DROPS_PER_SYNC = 2;     // watchlist price drops each demo sync
 
 export function isDemoUrl(search) {
-  return /(^|[?&])demo(=(1|true))?(&|$)/.test(String(search || "").replace(/^\?/, ""));
+  return /(^|[?&])demo(=(1|true|live))?(&|$)/.test(String(search || "").replace(/^\?/, ""));
 }
+// `?demo=live`: the copy the owner published (Supabase) instead of the bundled fixture.
+export function isLiveDemoUrl(search) { return /(^|[?&])demo=live(&|$)/.test(String(search || "").replace(/^\?/, "")); }
 
 // Settings keys that never leave the owner's account.
 var SECRET_SETTINGS = ["marketcheckKeys", "mcQuota", "mcApi"];

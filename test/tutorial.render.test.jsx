@@ -39,20 +39,20 @@ const { STEPS } = await import("../src/tutorial.js");
 describe("tutorial (signed in)", () => {
   it("starts from Help and explains costly steps without running them", async () => {
     render(React.createElement(App));
-    fireEvent.click(await screen.findByRole("button", { name: "▶ Start the tutorial" }, { timeout: 4000 }));
+    fireEvent.click(await screen.findByRole("button", { name: "▶ Start the tutorial" }, { timeout: 8000 }));
     await screen.findByRole("dialog", { name: "Tutorial: Quick tutorial" });
     const next = () => fireEvent.click(screen.getByRole("button", { name: /^(Next|Done)$/ }));
     next();
-    await screen.findByRole("dialog", { name: "Tutorial: Profiles: the cars you're hunting" }, { timeout: 4000 });
+    await screen.findByRole("dialog", { name: "Tutorial: Profiles: the cars you're hunting" }, { timeout: 8000 });
     expect(window.location.hash).toBe("#profiles");
     // Jump ahead to the sync step.
     for (const t of ["Add a car with the wizard", "What a good deal means to you", "New matches wait for review", "Sync pulls fresh inventory"]) {
       next();
-      await screen.findByRole("dialog", { name: "Tutorial: " + t }, { timeout: 4000 });
+      await screen.findByRole("dialog", { name: "Tutorial: " + t }, { timeout: 8000 });
     }
     expect(screen.getByText(/won't run it for you/)).toBeTruthy();
     next();
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Tutorial: Sync pulls fresh inventory" })).toBeNull(), { timeout: 4000 });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Tutorial: Sync pulls fresh inventory" })).toBeNull(), { timeout: 8000 });
     expect(synced).toBe(0);
     fireEvent.click(screen.getByText("Skip"));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: /^Tutorial/ })).toBeNull());

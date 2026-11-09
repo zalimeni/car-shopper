@@ -6,7 +6,7 @@ import { render, screen, fireEvent, waitFor, within } from "@testing-library/rea
 // /?demo end to end: the published snapshot loads with no session, the welcome
 // shows once, edits stay in memory, ↻ Sync is simulated (held-back cars with
 // their scores, a price drop, a car gone), and no /api call leaves the browser.
-window.history.replaceState(null, "", "/?demo#results");
+window.history.replaceState(null, "", "/?demo=live#results"); // the published copy (Supabase); the fixture has its own test
 
 const car = (id, o) => Object.assign({ id: id, vin: "VIN000000000000" + id, year: 2021, make: "Subaru", model: "Outback", vehicle: "Subaru Outback", trim: "Premium",
   status: "watch", source: "marketcheck", profileId: "p1", price: 22000, miles: 40000, dealer: "Dealer " + id, addedDate: "2026-10-01", lastSeen: "2026-10-30", lastChecked: "2026-10-30" }, o || {});
