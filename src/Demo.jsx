@@ -93,7 +93,7 @@ export function WelcomeModal({ onClose, first }) {
       <div role="dialog" aria-modal="true" aria-label="Welcome" onMouseDown={function (e) { e.stopPropagation(); }} style={D.dialog}>
         <h2 style={D.h1}>👋 Welcome</h2>
         <p style={D.p}>Thanks for checking out my project! This is the tracker I built for my own used-car search: profiles for the cars I'm shopping, dealer inventory pulled from MarketCheck nationwide, AI scores against my own criteria, and a watchlist that follows prices until a car sells. I made an actual SUV purchase using this app in October 2026!</p>
-        <p style={D.p}>What you're seeing is a copy of my real search data, with keys and some personal notes removed. Poke at anything — edits work, but they live only in this tab. <b>↻ Sync</b> on Results is simulated: it "finds" a few held-back listings, drops a couple of prices, and marks a car sold, counting against a pretend MarketCheck quota. <b>✨ Score</b> works too, but the scores are modeled on similar cars I already scored rather than asked of Claude. The Price tab, the new-profile wizard (+ Add on Profiles) and the AI price baseline are simulated the same way. No live MarketCheck or AI calls are made. (If you're interested in access and know me at work or personally, let me know and I can invite you to sign up, or you can self-host with your own accounts!)</p>
+        <p style={D.p}>What you're seeing is a curated slice of my real search: real cars, prices and AI scores, with dealers and VINs swapped for made-up ones and the photos redrawn. Poke at anything — edits work, but they live only in this tab. <b>↻ Sync</b> on Results is simulated: it "finds" a few held-back listings, drops a couple of prices, and marks a car sold, counting against a pretend MarketCheck quota. <b>✨ Score</b> works too, but the scores are modeled on similar cars I already scored rather than asked of Claude. The Price tab, the new-profile wizard (+ Add on Profiles) and the AI price baseline are simulated the same way. No live MarketCheck or AI calls are made. (If you're interested in access and know me at work or personally, let me know and I can invite you to sign up, or you can self-host with your own accounts!)</p>
 
         <h3 style={D.h3}>How this app uses Supabase</h3>
         <ul style={{ margin: "0 0 12px", paddingLeft: 18, fontSize: 13, color: "#c8c8d0" }}>
@@ -102,7 +102,7 @@ export function WelcomeModal({ onClose, first }) {
           <li style={li}><b>Backups:</b> a database trigger keeps rolling snapshots of that document, restorable from the app.</li>
           <li style={li}><b>AI key vault:</b> each user's Anthropic key is encrypted (AES-256-GCM) and only the server functions can read it.</li>
           <li style={li}><b>Schema changes:</b> SQL migrations, applied by GitHub Actions on merge.</li>
-          <li style={li}><b>This demo:</b> one public, read-only copy I published from my account.</li>
+          <li style={li}><b>This demo:</b> none of it. The data is a static file that ships with the app, and nothing you do here is sent anywhere.</li>
         </ul>
         <p style={D.p}>A two-minute tutorial walks you through it next; Tutorial in the banner replays it any time.</p>
         <p style={Object.assign({}, D.p, { marginBottom: 4 })}>Enjoy, and thanks again for stopping by!</p>
@@ -137,7 +137,7 @@ export function DemoPublishModal({ data, candidates, onClose }) {
       var res = await fetch("/api/snapshots", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + token }, body: JSON.stringify({ demo: buildDemoSnapshot(full, { keep: keep }) }) });
       var j = await res.json().catch(function () { return {}; });
       if (!res.ok) throw new Error(j.error || "HTTP " + res.status);
-      setMsg("Published — open " + window.location.origin + "/?demo to see it.");
+      setMsg("Published — open " + window.location.origin + "/?demo=live to see it.");
     } catch (e) { setMsg("Publish failed: " + (e.message || e)); }
     setBusy(false);
   }
@@ -146,7 +146,7 @@ export function DemoPublishModal({ data, candidates, onClose }) {
     <div onMouseDown={onClose} style={D.backdrop}>
       <div role="dialog" aria-modal="true" aria-label="Publish demo" onMouseDown={function (e) { e.stopPropagation(); }} style={D.dialog}>
         <h2 style={D.h1}>Publish demo</h2>
-        <p style={D.p}>Replaces the public demo at <code>/?demo</code> with a copy of your data as it is now: {counts}. Removed always: MarketCheck keys, quota records, API-version info. Kept: profiles, criteria, listings, prices, tags, AI scores, home base.</p>
+        <p style={D.p}>Publishes a copy of your data as it is now to <code>/?demo=live</code> (the public <code>/?demo</code> uses the curated fixture in the repo): {counts}. Removed always: MarketCheck keys, quota records, API-version info. Kept: profiles, criteria, listings, prices, tags, AI scores, home base.</p>
         <h3 style={D.h3}>Your notes ({items.length})</h3>
         <p style={Object.assign({}, D.p, { fontSize: 12 })}>Unchecked notes are cleared (price-change notes sync wrote are always kept).</p>
         {items.length > 0 && (

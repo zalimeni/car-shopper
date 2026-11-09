@@ -1,0 +1,2855 @@
+{
+ "demoVersion": 1,
+ "exportedAt": "2026-11-07T02:51:20.408Z",
+ "data": {
+  "version": 10,
+  "onboarded": true,
+  "autoScore": false,
+  "scoreModel": "claude-sonnet-4-6",
+  "profiles": [
+   {
+    "id": "rav4-hybrid",
+    "name": "RAV4 Hybrid",
+    "role": "SUV",
+    "active": false,
+    "params": {
+     "make": "Toyota",
+     "model": "RAV4",
+     "trims": "Hybrid XLE AWD, Hybrid XSE AWD",
+     "years": "2019-2022",
+     "maxMiles": 90000,
+     "maxPrice": 25000,
+     "mustHave": "AWD, hybrid",
+     "niceToHave": "Weather package, CPO, wireless CarPlay (2022)",
+     "powertrain": "Hybrid",
+     "preferTrims": [
+      "Hybrid XLE AWD",
+      "Hybrid XSE AWD"
+     ],
+     "dealbreakers": "",
+     "excludeTrims": [],
+     "priceBaseline": {
+      "tiers": [
+       {
+        "fair": 22500,
+        "good": 20500,
+        "high": 24500,
+        "trim": "SE",
+        "years": "2019"
+       },
+       {
+        "fair": 23500,
+        "good": 21500,
+        "high": 25500,
+        "trim": "XLE",
+        "years": "2019"
+       },
+       {
+        "fair": 24000,
+        "good": 22000,
+        "high": 26000,
+        "trim": "XSE",
+        "years": "2019"
+       },
+       {
+        "fair": 23500,
+        "good": 21500,
+        "high": 25500,
+        "trim": "SE",
+        "years": "2020"
+       },
+       {
+        "fair": 24500,
+        "good": 22500,
+        "high": 26500,
+        "trim": "XLE",
+        "years": "2020"
+       },
+       {
+        "fair": 25000,
+        "good": 23000,
+        "high": 27000,
+        "trim": "XSE",
+        "years": "2020"
+       },
+       {
+        "fair": 25000,
+        "good": 23000,
+        "high": 27000,
+        "trim": "SE",
+        "years": "2021"
+       },
+       {
+        "fair": 25500,
+        "good": 23500,
+        "high": 27500,
+        "trim": "XLE",
+        "years": "2021"
+       },
+       {
+        "fair": 26000,
+        "good": 24000,
+        "high": 28000,
+        "trim": "XSE",
+        "years": "2021"
+       },
+       {
+        "fair": 26500,
+        "good": 24500,
+        "high": 28500,
+        "trim": "SE",
+        "years": "2022"
+       },
+       {
+        "fair": 27500,
+        "good": 25500,
+        "high": 29500,
+        "trim": "XLE",
+        "years": "2022"
+       },
+       {
+        "fair": 28000,
+        "good": 26000,
+        "high": 30000,
+        "trim": "XSE",
+        "years": "2022"
+       }
+      ],
+      "default": {
+       "fair": 24500,
+       "good": 22500,
+       "high": 26500
+      },
+      "refMileage": 75000,
+      "perThousandMi": 200
+     }
+    }
+   },
+   {
+    "id": "subaru-outback",
+    "name": "Outback",
+    "role": "SUV",
+    "active": true,
+    "params": {
+     "make": "Subaru",
+     "model": "Outback",
+     "trims": "Limited, Premium",
+     "years": "2020-2022",
+     "maxMiles": 100000,
+     "maxPrice": 25000,
+     "mustHave": "AWD; non-turbo 2.5L",
+     "niceToHave": "Premium or Limited trim, moonroof, heated seats, power driver seat",
+     "powertrain": "",
+     "preferTrims": [
+      "Limited",
+      "Premium"
+     ],
+     "dealbreakers": "Turbo XT / Onyx XT / Wilderness; open CVT or brake recalls",
+     "excludeTrims": [],
+     "priceBaseline": {
+      "tiers": [
+       {
+        "fair": 24000,
+        "good": 22500,
+        "high": 25500,
+        "trim": "Limited",
+        "years": "2022"
+       },
+       {
+        "fair": 21800,
+        "good": 20000,
+        "high": 23500,
+        "trim": "Premium",
+        "years": "2022"
+       },
+       {
+        "fair": 18500,
+        "good": 17000,
+        "high": 20000,
+        "trim": "Base",
+        "years": "2022"
+       },
+       {
+        "fair": 21000,
+        "good": 19000,
+        "high": 23000,
+        "trim": "Limited",
+        "years": "2021"
+       },
+       {
+        "fair": 22000,
+        "good": 20500,
+        "high": 24000,
+        "trim": "Premium",
+        "years": "2021"
+       },
+       {
+        "fair": 18000,
+        "good": 16500,
+        "high": 19500,
+        "trim": "Base",
+        "years": "2021"
+       },
+       {
+        "fair": 23000,
+        "good": 21000,
+        "high": 25000,
+        "trim": "Limited",
+        "years": "2020"
+       },
+       {
+        "fair": 21500,
+        "good": 19500,
+        "high": 23500,
+        "trim": "Premium",
+        "years": "2020"
+       },
+       {
+        "fair": 17000,
+        "good": 15500,
+        "high": 18500,
+        "trim": "Base",
+        "years": "2020"
+       }
+      ],
+      "default": {
+       "fair": 21000,
+       "good": 19000,
+       "high": 23000
+      },
+      "refMileage": 60000,
+      "perThousandMi": 150
+     }
+    }
+   },
+   {
+    "id": "tucson-hybrid",
+    "name": "Tucson Hybrid",
+    "role": "SUV",
+    "active": true,
+    "params": {
+     "make": "Hyundai",
+     "model": "Tucson",
+     "trims": "SEL Convenience HEV AWD",
+     "years": "2024-2025",
+     "maxMiles": 60000,
+     "maxPrice": 28000,
+     "mustHave": "AWD (standard on the hybrid); 2025, or a 2024 built after March 2024 (rear seat-belt pretensioners); rear cross-traffic alert; pre-purchase inspection allowed",
+     "niceToHave": "SEL Convenience trim; heated front seats; power driver seat; one-owner clean Carfax",
+     "powertrain": "Hybrid",
+     "preferTrims": [
+      "SEL Convenience HEV AWD"
+     ],
+     "dealbreakers": "2024 built before April 2024; salt-belt history; seller refuses a pre-purchase inspection; non-hybrid Tucson",
+     "excludeTrims": [
+      "Blue HEV AWD",
+      "Limited HEV AWD",
+      "N Line HEV AWD"
+     ],
+     "excludeColors": [
+      "Black",
+      "White",
+      "Gold",
+      "Beige"
+     ],
+     "priceBaseline": {
+      "tiers": [
+       {
+        "fair": 27000,
+        "good": 25500,
+        "high": 28200,
+        "trim": "Blue",
+        "years": "2024-2025"
+       },
+       {
+        "fair": 27200,
+        "good": 25800,
+        "high": 28400,
+        "trim": "SEL Convenience",
+        "years": "2024-2025"
+       },
+       {
+        "fair": 27500,
+        "good": 26500,
+        "high": 28700,
+        "trim": "N Line",
+        "years": "2024-2025"
+       },
+       {
+        "fair": 28000,
+        "good": 27000,
+        "high": 29200,
+        "trim": "Limited",
+        "years": "2024"
+       }
+      ],
+      "default": {
+       "fair": 27200,
+       "good": 25800,
+       "high": 28400
+      },
+      "refMileage": 20000,
+      "perThousandMi": 75
+     }
+    }
+   },
+   {
+    "id": "bolt-ev",
+    "name": "Bolt EV",
+    "role": "Commuter",
+    "active": true,
+    "params": {
+     "make": "Chevrolet",
+     "model": "Bolt EV",
+     "trims": "",
+     "years": "2018-2019",
+     "maxMiles": 130000,
+     "maxPrice": 13900,
+     "mustHave": "Battery recall closed with a documented pack or module replacement; battery health 80%+; pre-purchase inspection allowed",
+     "niceToHave": "Replacement pack installed 2022 or later (fresh 8-year warranty); 2019 over 2018",
+     "powertrain": "",
+     "dealbreakers": "2017 model year; software-only or undocumented recall fix; seller refuses a pre-purchase inspection",
+     "excludeColors": [
+      "Beige",
+      "Gold"
+     ],
+     "priceBaseline": {
+      "tiers": [
+       {
+        "fair": 12500,
+        "good": 11300,
+        "high": 13800,
+        "trim": "LT",
+        "years": "2018"
+       },
+       {
+        "fair": 13100,
+        "good": 11900,
+        "high": 14400,
+        "trim": "Premier",
+        "years": "2018"
+       },
+       {
+        "fair": 12600,
+        "good": 11400,
+        "high": 13900,
+        "trim": "LT",
+        "years": "2019"
+       },
+       {
+        "fair": 13300,
+        "good": 12100,
+        "high": 14600,
+        "trim": "Premier",
+        "years": "2019"
+       }
+      ],
+      "default": {
+       "fair": 12500,
+       "good": 11300,
+       "high": 13800
+      },
+      "refMileage": 70000,
+      "perThousandMi": 60
+     }
+    }
+   }
+  ],
+  "criteria": [
+   {
+    "id": "price",
+    "name": "Price vs. budget",
+    "weight": 20
+   },
+   {
+    "id": "mileage",
+    "name": "Mileage vs. age",
+    "weight": 10
+   },
+   {
+    "id": "dealer",
+    "name": "Dealer type",
+    "weight": 15
+   },
+   {
+    "id": "condition",
+    "name": "Condition / history",
+    "weight": 15
+   },
+   {
+    "id": "features",
+    "name": "Trim & features",
+    "weight": 10
+   },
+   {
+    "id": "color",
+    "name": "Color",
+    "weight": 5
+   },
+   {
+    "id": "location",
+    "name": "Location & salt exposure",
+    "weight": 10
+   },
+   {
+    "id": "deal",
+    "name": "Deal rating",
+    "weight": 15
+   }
+  ],
+  "globalReqs": [
+   {
+    "id": "clean-title",
+    "text": "Clean title (no salvage, rebuilt, or branded)",
+    "active": true
+   },
+   {
+    "id": "no-accidents",
+    "text": "No significant accident history",
+    "active": true
+   },
+   {
+    "id": "no-mech",
+    "text": "No significant mechanical issues",
+    "active": true
+   },
+   {
+    "id": "gr-1783386712173",
+    "text": "Automatic transmission (for non-electric and PHEV)",
+    "active": true
+   }
+  ],
+  "listings": [
+   {
+    "vin": "KM8JCCD19RU417280",
+    "vehicle": "Hyundai Tucson",
+    "year": 2024,
+    "trim": "SEL Convenience HEV AWD",
+    "price": 27148,
+    "fees": 474,
+    "mileage": 21610,
+    "dealer": "Larkmoor Hyundai",
+    "dealerType": "franchise",
+    "cpo": true,
+    "location": "Shreveport",
+    "state": "LA",
+    "color": "Gray",
+    "baseColor": "Gray",
+    "dom": 33,
+    "mcSeen": "2026-11-05",
+    "carfax_1_owner": false,
+    "carfax_clean_title": false,
+    "price_change_percent": -2.52,
+    "msrp": 27499,
+    "profileId": "tucson-hybrid",
+    "source": "marketcheck",
+    "addedDate": "2026-10-16",
+    "lastSeen": "2026-11-06",
+    "lastChecked": "2026-11-06",
+    "priceHistory": [
+     {
+      "date": "2026-10-16",
+      "price": 27499
+     },
+     {
+      "date": "2026-10-20",
+      "price": 27299
+     },
+     {
+      "date": "2026-11-07",
+      "price": 27148
+     }
+    ],
+    "notes": "↓ Price $27,499 → $27,299 (2026-10-20) · ↓ Price $27,299 → $27,148 (2026-11-07)",
+    "scores": {
+     "deal": 5,
+     "color": 6,
+     "price": 5,
+     "dealer": 9,
+     "mileage": 8,
+     "features": 7,
+     "location": 3,
+     "condition": 7
+    },
+    "aiSummary": "A CPO, low-mileage 2024 SEL Convenience HEV AWD from a franchise dealer in a low-salt Gulf state, fairly priced at $27,148 with falling asking price. Main drawbacks are the 881-mile distance and the unverified build date, so confirm the certification label date and negotiate down before committing to shipping.",
+    "aiRationales": {
+     "deal": "Priced $351 under MSRP and cut twice (-2.52%) over 33 days listed, but still near fair market value rather than a standout discount, and fees add $474.",
+     "color": "Gray is a neutral, resale-friendly color with no buyer color restriction.",
+     "price": "Asking $27,148 (plus $474 fees) sits right at the ~$27,079 fair baseline, above the $25,679 'good' mark and under the $28,000 ceiling but with only ~$850 of headroom once fees are included.",
+     "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+     "mileage": "21,610 mi on a 2024 is roughly 10-11k/yr at most, well under the 60k cap and low for its age.",
+     "features": "SEL Convenience HEV AWD is exactly the target trim with standard AWD, backup camera and the larger screen/digital cluster, but the listing does not confirm heated seats, power driver seat, rear cross-traffic alert, or the post-March 2024 build date.",
+     "location": "881 mi straight-line from Durham is a long haul requiring shipping or a flight; Louisiana is a Gulf state with low road-salt exposure, and LIT is 181 mi from the dealer, which does not help much.",
+     "condition": "CPO inspection is a strong plus and no accident or title issues are reported, but ownership history is not stated and the build date for the 2024 rear-belt-pretensioner requirement is unverified."
+    },
+    "scoredAt": "2026-11-07T02:50:47.541Z",
+    "compositeScore": 6.3,
+    "dealRating": "",
+    "dLat": 32.504,
+    "dLon": -93.749,
+    "link": "",
+    "photo": "/demo/cars/car-01.webp",
+    "status": "watch",
+    "id": "car-01",
+    "memo": "Carfax shows regular oil changes. Confirm the build date on the door-jamb label before going further.\n\nDealer says it can be sold as CPO.",
+    "tags": [
+     "Needs CPO",
+     "Looks good"
+    ]
+   },
+   {
+    "vin": "KM8JCCD11RU662767",
+    "vehicle": "Hyundai Tucson",
+    "year": 2024,
+    "trim": "SEL Convenience HEV AWD",
+    "price": 24994,
+    "fees": 172,
+    "mileage": 52932,
+    "dealer": "Kestrelwood Hyundai",
+    "dealerType": "franchise",
+    "cpo": true,
+    "location": "Dublin",
+    "state": "CA",
+    "color": "Gray",
+    "baseColor": "Gray",
+    "dom": 34,
+    "mcSeen": "2026-11-05",
+    "carfax_1_owner": true,
+    "carfax_clean_title": true,
+    "price_change_percent": -3.42,
+    "msrp": 25166,
+    "profileId": "tucson-hybrid",
+    "source": "marketcheck",
+    "addedDate": "2026-09-24",
+    "lastSeen": "2026-11-06",
+    "lastChecked": "2026-11-06",
+    "priceHistory": [
+     {
+      "date": "2026-09-24",
+      "price": 28399
+     },
+     {
+      "date": "2026-10-10",
+      "price": 27199
+     },
+     {
+      "date": "2026-10-23",
+      "price": 25900
+     },
+     {
+      "date": "2026-11-05",
+      "price": 24994
+     }
+    ],
+    "notes": "↓ Price $28,399 → $27,199 (2026-10-10) · ↓ Price $27,199 → $25,900 (2026-10-23) · ↓ Price $25,900 → $24,994 (2026-11-05)",
+    "tags": [
+     "Post March 24",
+     "Looks good"
+    ],
+    "scores": {
+     "deal": 4,
+     "color": 7,
+     "price": 4,
+     "dealer": 10,
+     "mileage": 4,
+     "features": 8,
+     "location": 4,
+     "condition": 9
+    },
+    "aiSummary": "A clean 1-owner, CPO, franchise-sold SEL Convenience HEV AWD with a post-March 2024 build per the buyer's notes, which checks the key boxes with no salt exposure. However, it is priced slightly above fair for 52,932 mi and sits 2,360 mi away, so it only makes sense with a price negotiation that covers shipping or flight costs.",
+    "aiRationales": {
+     "deal": "Price is about 3.4% lower since first listed and slightly under the $25,166 MSRP, but it's still above the fair-market baseline for this mileage, and 34 days listed suggests room to negotiate.",
+     "color": "Gray is a neutral, acceptable color with no stated buyer aversion.",
+     "price": "At $24,994 (plus $172 fees) it sits just above the 'fair' baseline of ~$24,730 and well above the 'good' threshold of $23,330 for a 2024 SEL Convenience at 52,932 mi, though it is comfortably under the $28,000 ceiling.",
+     "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+     "mileage": "52,932 mi on a 2024 is high for its age (well over 12k/yr pace) and close to the 60,000 mi cap, though still within the limit.",
+     "features": "It is the exact target SEL Convenience HEV AWD trim (AWD standard, no panoramic roof), and the buyer's 'Post March 24' tag suggests the build date clears the rear pretensioner requirement; heated/power seat details and RCTA are not listed in the data.",
+     "location": "Dublin, CA is 2,360 mi straight-line from Durham, requiring shipping or a long trip, though the dealer is only 17 mi from OAK and California is a non-salt-belt state, which mitigates the burden.",
+     "condition": "Carfax confirms 1 owner and a clean title with no reported accidents, and CPO inspection adds confidence; high mileage keeps it from a perfect score."
+    },
+    "scoredAt": "2026-11-07T02:50:47.541Z",
+    "compositeScore": 6.2,
+    "dealRating": "",
+    "dLat": 37.717,
+    "dLon": -121.923,
+    "link": "",
+    "photo": "/demo/cars/car-02.webp",
+    "status": "watch",
+    "id": "car-02",
+    "reviewPending": true,
+    "lastChange": {
+     "type": "price",
+     "from": 25900,
+     "to": 24994,
+     "dir": "↓",
+     "at": "2026-11-05"
+    }
+   },
+   {
+    "vin": "KM8JCCD12RU050853",
+    "vehicle": "Hyundai Tucson",
+    "year": 2024,
+    "trim": "SEL Convenience HEV AWD",
+    "price": 24688,
+    "fees": 695,
+    "mileage": 54603,
+    "dealer": "Bramblegate Hyundai",
+    "dealerType": "franchise",
+    "cpo": false,
+    "location": "Sheffield",
+    "state": "AL",
+    "color": "Deep Sea",
+    "baseColor": "Blue",
+    "dom": 91,
+    "mcSeen": "2026-11-05",
+    "carfax_1_owner": true,
+    "carfax_clean_title": true,
+    "price_change_percent": -1.84,
+    "msrp": 26683,
+    "profileId": "tucson-hybrid",
+    "source": "marketcheck",
+    "addedDate": "2026-10-12",
+    "lastSeen": "2026-11-06",
+    "lastChecked": "2026-11-06",
+    "priceHistory": [
+     {
+      "date": "2026-10-12",
+      "price": 26700
+     },
+     {
+      "date": "2026-10-24",
+      "price": 25899
+     },
+     {
+      "date": "2026-11-01",
+      "price": 24688
+     }
+    ],
+    "notes": "↓ Price $26,700 → $25,899 (2026-10-24) · ↓ Price $25,899 → $24,688 (2026-11-01)",
+    "tags": [
+     "Has roof rack"
+    ],
+    "scores": {
+     "deal": 5,
+     "color": 6,
+     "price": 5,
+     "dealer": 8,
+     "mileage": 4,
+     "features": 6,
+     "location": 4,
+     "condition": 7
+    },
+    "aiSummary": "A right-trim, 1-owner, clean-Carfax hybrid at a franchise dealer that can CPO, in a non-salt state, but priced only around fair with high mileage (54.6k) and a long haul to Durham. Do not proceed until the build date is verified as late March 2024 or later for the rear seat belt pretensioners, and a PPI is confirmed.",
+    "aiRationales": {
+     "deal": "The recent $1,300 price cut to $24,688 (about 1.8% below prior ask) helps, and it is $1,995 under MSRP, but it has been listed 91 days, it is priced near fair market, and high mileage and added fees keep it from being a standout deal.",
+     "color": "Deep Sea is a dark blue-green that is a fairly neutral, acceptable color; the buyer has no stated color avoidance, so it is average-to-good.",
+     "price": "Asking $24,688 (plus $695 dealer fees) sits just above the ~$24,605 fair mark and well under the $28,000 ceiling, but not near the $23,205 good threshold; fees push the real cost to about $25,383, close to the 'high' $25,805 line.",
+     "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+     "mileage": "54,603 mi on a 2024 is roughly 27k/yr if bought in 2026 terms, well above the ~12k/yr benchmark and close to the 60k cap, though it is within the buyer's limit.",
+     "features": "It is the exact target SEL Convenience HEV AWD, with AWD standard and no panoramic roof, but the critical MY2024 build-date requirement (after March 2024, rear belt pretensioners) is unverified, with a late-March build flagged by the buyer, and rear cross-traffic alert, heated seats and power seat are unconfirmed in the listing.",
+     "location": "Sheffield, AL is 501 mi straight-line (about 600+ driving miles) from Durham, with BHM 99 mi away, so it is likely a ship or fly-in; however, Alabama is a non-salt-belt state, which is a plus for rust.",
+     "condition": "Carfax confirms a 1-owner, clean title with no reported accident, but the buyer notes slightly over-gapped oil change intervals, a mild maintenance concern worth verifying in a PPI."
+    },
+    "scoredAt": "2026-11-07T02:50:47.541Z",
+    "compositeScore": 5.7,
+    "dealRating": "",
+    "dLat": 34.758,
+    "dLon": -87.697,
+    "link": "",
+    "photo": "/demo/cars/car-03.webp",
+    "status": "watch",
+    "id": "car-03"
+   },
+   {
+    "vin": "KM8JCCD19RU663388",
+    "vehicle": "Hyundai Tucson",
+    "year": 2024,
+    "trim": "SEL Convenience HEV AWD",
+    "drivetrain": "AWD",
+    "price": 26741,
+    "fees": 225,
+    "mileage": 7377,
+    "dealer": "Tallowmere Hyundai",
+    "dealerType": "franchise",
+    "cpo": false,
+    "location": "Silsbee",
+    "state": "TX",
+    "color": "Deep Sea",
+    "baseColor": "Blue",
+    "dom": 811,
+    "mcSeen": "2026-11-05",
+    "carfax_1_owner": false,
+    "carfax_clean_title": false,
+    "price_change_percent": -1.13,
+    "msrp": 26966,
+    "profileId": "tucson-hybrid",
+    "source": "marketcheck",
+    "addedDate": "2026-10-23",
+    "lastSeen": "2026-11-06",
+    "lastChecked": "2026-11-06",
+    "priceHistory": [
+     {
+      "date": "2026-10-23",
+      "price": 27400
+     },
+     {
+      "date": "2026-11-01",
+      "price": 26741
+     }
+    ],
+    "notes": "↓ Price $27,400 → $26,741 (2026-11-01)",
+    "scores": {
+     "deal": 8,
+     "color": 7,
+     "price": 9,
+     "dealer": 8,
+     "mileage": 10,
+     "features": 8,
+     "location": 6,
+     "condition": 7
+    },
+    "aiSummary": "A 2024 Tucson SEL Convenience HEV AWD with 7,377 mi at $26,741 is the exact target trim at a good price from a franchise dealer in a preferred Texas source state with no salt exposure. Before buying, verify the build date on the certification label is after March 2024 and confirm a PPI is allowed, and account for the ~965 mi distance (fly in via IAH or ship).",
+    "aiRationales": {
+     "deal": "Priced at the 'good' baseline and under MSRP, with a 1.13% price drop; after 811 days on the lot there may be additional room to negotiate.",
+     "color": "Deep Sea (a dark green) is an acceptable non-flagged color with no stated buyer aversion.",
+     "price": "Asking $26,741 (plus $225 dealer fees, ~$26,966 out the door before tax) is right at the 'good' threshold of $26,747 and well under the $28,000 ceiling, and is $225 below MSRP on a car with only 7,377 mi.",
+     "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+     "mileage": "7,377 mi on a 2024 is far below the ~12k/yr norm, essentially near-new.",
+     "features": "SEL Convenience HEV AWD is exactly the target trim, with hybrid AWD and no panoramic roof; backup camera and RCTA are expected on this trim but not confirmed, and heated seats/power driver seat are not itemized.",
+     "location": "Silsbee, TX is 965 mi straight-line (~1,200 mi driving) from Durham, but it is a Gulf Coast Texas source with no salt-belt exposure, and IAH is 73 mi away, so fly-in or shipping is feasible; Texas is also a preferred sourcing state.",
+     "condition": "Very low mileage and no reported accidents or branded title, but the listing doesn't give a build date, so the MY2024 post-March 2024 requirement is unverified, and the 811 days listed suggests it may have sat for a long time."
+    },
+    "scoredAt": "2026-11-07T02:50:38.866Z",
+    "compositeScore": 8,
+    "dealRating": "",
+    "dLat": 30.324,
+    "dLon": -94.191,
+    "link": "",
+    "photo": "/demo/cars/car-04.webp",
+    "status": "watch",
+    "id": "car-04"
+   },
+   {
+    "vin": "1G1FZ6S09K4210326",
+    "vehicle": "Chevrolet Bolt EV",
+    "year": 2019,
+    "trim": "Premier Auto",
+    "price": 12900,
+    "fees": 794,
+    "mileage": 86124,
+    "dealer": "Quillstone Chevrolet",
+    "dealerType": "franchise",
+    "cpo": false,
+    "location": "Leesburg",
+    "state": "VA",
+    "color": "(Includes (TUS) Black Grille.)",
+    "baseColor": "Black",
+    "dom": 40,
+    "mcSeen": "2026-10-19",
+    "carfax_1_owner": false,
+    "carfax_clean_title": false,
+    "price_change_percent": -6.81,
+    "msrp": 13694,
+    "profileId": "bolt-ev",
+    "source": "marketcheck",
+    "addedDate": "2026-09-24",
+    "lastSeen": "2026-11-06",
+    "lastChecked": "2026-11-06",
+    "priceHistory": [
+     {
+      "date": "2026-09-24",
+      "price": 14599
+     },
+     {
+      "date": "2026-10-07",
+      "price": 13900
+     },
+     {
+      "date": "2026-10-23",
+      "price": 13500
+     },
+     {
+      "date": "2026-11-05",
+      "price": 12900
+     }
+    ],
+    "notes": "↓ Price $14,599 → $13,900 (2026-10-07) · ↓ Price $13,900 → $13,500 (2026-10-23) · ↓ Price $13,500 → $12,900 (2026-11-05)",
+    "scores": {
+     "deal": 5,
+     "color": 5,
+     "price": 4,
+     "dealer": 8,
+     "mileage": 7,
+     "features": 7,
+     "location": 6,
+     "condition": 6
+    },
+    "aiSummary": "A 2019 Bolt Premier at a franchise Chevy dealer with 86K mi is a solid candidate and an easy fly-in, but at $12,900 plus $794 fees it is priced above fair value. Only buy if you can negotiate toward ~$12,000 and get the GM VIN printout showing a documented battery replacement, a measured SOH of 80%+, and a permitted PPI.",
+    "aiRationales": {
+     "deal": "Price dropped 6.81% and is 40 days on the lot, giving some negotiating room, but $12,900 is still above the ~$12,333 fair baseline and $794 in fees adds cost, so it is an average deal as listed.",
+     "color": "The color field only lists '(Includes (TUS) Black Grille)' with no actual body color stated, so color is unknown; neutral score with no stated buyer color constraint.",
+     "price": "Asking $12,900 (plus $794 dealer fees, ~$13,694 out-the-door before taxes) sits between fair (~$12,333) and high (~$13,633) baselines; under the $13,900 ceiling but well above the $11,133 good mark, and fees push it near the ceiling.",
+     "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+     "mileage": "86,124 mi on a 2019 is ~12k/yr, average for age, but well under the 130,000 cap and short of the 90-120K range the buyer treats as favorable for a replaced pack.",
+     "features": "2019 Premier Auto is the top Bolt trim (above any floor) and the preferred model year over 2018, with leather and fast-charge/driver-assist content; battery warranty entries, SOH, and campaign status are not listed.",
+     "location": "Leesburg, VA is 228 mi straight-line (~275-295 driving miles) from Durham, with IAD only 12 mi away for easy fly-in; Virginia has moderate salt exposure, far less than the northern salt belt.",
+     "condition": "No accident, salvage, or branded title is reported, but the listing gives no recall N212343881 closure, battery install date, or measured SOH, so documentation must be verified before purchase; scored conservatively without penalty for missing history."
+    },
+    "scoredAt": "2026-10-21T12:41:43.169Z",
+    "compositeScore": 5.9,
+    "dealRating": "",
+    "dLat": 39.042,
+    "dLon": -77.605,
+    "link": "",
+    "photo": "/demo/cars/car-05.webp",
+    "status": "watch",
+    "id": "car-05",
+    "reviewPending": true,
+    "lastChange": {
+     "type": "price",
+     "from": 13500,
+     "to": 12900,
+     "dir": "↓",
+     "at": "2026-11-05"
+    }
+   },
+   {
+    "vin": "4S4BTANC4M3246252",
+    "vehicle": "Subaru Outback",
+    "year": 2021,
+    "trim": "Limited",
+    "price": 15995,
+    "mileage": 61301,
+    "dealer": "Fernhollow Auto Sales",
+    "dealerType": "independent",
+    "location": "Bedford",
+    "state": "VA",
+    "color": "Magnetite Gray Metallic",
+    "dom": 221,
+    "carfax_1_owner": false,
+    "carfax_clean_title": false,
+    "msrp": 15995,
+    "profileId": "subaru-outback",
+    "source": "marketcheck",
+    "addedDate": "2026-10-06",
+    "lastSeen": "2026-11-06",
+    "lastChecked": "2026-11-06",
+    "notes": "↓ Price $17,200 → $16,599 (2026-10-17) · ↓ Price $16,599 → $15,995 (2026-11-01)",
+    "scores": {
+     "deal": 10,
+     "color": 8,
+     "price": 10,
+     "dealer": 5,
+     "mileage": 6,
+     "features": 9,
+     "location": 6,
+     "condition": 7
+    },
+    "aiSummary": "This 2021 Outback Limited offers outstanding value at $15,995—well under market baseline—with desirable trim, color, and features, though the independent dealer and slightly higher mileage are minor considerations. Overall, it's a strong buy for a budget-conscious shopper.",
+    "aiRationales": {
+     "deal": "At $15,995, the listing sits roughly $2,800 below the 'good' price anchor, indicating a strong deal relative to comparable market listings.",
+     "color": "Magnetite Gray Metallic is a neutral color, avoiding the buyer's soft dislike of black/white and the hard dealbreaker of gold.",
+     "price": "At $15,995 the price is well below the 'good' threshold of $18,805 for a 2021 Limited with similar mileage, making it an excellent value.",
+     "dealer": "Independent dealer: no franchise reconditioning or CPO program behind it, so average.",
+     "mileage": "61,301 mi over ~4 years (~15k/yr) is a bit above the ideal 12k/yr benchmark but still within the 100k mile cap and not excessive for the age.",
+     "features": "Limited trim matches the buyer's preferred nice-to-have trim and typically includes moonroof, heated seats, and power driver seat, satisfying the must-have AWD/non-turbo requirement.",
+     "location": "Bedford, VA is in a moderate salt-belt region, presenting some rust risk but not as severe as northern climates.",
+     "condition": "No accident or title issues are reported, and absent negative info the vehicle is assumed to have a clean history, though no explicit condition report is given."
+    },
+    "scoredAt": "2026-07-07T01:29:03.728Z",
+    "compositeScore": 7.8,
+    "dealRating": "",
+    "dLat": 37.315,
+    "dLon": -79.533,
+    "link": "",
+    "photo": "/demo/cars/car-06.webp",
+    "status": "watch",
+    "id": "car-06",
+    "priceHistory": [
+     {
+      "date": "2026-10-06",
+      "price": 17200
+     },
+     {
+      "date": "2026-10-17",
+      "price": 16599
+     },
+     {
+      "date": "2026-11-01",
+      "price": 15995
+     }
+    ]
+   },
+   {
+    "vin": "4S4BTACC3L3894571",
+    "vehicle": "Subaru Outback",
+    "year": 2020,
+    "trim": "Premium",
+    "price": 20649,
+    "mileage": 78160,
+    "dealer": "Ashgrove Subaru",
+    "dealerType": "franchise",
+    "location": "Bourne",
+    "state": "MA",
+    "color": "White",
+    "dom": 42,
+    "carfax_1_owner": false,
+    "carfax_clean_title": false,
+    "price_change_percent": -34.04,
+    "msrp": 20649,
+    "profileId": "subaru-outback",
+    "source": "marketcheck",
+    "addedDate": "2026-10-19",
+    "lastSeen": "2026-11-06",
+    "lastChecked": "2026-11-06",
+    "notes": "↓ Price $21,499 → $20,649 (2026-11-01)",
+    "scores": {
+     "deal": 9,
+     "color": 9,
+     "price": 9,
+     "dealer": 9,
+     "mileage": 6,
+     "features": 7,
+     "location": 5,
+     "condition": 7
+    },
+    "aiSummary": "This 2020 Outback Premium hits the sweet spot on price ($20,649, well under budget) and trim, backed by a reputable franchise dealer and a notable recent price cut, with the main soft concerns being slightly above-average mileage and salt-belt location exposure.",
+    "aiRationales": {
+     "deal": "A 34% price drop since first listed and 42 days on market suggest the dealer is motivated, positioning this as a strong deal relative to typical market pricing.",
+     "color": "White is a neutral color that avoids both the gold dealbreaker and the soft black preference.",
+     "price": "At $20,649 for a 2020 Outback Premium, this is over $4,300 under the $25,000 ceiling, making it a strong value.",
+     "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+     "mileage": "78,160 miles on a 2020 model (~15.6k/yr) is a bit above the ideal 12k/yr pace but still comfortably under the 100,000-mile cap.",
+     "features": "Premium trim satisfies the nice-to-have trim preference and includes the required non-turbo 2.5L/AWD, though the listing doesn't explicitly confirm moonroof, heated seats, or power driver seat.",
+     "location": "Bourne, MA is in a New England salt-belt region, which raises some rust-exposure risk despite being a plausible local option.",
+     "condition": "No accidents or title issues are reported in the listing, though no explicit service/ownership history is provided, so a moderately positive but conservative score is warranted."
+    },
+    "scoredAt": "2026-07-05T17:14:25.972Z",
+    "compositeScore": 7.7,
+    "dealRating": "",
+    "link": "",
+    "photo": "/demo/cars/car-07.webp",
+    "status": "watch",
+    "id": "car-07",
+    "priceHistory": [
+     {
+      "date": "2026-10-19",
+      "price": 21499
+     },
+     {
+      "date": "2026-11-01",
+      "price": 20649
+     }
+    ]
+   },
+   {
+    "vin": "4S4BTANC1N3262295",
+    "vehicle": "Subaru Outback",
+    "year": 2022,
+    "trim": "Limited",
+    "price": 24495,
+    "mileage": 41187,
+    "dealer": "Wrenfield Auto Sales",
+    "dealerType": "independent",
+    "location": "Cary",
+    "state": "NC",
+    "color": "Silver",
+    "dom": 52,
+    "carfax_1_owner": false,
+    "carfax_clean_title": false,
+    "price_change_percent": -2,
+    "msrp": 24495,
+    "profileId": "subaru-outback",
+    "source": "marketcheck",
+    "addedDate": "2026-10-03",
+    "lastSeen": "2026-11-06",
+    "lastChecked": "2026-11-06",
+    "notes": "↓ Price $27,300 → $26,399 (2026-10-16) · ↓ Price $26,399 → $25,699 (2026-10-27) · ↓ Price $25,699 → $24,495 (2026-11-05)",
+    "scores": {
+     "deal": 8,
+     "color": 8,
+     "price": 9,
+     "dealer": 5,
+     "mileage": 7,
+     "features": 8,
+     "location": 7,
+     "condition": 6
+    },
+    "aiSummary": "This 2022 Outback Limited at $24,495 with 41,187 miles is a well-priced, feature-rich match for the buyer's core requirements, though the independent dealer and lack of explicit condition/history details temper full confidence.",
+    "aiRationales": {
+     "deal": "The price has already dropped 2% and sits below the 'good' pricing baseline, though 52 days on market suggests some buyer hesitancy, likely due to the independent dealer or minor negotiation room.",
+     "color": "Silver is a neutral color, not on the avoid list (gold, black, white), making it a solid match for the buyer's preferences.",
+     "price": "At $24,495, this is below the 'good' baseline of $25,322 for a 2022 Limited with ~41k miles, and well under the buyer's $25,000 ceiling.",
+     "dealer": "Independent dealer: no franchise reconditioning or CPO program behind it, so average.",
+     "mileage": "41,187 mi over ~3 years is about 13,700 mi/yr, slightly above the 12k/yr benchmark but still well within the 100,000 mi limit.",
+     "features": "2022 Limited trim satisfies the nice-to-have trim preference and standard AWD/non-turbo 2.5L requirement; Limited trim typically includes moonroof, heated seats, and power driver seat, though these aren't explicitly listed.",
+     "location": "Cary, NC is not in a heavy road-salt region, reducing rust risk, though exact distance from the buyer isn't specified.",
+     "condition": "No accident or branded-title history is mentioned, but there's also no explicit confirmation of clean title or maintenance records, so a moderate score is warranted."
+    },
+    "scoredAt": "2026-07-07T01:29:32.292Z",
+    "compositeScore": 7.3,
+    "dealRating": "",
+    "dLat": 35.764,
+    "dLon": -78.779,
+    "link": "",
+    "photo": "/demo/cars/car-08.webp",
+    "status": "watch",
+    "id": "car-08",
+    "priceHistory": [
+     {
+      "date": "2026-10-03",
+      "price": 27300
+     },
+     {
+      "date": "2026-10-16",
+      "price": 26399
+     },
+     {
+      "date": "2026-10-27",
+      "price": 25699
+     },
+     {
+      "date": "2026-11-05",
+      "price": 24495
+     }
+    ],
+    "reviewPending": true,
+    "lastChange": {
+     "type": "price",
+     "from": 25699,
+     "to": 24495,
+     "dir": "↓",
+     "at": "2026-11-05"
+    }
+   },
+   {
+    "vin": "KM8JCDD17SU614170",
+    "vehicle": "Hyundai Tucson",
+    "year": 2025,
+    "trim": "SEL Convenience HEV AWD",
+    "price": 26505,
+    "mileage": 43456,
+    "dealer": "Copperline Hyundai",
+    "dealerType": "franchise",
+    "cpo": false,
+    "location": "Miami",
+    "state": "FL",
+    "color": "Shimmering Silver",
+    "baseColor": "Silver",
+    "dom": 11,
+    "mcSeen": "2026-10-19",
+    "carfax_1_owner": false,
+    "carfax_clean_title": false,
+    "price_change_percent": -27.33,
+    "msrp": 27588,
+    "profileId": "tucson-hybrid",
+    "source": "marketcheck",
+    "addedDate": "2026-10-16",
+    "lastSeen": "2026-10-20",
+    "lastChecked": "2026-10-20",
+    "priceHistory": [
+     {
+      "date": "2026-10-16",
+      "price": 27588
+     },
+     {
+      "date": "2026-10-20",
+      "price": 26505
+     }
+    ],
+    "notes": "↓ Price $27,588 → $26,505 (2026-10-20)",
+    "scores": {
+     "deal": 5,
+     "color": 7,
+     "price": 3,
+     "dealer": 8,
+     "mileage": 6,
+     "features": 8,
+     "location": 5,
+     "condition": 6
+    },
+    "aiSummary": "A 2025 SEL Convenience HEV AWD from a franchise Hyundai dealer in Florida, so there's no salt-belt concern and it meets the year and trim requirements, but at $26,505 and 43,456 mi it's priced about $1,000 over fair value. The 722-mi distance adds shipping or travel cost, so it's only worth pursuing if the price comes down further or a pre-purchase inspection is approved.",
+    "aiRationales": {
+     "deal": "The price was cut 27% (as the listing reports) to $26,505, which is $1,083 below the $27,588 MSRP, but it still sits above the fair market price of ~$25,441 for this mileage, so it is an average deal at best.",
+     "color": "Shimmering Silver is a neutral, easy-to-resell color with no stated buyer aversion.",
+     "price": "At $26,505 it sits just under the $26,641 'high' threshold and only slightly above the ~$25,441 fair price for a 2025 SEL Convenience HEV AWD at 43,456 mi; it is under the $28,000 ceiling but about $2,460 above the 'good' price of $24,041.",
+     "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+     "mileage": "43,456 mi on a 2025 is roughly 40k+ over a short ownership span, which is high for the age, though it is well under the 60,000 mi cap.",
+     "features": "It is the exact preferred SEL Convenience HEV AWD trim, MY2025 satisfies the build-date requirement, and AWD is standard. Backup camera and rear cross-traffic alert are very likely standard but not itemized, and heated seats and a power driver seat are unconfirmed.",
+     "location": "Miami is 722 mi straight-line (about 900+ mi by road) from Durham, so it would need shipping or a flight, but MIA is 12 mi away, making a fly-in easy. Florida has no road-salt exposure, though coastal humidity and salt air are a minor corrosion consideration.",
+     "condition": "The listing reports no accident, branded title or mechanical issues, but it gives no ownership or maintenance details, and 43k mi is moderate wear, so I score it neutral-to-slightly-positive."
+    },
+    "scoredAt": "2026-10-20T23:56:40.877Z",
+    "compositeScore": 5.7,
+    "dealRating": "",
+    "dLat": 25.779,
+    "dLon": -80.198,
+    "link": "",
+    "photo": "/demo/cars/car-09.webp",
+    "status": "sold",
+    "id": "car-09"
+   },
+   {
+    "vin": "1G1FY6S03K4475150",
+    "vehicle": "Chevrolet Bolt EV",
+    "year": 2019,
+    "trim": "LT Auto",
+    "drivetrain": "FWD",
+    "price": 11815,
+    "fees": 122,
+    "mileage": 92445,
+    "dealer": "Marlowe Bend Chevrolet",
+    "dealerType": "franchise",
+    "cpo": false,
+    "location": "Santa Clara",
+    "state": "CA",
+    "color": "Nightfall Gray Metallic",
+    "baseColor": "Gray",
+    "dom": 6,
+    "mcSeen": "2026-10-19",
+    "carfax_1_owner": false,
+    "carfax_clean_title": false,
+    "price_change_percent": 0.31,
+    "msrp": 11937,
+    "profileId": "bolt-ev",
+    "source": "marketcheck",
+    "addedDate": "2026-10-20",
+    "lastSeen": "2026-10-20",
+    "lastChecked": "2026-10-21",
+    "priceHistory": [
+     {
+      "date": "2026-10-20",
+      "price": 11815
+     }
+    ],
+    "notes": "",
+    "scores": {
+     "deal": 4,
+     "color": 7,
+     "price": 4,
+     "dealer": 8,
+     "mileage": 6,
+     "features": 6,
+     "location": 3,
+     "condition": 6
+    },
+    "aiSummary": "A 2019 LT at 92,445 mi from a franchise dealer, with a clean listing but priced slightly above fair market and 2,369 mi away, so shipping adds cost. Only worth pursuing if the dealer provides the GM VIN history printout showing a documented battery pack replacement, a measured SOH of at least 80%, and allows an independent PPI, ideally at a lower price.",
+    "aiRationales": {
+     "deal": "Priced about $560 above the fair baseline and well above the good threshold of ~$10,053, so it's not a bargain, with added shipping cost on top.",
+     "color": "Nightfall Gray Metallic is a neutral, practical color with no buyer aversion.",
+     "price": "At $11,815 (plus $122 fees) the 2019 LT at 92,445 mi sits between fair (~$11,253) and high (≥$12,553), so it's modestly above fair, though well under the $13,900 ceiling.",
+     "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+     "mileage": "92,445 mi on a 2019 is about 13k/yr, slightly above the typical pace, but it falls in the buyer's 90-120k target range and is well under the 130k cap.",
+     "features": "2019 LT is the preferred model year and a solid trim, but the listing doesn't show recall N212343881 closure, battery SOH, or Bolt battery warranty entry, so the must-haves remain unconfirmed.",
+     "location": "Santa Clara, CA is 2369 mi straight-line from Durham, so it needs shipping or a long trip, though SJC is only 4 mi away and low salt exposure in California helps.",
+     "condition": "No branded title or accident is reported, but the listing lacks the VIN recall printout, battery state-of-health measurement, and pack replacement date, so condition can't be verified; nothing explicitly negative is shown."
+    },
+    "scoredAt": "2026-10-21T12:41:43.170Z",
+    "compositeScore": 5.3,
+    "dealRating": "",
+    "dLat": 37.349,
+    "dLon": -121.953,
+    "link": "",
+    "photo": "/demo/cars/car-10.webp",
+    "status": "sold",
+    "id": "car-10"
+   },
+   {
+    "vin": "KM8JECD12RU931739",
+    "vehicle": "Hyundai Tucson",
+    "year": 2024,
+    "trim": "Limited HEV AWD",
+    "price": 27690,
+    "mileage": 2921,
+    "dealer": "Ridgeholt Hyundai",
+    "dealerType": "franchise",
+    "cpo": false,
+    "location": "Kansas City",
+    "state": "KS",
+    "color": "Silver",
+    "dom": 206,
+    "carfax_1_owner": false,
+    "carfax_clean_title": false,
+    "price_change_percent": -3.49,
+    "msrp": 27690,
+    "profileId": "tucson-hybrid",
+    "source": "marketcheck",
+    "addedDate": "2026-09-08",
+    "lastSeen": "2026-09-08",
+    "lastChecked": "2026-09-08",
+    "priceHistory": [
+     {
+      "date": "2026-09-08",
+      "price": 27690
+     }
+    ],
+    "notes": "",
+    "scores": {
+     "deal": 9,
+     "color": 9,
+     "price": 9,
+     "dealer": 8,
+     "mileage": 10,
+     "features": 8,
+     "location": 4,
+     "condition": 9
+    },
+    "aiSummary": "This 2024 Tucson Limited HEV AWD is a nearly-new, low-mileage unit priced well within budget and below market baseline from a reputable local franchise dealer, but the Midwest salt-belt location and unverified MY2024 build-date certification (for rear seatbelt pretensioners) warrant a closer look before purchase.",
+    "aiRationales": {
+     "deal": "At $27,690 (already down 3.49% from original list) and well under the 'good' price baseline of $30,262, this is a strong deal relative to comparable Limited HEV listings.",
+     "color": "Silver is a neutral color, avoiding the buyer's dislikes (gold, black, white).",
+     "price": "At $27,690 it's under the buyer's $28,000 ceiling and well below the 'good' baseline of $30,262 for this trim/mileage, making it an excellent price.",
+     "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+     "mileage": "Only 2,921 miles on a 2024 model is extremely low, far under the ~12k/yr benchmark for the car's age.",
+     "features": "Limited HEV AWD at $27,690 hits the 'nice-to-have' Limited-under-$28k target with likely 360-camera, parking sensors, and heated/power seats, but the listing doesn't confirm the MY2024 build-date/certification label needed to verify rear seatbelt pretensioners.",
+     "location": "Only 13 miles from the buyer is ideal for convenience, but Kansas City, KS is a Midwest salt-belt region, a stated dealbreaker concern for rust exposure.",
+     "condition": "No accidents or title issues are reported and the near-new mileage suggests excellent condition, though no explicit Carfax/one-owner confirmation is given."
+    },
+    "scoredAt": "2026-09-08T01:52:45.528Z",
+    "compositeScore": 8.3,
+    "dealRating": "",
+    "dLat": 39.116,
+    "dLon": -94.627,
+    "link": "",
+    "photo": "/demo/cars/car-11.webp",
+    "status": "rejected",
+    "id": "car-11",
+    "rejectReason": "Price is high for the miles"
+   },
+   {
+    "vin": "KM8JBCD13RU051321",
+    "vehicle": "Hyundai Tucson",
+    "year": 2024,
+    "trim": "Blue HEV AWD",
+    "price": 25944,
+    "mileage": 16687,
+    "dealer": "Saltmarsh Hyundai",
+    "dealerType": "franchise",
+    "cpo": false,
+    "location": "Longwood",
+    "state": "FL",
+    "color": "Deep Sea",
+    "dom": 64,
+    "carfax_1_owner": false,
+    "carfax_clean_title": false,
+    "price_change_percent": -1.12,
+    "msrp": 27491,
+    "profileId": "tucson-hybrid",
+    "source": "marketcheck",
+    "addedDate": "2026-09-08",
+    "lastSeen": "2026-10-09",
+    "lastChecked": "2026-10-09",
+    "priceHistory": [
+     {
+      "date": "2026-09-08",
+      "price": 27491
+     },
+     {
+      "date": "2026-09-17",
+      "price": 27722
+     },
+     {
+      "date": "2026-09-21",
+      "price": 26222
+     },
+     {
+      "date": "2026-10-05",
+      "price": 25944
+     }
+    ],
+    "notes": "↑ Price $27,491 → $27,722 (2026-09-17) · ↓ Price $27,722 → $26,222 (2026-09-21) · ↓ Price $26,222 → $25,944 (2026-10-05)",
+    "scores": {
+     "deal": 7,
+     "color": 8,
+     "price": 8,
+     "dealer": 8,
+     "mileage": 9,
+     "features": 8,
+     "location": 5,
+     "condition": 8
+    },
+    "aiSummary": "A low-mileage, AWD 2024 Tucson Blue Hybrid at a trim level meeting/exceeding the buyer's SEL Convenience floor, priced near the 'good' baseline from a franchise dealer with no reported condition issues — the main drawback is the long haul from Longwood, FL to Durham, NC, though Florida's low salt exposure mitigates rust concerns.",
+    "aiRationales": {
+     "deal": "The asking price has been cut from $27,491 to $25,944 (about -5.6%) over 60 days, landing near the 'good' end of the baseline range, indicating a solid deal relative to market.",
+     "color": "Deep Sea (a blue hue) avoids the disliked gold/black/white colors and is a neutral, desirable shade.",
+     "price": "At $25,944 the car sits just above the 'good' threshold ($25,748) and well below 'fair' ($27,248) for this exact trim/mileage/year baseline, making it a strong price.",
+     "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+     "mileage": "16,687 miles on a 2024 model (roughly 1-2 years old) is well under the ~12k/yr benchmark, indicating light use.",
+     "features": "The Blue HEV AWD trim sits at/above the SEL Convenience floor the buyer wants, includes standard AWD, and Hyundai's Blue hybrid trim typically bundles heated front seats and a power driver seat, satisfying must-haves and several nice-to-haves.",
+     "location": "Longwood, FL to Durham, NC 27701 is roughly 550 miles, a substantial haul, though Florida carries essentially no road-salt/rust risk, which offsets the distance somewhat.",
+     "condition": "No accidents, salvage, or brand issues are reported, and the price history shows normal markdowns rather than red flags, though no explicit one-owner/Carfax confirmation is given."
+    },
+    "scoredAt": "2026-10-05T21:26:03.362Z",
+    "compositeScore": 7.7,
+    "dealRating": "",
+    "dLat": 28.712,
+    "dLon": -81.355,
+    "link": "",
+    "photo": "/demo/cars/car-12.webp",
+    "status": "rejected",
+    "id": "car-12",
+    "rejectReason": "Trim is missing features I want"
+   },
+   {
+    "vin": "KM8JCCD13RU013360",
+    "vehicle": "Hyundai Tucson",
+    "year": 2024,
+    "trim": "SEL Convenience HEV AWD",
+    "price": 24735,
+    "fees": 699,
+    "mileage": 23230,
+    "dealer": "Pinecrest Hollow Hyundai",
+    "dealerType": "franchise",
+    "cpo": false,
+    "location": "Paola",
+    "state": "KS",
+    "color": "Black",
+    "baseColor": "Black",
+    "dom": 72,
+    "mcSeen": "2026-10-14",
+    "carfax_1_owner": false,
+    "carfax_clean_title": false,
+    "price_change_percent": -6.45,
+    "msrp": 27194,
+    "profileId": "tucson-hybrid",
+    "source": "marketcheck",
+    "addedDate": "2026-09-08",
+    "lastSeen": "2026-10-16",
+    "lastChecked": "2026-10-16",
+    "priceHistory": [
+     {
+      "date": "2026-09-08",
+      "price": 27194
+     },
+     {
+      "date": "2026-10-16",
+      "price": 24735
+     }
+    ],
+    "notes": "↓ Price $27,194 → $24,735 (2026-10-16)",
+    "scores": {
+     "deal": 7,
+     "color": 3,
+     "price": 9,
+     "dealer": 8,
+     "mileage": 5,
+     "features": 6,
+     "location": 4,
+     "condition": 7
+    },
+    "aiSummary": "This 2024 SEL Convenience HEV AWD is well-priced and conveniently located, but the black exterior, Midwest salt-belt location, and unconfirmed build-date/safety certification (critical for MY2024 units) are notable gaps that warrant a thorough inspection before purchase.",
+    "aiRationales": {
+     "deal": "A 6.45% price drop and pricing below the 'good' baseline suggest this is a solid deal, though 276 days on market may indicate the price needed to fall this far to attract buyers.",
+     "color": "Black is one of the buyer's soft-avoid colors, so this listing falls short of the color preference despite not being a hard dealbreaker.",
+     "price": "At $27,194 this listing sits just under the 'good' baseline of $27,216 for this exact trim/mileage combo, making it a strong price relative to the $28,000 ceiling.",
+     "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+     "mileage": "23,230 mi on a 2024 model is moderate—not exceptionally low for a car that could be under 2 years old, but well within the 60,000 mi cap.",
+     "features": "SEL Convenience HEV AWD matches the preferred trim and includes AWD as required, but the listing doesn't confirm the critical build-date/pretensioner certification or explicitly list rear cross-traffic alert and backup camera, which are must-haves the buyer needs verified.",
+     "location": "Paola, KS is only 43 miles away (good for convenience), but Kansas falls within the Midwest region the buyer explicitly wants to avoid due to salt-belt rust risk.",
+     "condition": "No accidents or title issues are reported, and the listing gives no indication of mechanical problems, though no explicit one-owner/Carfax confirmation is provided."
+    },
+    "scoredAt": "2026-09-08T01:52:45.528Z",
+    "compositeScore": 6.8,
+    "dealRating": "",
+    "dLat": 38.572,
+    "dLon": -94.894,
+    "link": "",
+    "photo": "/demo/cars/car-13.webp",
+    "status": "rejected",
+    "id": "car-13",
+    "rejectReason": "Too far to ship"
+   },
+   {
+    "vin": "4S4BTACC1N3216565",
+    "vehicle": "Subaru Outback",
+    "year": 2022,
+    "trim": "Premium",
+    "price": 18990,
+    "mileage": 42113,
+    "dealer": "Thistleway Auto Sales",
+    "dealerType": "independent",
+    "cpo": false,
+    "location": "Chicopee",
+    "state": "MA",
+    "color": "Silver",
+    "dom": 198,
+    "carfax_1_owner": false,
+    "carfax_clean_title": false,
+    "price_change_percent": -5,
+    "msrp": 18990,
+    "profileId": "subaru-outback",
+    "source": "marketcheck",
+    "addedDate": "2026-07-07",
+    "lastSeen": "2026-07-13",
+    "lastChecked": "2026-07-13",
+    "notes": "",
+    "scores": {
+     "deal": 9,
+     "color": 8,
+     "price": 10,
+     "dealer": 5,
+     "mileage": 7,
+     "features": 7,
+     "location": 4,
+     "condition": 7
+    },
+    "aiSummary": "This 2022 Outback Premium is a compelling value at $18,990 with reasonable mileage and a clean-reported history, though the independent dealer status and Northeast salt-belt location temper the overall appeal somewhat.",
+    "aiRationales": {
+     "deal": "After a 5% price drop and 198 days on market, the $18,990 price sits well under the 'good' baseline of $22,683, indicating a strong deal relative to comparable listings.",
+     "color": "Silver is a neutral color that avoids the gold dealbreaker and the soft-preference avoidance of black/white.",
+     "price": "At $18,990, this is well below the 'good' threshold of $22,683 for a comparable 2022 Premium with similar mileage, making it a strong price relative to budget.",
+     "dealer": "Independent dealer: no franchise reconditioning or CPO program behind it, so average.",
+     "mileage": "42,113 miles on a 2022 model (roughly 2-3 years old) works out to about 14-21k mi/yr, slightly above the ~12k/yr benchmark but still well under the 100,000 mi cap.",
+     "features": "This is a Premium trim (a nice-to-have tier) which should include AWD and the standard non-turbo 2.5L engine meeting must-haves, though moonroof/heated seats/power driver seat are not explicitly confirmed in the listing.",
+     "location": "Chicopee, MA is in the Northeast salt-belt region with heavy winter road salt use, raising long-term rust/corrosion risk.",
+     "condition": "No accidents or branded/salvage title are reported in the listing, so per policy this is treated as clean, though no explicit confirmation of ownership history is given."
+    },
+    "scoredAt": "2026-07-07T02:11:11.998Z",
+    "compositeScore": 7.3,
+    "dealRating": "",
+    "dLat": 42.149,
+    "dLon": -72.608,
+    "link": "",
+    "photo": "/demo/cars/car-14.webp",
+    "status": "rejected",
+    "id": "car-14",
+    "rejectReason": "Accident on the history report"
+   },
+   {
+    "vin": "4S4BTALC2L3643511",
+    "vehicle": "Subaru Outback",
+    "year": 2020,
+    "trim": "Limited",
+    "price": 22790,
+    "mileage": 38689,
+    "dealer": "Larkmoor Auto Sales",
+    "dealerType": "independent",
+    "cpo": false,
+    "location": "East Windsor",
+    "state": "CT",
+    "color": "Autumn Green Metallic",
+    "dom": 176,
+    "carfax_1_owner": false,
+    "carfax_clean_title": false,
+    "price_change_percent": -0.87,
+    "msrp": 23290,
+    "profileId": "subaru-outback",
+    "source": "marketcheck",
+    "addedDate": "2026-07-07",
+    "lastSeen": "2026-07-13",
+    "lastChecked": "2026-07-13",
+    "notes": "",
+    "scores": {
+     "deal": 8,
+     "color": 8,
+     "price": 9,
+     "dealer": 5,
+     "mileage": 8,
+     "features": 9,
+     "location": 4,
+     "condition": 6
+    },
+    "aiSummary": "This 2020 Outback Limited at $22,790 with just 38,689 miles offers strong value against the pricing baseline and matches the buyer's trim and feature preferences well, though the independent dealer and Northeast salt-belt location are minor drawbacks.",
+    "aiRationales": {
+     "deal": "Priced under the 'good' baseline with a slight price drop (-0.87%) over 176 days on market, suggesting it's competitively priced relative to comparable listings.",
+     "color": "Autumn Green Metallic avoids the disliked black/white/gold options, making it a favorable neutral-ish color choice.",
+     "price": "At $22,790 this is below the 'good' threshold of $24,197 for this baseline, so it's a strong price relative to the ceiling.",
+     "dealer": "Independent dealer: no franchise reconditioning or CPO program behind it, so average.",
+     "mileage": "38,689 mi on a 2020 model (~9,700 mi/yr) is well under the 12k/yr benchmark, indicating light use.",
+     "features": "The Limited trim is a preferred nice-to-have trim that typically includes moonroof, heated seats, and power driver seat, and presumably the required non-turbo 2.5L AWD setup.",
+     "location": "East Windsor, CT is in the Northeast salt-belt region, raising rust exposure risk despite being a plausible local option.",
+     "condition": "No accident or title issues are reported, but there's no explicit confirmation of a clean history or maintenance records, so a moderately positive but conservative score is warranted."
+    },
+    "scoredAt": "2026-07-07T02:11:28.618Z",
+    "compositeScore": 7.2,
+    "dealRating": "",
+    "dLat": 41.91,
+    "dLon": -72.603,
+    "link": "",
+    "photo": "/demo/cars/car-15.webp",
+    "status": "rejected",
+    "id": "car-15",
+    "rejectReason": "Not a color I'd live with"
+   }
+  ],
+  "candidates": [
+   {
+    "vin": "KM8JCDD15SU234826",
+    "vehicle": "Hyundai Tucson",
+    "year": 2025,
+    "trim": "SEL Convenience HEV AWD",
+    "drivetrain": "AWD",
+    "price": 27773,
+    "fees": 225,
+    "mileage": 29784,
+    "dealer": "Kestrelwood Hyundai",
+    "dealerType": "franchise",
+    "cpo": false,
+    "location": "Katy",
+    "state": "TX",
+    "color": "Ultimate Red",
+    "baseColor": "Red",
+    "dom": 45,
+    "mcSeen": "2026-11-05",
+    "carfax_1_owner": true,
+    "carfax_clean_title": false,
+    "price_change_percent": -1.76,
+    "msrp": 27998,
+    "profileId": "tucson-hybrid",
+    "source": "marketcheck",
+    "addedDate": "2026-11-07",
+    "lastSeen": "2026-11-07",
+    "lastChecked": "2026-11-07",
+    "priceHistory": [
+     {
+      "date": "2026-11-07",
+      "price": 27773
+     }
+    ],
+    "notes": "",
+    "scores": {
+     "deal": 3,
+     "color": 8,
+     "price": 2,
+     "dealer": 7,
+     "mileage": 8,
+     "features": 7,
+     "location": 5,
+     "condition": 8
+    },
+    "aiSummary": "This is the right car on paper: a 1-owner, Carfax-confirmed 2025 SEL Convenience HEV AWD from a Texas franchise dealer with no salt-belt exposure. However, at $27,773 (plus $225 fees) it is priced near the 'high' band and essentially at MSRP for a used car with 29,784 mi, and the 1,065-mi distance adds shipping or travel cost, so it needs meaningful negotiation to be a good buy.",
+    "aiRationales": {
+     "deal": "Price is $225 under MSRP ($27,998) on a car with 29,784 mi, which is not a discount; it has been listed 45 days with only a 1.76% drop, and it is priced at the high end of fair market.",
+     "color": "Ultimate Red is an attractive, popular color with no buyer avoidance rule stated.",
+     "price": "At $27,773 (plus $225 fees) it sits right at the 'high' threshold of $27,666 for a 2025 SEL Convenience at 29,784 mi, and only $227 under the $28,000 ceiling; well above the $25,066 'good' mark.",
+     "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+     "mileage": "29,784 mi on a 2025 is roughly 30k in about a year or two, well under the 60k cap, though not ultra-low for the model year.",
+     "features": "It is the exact target SEL Convenience HEV AWD trim, MY2025 with standard AWD; heated seats, power driver seat, rear cross-traffic alert and backup camera are not itemized in the listing, though they are typical for this trim.",
+     "location": "Katy, TX is 1065 mi straight-line (likely 1,300+ driving miles) from Durham, which is a long haul, but TX is a preferred sourcing state with low salt exposure and IAH is only 28 mi away, so fly-in or shipping is easy.",
+     "condition": "Carfax confirms 1 owner with no reported accident or title issue; MY2025 satisfies the build-date requirement, though no maintenance records or inspection results are given."
+    },
+    "scoredAt": "2026-11-07T02:50:39.513Z",
+    "compositeScore": 5.5,
+    "dealRating": "",
+    "dLat": 29.832,
+    "dLon": -95.736,
+    "link": "",
+    "photo": "/demo/cars/car-16.webp",
+    "status": "watch"
+   },
+   {
+    "vin": "KM8JCCD10RU703373",
+    "vehicle": "Hyundai Tucson",
+    "year": 2024,
+    "trim": "SEL Convenience HEV AWD",
+    "drivetrain": "AWD",
+    "price": 26500,
+    "fees": 1271,
+    "mileage": 13221,
+    "dealer": "Bramblegate Hyundai",
+    "dealerType": "franchise",
+    "cpo": false,
+    "location": "Miami Lakes",
+    "state": "FL",
+    "color": "Amazon Gray",
+    "baseColor": "Gray",
+    "dom": 86,
+    "mcSeen": "2026-11-05",
+    "carfax_1_owner": true,
+    "carfax_clean_title": false,
+    "price_change_percent": -1.76,
+    "msrp": 27771,
+    "profileId": "tucson-hybrid",
+    "source": "marketcheck",
+    "addedDate": "2026-11-07",
+    "lastSeen": "2026-11-07",
+    "lastChecked": "2026-11-07",
+    "priceHistory": [
+     {
+      "date": "2026-11-07",
+      "price": 26500
+     }
+    ],
+    "notes": "",
+    "scores": {
+     "deal": 6,
+     "color": 7,
+     "price": 8,
+     "dealer": 8,
+     "mileage": 8,
+     "features": 6,
+     "location": 5,
+     "condition": 8
+    },
+    "aiSummary": "A 1-owner, 13,221-mi 2024 Tucson Hybrid SEL Convenience AWD at $26,500 from a franchise dealer is a solid, fairly priced match on trim, mileage, and history with no salt exposure. The key risks are the unverified build date (must be after March 2024) and the 701-mi distance, so confirm the certification label and PPI permission before committing.",
+    "aiRationales": {
+     "deal": "Price is 1.76% lower than first seen and about $1,271 under MSRP before fees, but the 86 days listed and fees offset that, so it's a modest deal and not a standout.",
+     "color": "Amazon Gray is a neutral, popular color with good resale appeal and no stated buyer aversion.",
+     "price": "Asking $26,500 is just above the 'good' threshold of $26,308 and well below the $27,708 fair and $28,000 ceiling; however, $1,271 in dealer fees brings the total to about $27,771, which is near fair.",
+     "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+     "mileage": "13,221 mi on a 2024 is roughly 6-7k/yr, well under the ~12k/yr benchmark and far below the 60,000 mi cap.",
+     "features": "SEL Convenience HEV AWD is exactly the target trim with AWD standard, but the listing doesn't confirm the build date (MY2024 must be built after March 2024), rear cross-traffic alert, heated seats, or power driver seat, so I score conservatively.",
+     "location": "Miami Lakes, FL is 701 mi straight-line from Durham (likely 850+ driving miles), but MIA is 9 mi away for an easy fly-in, and Florida has low road-salt exposure.",
+     "condition": "Carfax confirms 1 owner with no accident or branded title reported; Florida is not a salt-belt state, but no maintenance records are listed."
+    },
+    "scoredAt": "2026-11-07T02:50:39.513Z",
+    "compositeScore": 7.2,
+    "dealRating": "",
+    "link": "",
+    "photo": "/demo/cars/car-17.webp",
+    "status": "watch"
+   },
+   {
+    "vin": "KM8JCCD12RU577579",
+    "vehicle": "Hyundai Tucson",
+    "year": 2024,
+    "trim": "SEL Convenience HEV AWD",
+    "drivetrain": "AWD",
+    "price": 27548,
+    "fees": 172,
+    "mileage": 31549,
+    "dealer": "Tallowmere Hyundai",
+    "dealerType": "franchise",
+    "cpo": false,
+    "location": "Fillmore",
+    "state": "CA",
+    "color": "Gray",
+    "baseColor": "Gray",
+    "dom": 38,
+    "mcSeen": "2026-11-05",
+    "carfax_1_owner": true,
+    "carfax_clean_title": false,
+    "price_change_percent": 0,
+    "msrp": 31104,
+    "profileId": "tucson-hybrid",
+    "source": "marketcheck",
+    "addedDate": "2026-11-07",
+    "lastSeen": "2026-11-07",
+    "lastChecked": "2026-11-07",
+    "priceHistory": [
+     {
+      "date": "2026-11-07",
+      "price": 27548
+     }
+    ],
+    "notes": "",
+    "scores": {
+     "deal": 2,
+     "color": 7,
+     "price": 2,
+     "dealer": 8,
+     "mileage": 7,
+     "features": 7,
+     "location": 4,
+     "condition": 7
+    },
+    "aiSummary": "This is the right trim and a clean 1-owner, dry-climate franchise car, but at $27,548 it's priced at the high end of market and 2,247 mi from home, so shipping adds cost. Before considering it, confirm a post-March 2024 build date, rear cross-traffic alert and that a pre-purchase inspection is allowed, and try to negotiate well below the asking price.",
+    "aiRationales": {
+     "deal": "Priced at the high end of market for this trim and mileage at 38 days listed with no price drop, so there's no evident discount, and shipping from CA would add cost.",
+     "color": "Gray is a neutral, broadly acceptable color with no stated buyer aversion.",
+     "price": "At $27,548 (plus $172 fees) it sits right at the 'high' threshold of $27,534 for a 2024 SEL Convenience HEV AWD at 31,549 mi, well above the $24,934 good and $26,334 fair marks, and only ~$450 under the $28,000 ceiling.",
+     "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+     "mileage": "31,549 mi on a 2024 is about 15-20k/yr if counted from a mid-2024 model year, so it's moderately higher than ideal, though still far under the 60k cap and fine for a hybrid.",
+     "features": "It is the exact preferred SEL Convenience HEV AWD trim with standard AWD and no panoramic roof, but the certification-label build date (must be after March 2024 for MY2024), rear cross-traffic alert, heated seats and power seat are not confirmed in the listing.",
+     "location": "Fillmore, CA is 2,247 mi straight-line from Durham (likely shipped), though it is a dry, no-salt Western state and BUR is 35 mi away for a fly-in option; the long haul is the main drawback.",
+     "condition": "Carfax confirms 1 owner and no accident or branded title is reported, but the build date and a pre-purchase inspection policy are not stated in the listing."
+    },
+    "scoredAt": "2026-11-07T02:50:39.158Z",
+    "compositeScore": 5.1,
+    "dealRating": "",
+    "dLat": 34.399,
+    "dLon": -118.918,
+    "link": "",
+    "photo": "/demo/cars/car-18.webp",
+    "status": "watch"
+   },
+   {
+    "vin": "4S4BTAFC0N3734680",
+    "vehicle": "Subaru Outback",
+    "year": 2022,
+    "trim": "Premium",
+    "price": 20990,
+    "mileage": 76347,
+    "dealer": "Quillstone Auto Sales",
+    "dealerType": "independent",
+    "location": "Raleigh",
+    "state": "NC",
+    "color": "Crystal White Pearl",
+    "dom": 95,
+    "carfax_1_owner": false,
+    "carfax_clean_title": false,
+    "msrp": 20990,
+    "profileId": "subaru-outback",
+    "source": "marketcheck",
+    "addedDate": "2026-07-05",
+    "lastSeen": "2026-07-05",
+    "lastChecked": "2026-07-05",
+    "notes": "",
+    "scores": {
+     "deal": 6,
+     "color": 9,
+     "price": 9,
+     "dealer": 5,
+     "mileage": 4,
+     "features": 8,
+     "location": 8,
+     "condition": 6
+    },
+    "aiSummary": "This 2022 Outback Premium at $20,990 is well within budget and features a desirable trim and color, but its above-average mileage (76k) and independent-dealer status without confirmed history temper the overall appeal; still, it represents a solid value if a pre-purchase inspection confirms condition.",
+    "aiRationales": {
+     "deal": "The price looks favorable relative to the budget, but 95 days on market suggests it may not be moving quickly, which could indicate slight overpricing relative to local comps or reduced buyer interest.",
+     "color": "Crystal White Pearl is a neutral, widely desirable color with no conflict with the buyer's stated color aversions (gold, black).",
+     "price": "At $20,990 this is over $4,000 under the $25,000 ceiling for a 2022 Premium with 76k miles, a strong price for the segment.",
+     "dealer": "Independent dealer: no franchise reconditioning or CPO program behind it, so average.",
+     "mileage": "76,347 miles on a 2022 model averages about 25k/yr, well above the ~12k/yr benchmark for low mileage, though still under the 100k cap.",
+     "features": "The Premium trim is one of the buyer's preferred trims and typically includes AWD, the non-turbo 2.5L engine, moonroof, heated seats, and power driver seat, matching most must-haves and nice-to-haves.",
+     "location": "Raleigh, NC is not a heavy road-salt region, reducing rust risk, though exact distance from the buyer isn't specified.",
+     "condition": "No accident or title issues are reported, but the listing gives no explicit confirmation of a clean history or maintenance records, so a moderate score is warranted."
+    },
+    "scoredAt": "2026-07-05T17:14:36.268Z",
+    "compositeScore": 6.9,
+    "dealRating": "",
+    "dLat": 35.773,
+    "dLon": -78.632,
+    "link": "",
+    "photo": "/demo/cars/car-19.webp",
+    "status": "watch"
+   },
+   {
+    "vin": "4S4BTANC8L3151742",
+    "vehicle": "Subaru Outback",
+    "year": 2020,
+    "trim": "Limited",
+    "price": 22653,
+    "mileage": 97217,
+    "dealer": "Fernhollow Subaru",
+    "dealerType": "franchise",
+    "location": "Winterville",
+    "state": "NC",
+    "color": "White",
+    "dom": 51,
+    "carfax_1_owner": false,
+    "carfax_clean_title": false,
+    "price_change_percent": -35.72,
+    "msrp": 22653,
+    "profileId": "subaru-outback",
+    "source": "marketcheck",
+    "addedDate": "2026-07-05",
+    "lastSeen": "2026-07-05",
+    "lastChecked": "2026-07-05",
+    "notes": "",
+    "scores": {
+     "deal": 8,
+     "color": 9,
+     "price": 7,
+     "dealer": 9,
+     "mileage": 3,
+     "features": 8,
+     "location": 7,
+     "condition": 7
+    },
+    "aiSummary": "A well-equipped 2020 Outback Limited from a solid franchise dealer at a fair price, but the near-100k mileage is a real drawback that tempers its overall appeal.",
+    "aiRationales": {
+     "deal": "A 35.72% price drop since listing and 51 days on market indicate this is priced attractively relative to its original ask, suggesting a good deal for a buyer now.",
+     "color": "White is a neutral color, avoiding both the gold dealbreaker and the soft black preference.",
+     "price": "At $22,653, this is $2,347 under the $25k ceiling, but for a 2020 with nearly 100k miles that's about market rate rather than a steep bargain.",
+     "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+     "mileage": "97,217 miles on a 2020 model (~24k/yr) is right at the buyer's 100k mile ceiling and high for the car's age.",
+     "features": "Limited trim satisfies the 'nice to have' trim preference and Outback Limited standardly includes moonroof, heated seats, and power driver seat, plus the required AWD/non-turbo 2.5L layout.",
+     "location": "Winterville, NC is outside the heavy salt-belt region, suggesting lower rust risk, though exact proximity to the buyer isn't stated.",
+     "condition": "No accident or title issues are reported, so it's treated as clean, but there's no explicit maintenance history to confirm above-average upkeep."
+    },
+    "scoredAt": "2026-07-05T17:14:59.511Z",
+    "compositeScore": 6.9,
+    "dealRating": "",
+    "dLat": 35.534,
+    "dLon": -77.391,
+    "link": "",
+    "photo": "/demo/cars/car-20.webp",
+    "status": "watch"
+   },
+   {
+    "vin": "1G1FY6S09K4549607",
+    "vehicle": "Chevrolet Bolt EV",
+    "year": 2019,
+    "trim": "LT Auto",
+    "drivetrain": "FWD",
+    "price": 12500,
+    "fees": 172,
+    "mileage": 96590,
+    "dealer": "Ashgrove Chevrolet",
+    "dealerType": "franchise",
+    "cpo": false,
+    "location": "Colma",
+    "state": "CA",
+    "color": "Nightfall Gray",
+    "baseColor": "Gray",
+    "dom": 24,
+    "mcSeen": "2026-10-19",
+    "carfax_1_owner": true,
+    "carfax_clean_title": false,
+    "price_change_percent": -14.74,
+    "msrp": 12672,
+    "profileId": "bolt-ev",
+    "source": "marketcheck",
+    "addedDate": "2026-10-20",
+    "lastSeen": "2026-10-20",
+    "lastChecked": "2026-10-21",
+    "priceHistory": [
+     {
+      "date": "2026-10-20",
+      "price": 12500
+     }
+    ],
+    "notes": "",
+    "scores": {
+     "deal": 3,
+     "color": 7,
+     "price": 2,
+     "dealer": 8,
+     "mileage": 6,
+     "features": 6,
+     "location": 3,
+     "condition": 7
+    },
+    "aiSummary": "A 1-owner 2019 Bolt LT Auto with 96,590 mi from a franchise dealer, but at $12,500 it is priced at the high end of market and 2,390 mi away, requiring shipping or a flight. Recall pack replacement documentation, measured SOH, and PPI permission would all need to be verified before it is worth pursuing at this price.",
+    "aiRationales": {
+     "deal": "The price dropped 14.74% since first listed and sits just under MSRP-like $12,672, but it is still near/above the 'high' market baseline of $12,305 for this mileage, so it isn't a bargain.",
+     "color": "Nightfall Gray is a neutral, broadly acceptable color with no stated buyer aversion.",
+     "price": "Asking $12,500 (plus $172 fees) is above the $12,305 'high' threshold for a 2019 LT Auto at 96,590 mi and well over the $9,805 good level, though still under the $13,900 ceiling; shipping from CA adds more.",
+     "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+     "mileage": "96,590 mi on a 2019 is about 13-14k/yr, slightly above average, but the buyer explicitly treats 90-120k as the right range to shop, so it is not a penalty.",
+     "features": "2019 is the preferred year and LT Auto is a solid trim, but none of the must-haves (recall N212343881 pack replacement documentation, measured SOH, Bolt battery warranty entry) or nice-to-haves (2022+ pack install) are shown in the listing.",
+     "location": "Colma, CA is 2,390 mi straight-line from Durham, requiring shipping or a flight; SFO is only 6 mi away and CA has low salt exposure, which softens the burden but not the distance.",
+     "condition": "Carfax confirms 1 owner with no reported accidents or branded title, but the listing doesn't show the GM recall printout, battery SOH, or PPI policy, so those must-haves are unverified."
+    },
+    "scoredAt": "2026-10-21T12:41:43.170Z",
+    "compositeScore": 5,
+    "dealRating": "",
+    "link": "",
+    "photo": "/demo/cars/car-21.webp",
+    "status": "watch"
+   }
+  ],
+  "skipped": [
+   {
+    "vin": "4T3LWRFV4MU614795",
+    "vehicle": "Toyota RAV4",
+    "year": 2021,
+    "trim": "Hybrid LE AWD",
+    "price": 23997,
+    "mileage": 84755,
+    "dealer": "Bramblegate Toyota",
+    "dealerType": "franchise",
+    "location": "Attleboro",
+    "state": "MA",
+    "color": "Midnight Black Metallic",
+    "dom": 19,
+    "carfax_1_owner": true,
+    "carfax_clean_title": false,
+    "price_change_percent": 0,
+    "msrp": 23997,
+    "profileId": "rav4-hybrid",
+    "source": "marketcheck",
+    "addedDate": "2026-06-18",
+    "lastSeen": "2026-06-18",
+    "lastChecked": "2026-06-18",
+    "notes": "",
+    "scores": {
+     "deal": 8,
+     "color": 7,
+     "price": 9,
+     "dealer": 8,
+     "mileage": 8,
+     "features": 5,
+     "location": 6,
+     "condition": 7
+    },
+    "aiSummary": "This 2021 RAV4 Hybrid LE AWD offers solid value at under budget with acceptable mileage, 1-owner provenance, and a franchise dealer; however, the LE trim falls short of the XLE/XSE preference, most nice-to-have features are absent, and the title/history should be independently verified due to limited Carfax data. A reasonable buy if the buyer can verify clean title and accident-free history and is willing to accept the base LE trim.",
+    "aiRationales": {
+     "deal": "At $23,997 for an 84k-mile 2021 RAV4 Hybrid with 1-owner history, this is priced competitively below most comparable listings in the market.",
+     "color": "Midnight Black Metallic is black, matching the buyer's soft preference to avoid black; this is a minor negative but not a dealbreaker.",
+     "price": "At $23,997, this 2021 RAV4 Hybrid is $1,003 under the $25,000 budget ceiling and well-priced for a sub-85k-mile hybrid in this market.",
+     "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+     "mileage": "84,755 miles on a 2021 (roughly 3.5 years old) is 24,216 miles per year, slightly above the 12k/yr average but still reasonable for a used hybrid in this age range.",
+     "features": "The listing confirms Hybrid AWD (both must-haves), but the trim is LE, not the target XLE/XSE; no mention of Weather Package, CPO certification, or wireless CarPlay, leaving this solidly average on desired features.",
+     "location": "Attleboro, MA is in a moderate-to-heavy road-salt region (Northeast coastal area), presenting moderate rust risk exposure over time despite being a franchise dealer location.",
+     "condition": "1-owner history and confirmed clean title are strong positives; however, Carfax data is limited/not-confirmed, so the buyer should independently verify full service records and accident history before purchase."
+    },
+    "scoredAt": "2026-06-18T02:17:27.150Z",
+    "compositeScore": 7.5,
+    "dealRating": "",
+    "dLat": 41.93,
+    "dLon": -71.301,
+    "link": "",
+    "photo": "/demo/cars/car-31.webp",
+    "status": "watch",
+    "skippedAt": "2026-10-29"
+   },
+   {
+    "vin": "2T3MWRFV2LW526301",
+    "vehicle": "Toyota RAV4",
+    "year": 2020,
+    "trim": "Hybrid LE AWD",
+    "price": 24998,
+    "mileage": 87377,
+    "dealer": "Tallowmere Toyota",
+    "dealerType": "franchise",
+    "location": "Raleigh",
+    "state": "NC",
+    "color": "Magnetic Gray Metallic",
+    "dom": 91,
+    "carfax_1_owner": false,
+    "carfax_clean_title": false,
+    "price_change_percent": -1.56,
+    "msrp": 24998,
+    "profileId": "rav4-hybrid",
+    "source": "marketcheck",
+    "addedDate": "2026-06-18",
+    "lastSeen": "2026-06-18",
+    "lastChecked": "2026-06-18",
+    "notes": "",
+    "scores": {
+     "deal": 7,
+     "color": 8,
+     "price": 9,
+     "dealer": 8,
+     "mileage": 8,
+     "features": 5,
+     "location": 7,
+     "condition": 6
+    },
+    "aiSummary": "This 2020 RAV4 Hybrid LE is priced competitively under budget with very reasonable mileage and a franchise dealer backing, but the LE trim misses the buyer's XLE/XSE requirement and lacks confirmation of title/ownership history—buy only after full Carfax/title verification and a thorough pre-purchase inspection.",
+    "aiRationales": {
+     "deal": "At $24,998 with 87k miles on a 2020 LE Hybrid, this is a fair to slightly-good deal; pricing is near-market rather than well below comps, with the long market time (91 days) suggesting room for negotiation.",
+     "color": "Magnetic Gray Metallic is a neutral, attractive color that avoids the buyer's dislikes (no gold, not black), scoring well on preference.",
+     "price": "At $24,998, the listing is $2 under the $25,000 ceiling and represents strong value for a 2020 Hybrid RAV4 with 87k miles in this market.",
+     "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+     "mileage": "87,377 miles is notably low for a 2020 (roughly 10.9k/year), well below the typical 12k/year wear expectation.",
+     "features": "This is a LE trim, not the buyer's preferred XLE or XSE, and the listing does not specify weather package, CPO status, or wireless CarPlay—missing preferred upgrades.",
+     "location": "Raleigh, NC is a mid-Atlantic location with moderate winter road-salt exposure; not ideal for rust prevention but not in a heavy salt belt like the Northeast.",
+     "condition": "The listing shows clean title (not confirmed) and 1-owner status (not confirmed) per Carfax, with no reported accidents; however, the unverified history and 91 days on market warrant a cautious middle score pending full title/CarFax verification."
+    },
+    "scoredAt": "2026-06-18T02:17:27.150Z",
+    "compositeScore": 7.5,
+    "dealRating": "",
+    "dLat": 35.773,
+    "dLon": -78.632,
+    "link": "",
+    "photo": "/demo/cars/car-32.webp",
+    "status": "watch",
+    "skippedAt": "2026-10-29"
+   },
+   {
+    "vin": "KM8JBCD13RU192468",
+    "vehicle": "Hyundai Tucson",
+    "year": 2024,
+    "trim": "Blue HEV AWD",
+    "price": 27194,
+    "mileage": 19881,
+    "dealer": "Quillstone Hyundai",
+    "dealerType": "franchise",
+    "cpo": true,
+    "location": "Winter Park",
+    "state": "FL",
+    "color": "Amazon Gray",
+    "dom": 73,
+    "carfax_1_owner": true,
+    "carfax_clean_title": false,
+    "price_change_percent": -14.99,
+    "msrp": 27194,
+    "profileId": "tucson-hybrid",
+    "source": "marketcheck",
+    "addedDate": "2026-09-08",
+    "lastSeen": "2026-09-08",
+    "lastChecked": "2026-09-08",
+    "priceHistory": [
+     {
+      "date": "2026-09-08",
+      "price": 27194
+     }
+    ],
+    "notes": "",
+    "scores": {
+     "deal": 8,
+     "color": 8,
+     "price": 8,
+     "dealer": 10,
+     "mileage": 6,
+     "features": 5,
+     "location": 8,
+     "condition": 9
+    },
+    "aiSummary": "A well-priced, low-mileage, one-owner CPO 2024 Tucson Blue HEV AWD from a reputable franchise dealer just 5 miles away — a strong overall buy, but the base Blue trim and unconfirmed build-date certification (needed to verify rear seat belt pretensioners) should be checked before purchase.",
+    "aiRationales": {
+     "deal": "Price has already dropped nearly 15% since first listed and 73 days on market suggests further negotiation room, while CPO backing adds value relative to typical market comps.",
+     "color": "Amazon Gray is a neutral color, avoiding the disliked gold, black, and white options.",
+     "price": "At $27,194 the listing sits just above the 'good' threshold ($27,018) and well below the 'fair' mark ($28,218), making it a strong price for a 2024 Blue HEV AWD with 19,881 mi.",
+     "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+     "mileage": "19,881 mi on a 2024 model implies roughly 20k miles/year, somewhat above the ~12k/yr benchmark for 'low mileage', though still well under the 60,000 mi cap.",
+     "features": "This is the base Blue trim (not the preferred SEL Convenience) and the listing gives no confirmation of the required build-after-March-2024 certification label for rear seat belt pretensioners, a critical must-have for MY2024 units.",
+     "location": "Located just 5 miles from the buyer in Winter Park, FL — extremely convenient and in a non-salt-belt state, though not one of the explicitly preferred sourcing regions (TX, AZ, Carolinas, TN, GA).",
+     "condition": "Carfax confirms 1-owner history, no accident or title issues are reported, and CPO status implies a manufacturer inspection was passed."
+    },
+    "scoredAt": "2026-09-08T01:52:30.541Z",
+    "compositeScore": 8,
+    "dealRating": "",
+    "dLat": 28.598,
+    "dLon": -81.353,
+    "link": "",
+    "photo": "/demo/cars/car-33.webp",
+    "status": "watch",
+    "skippedAt": "2026-10-29"
+   },
+   {
+    "vin": "KM8JBCD19RU698029",
+    "vehicle": "Hyundai Tucson",
+    "year": 2024,
+    "trim": "Blue HEV AWD",
+    "price": 26473,
+    "mileage": 22465,
+    "dealer": "Fernhollow Hyundai",
+    "dealerType": "franchise",
+    "cpo": false,
+    "location": "Buford",
+    "state": "GA",
+    "color": "Black Pearl",
+    "dom": 310,
+    "carfax_1_owner": false,
+    "carfax_clean_title": false,
+    "price_change_percent": -0.81,
+    "msrp": 28746,
+    "profileId": "tucson-hybrid",
+    "source": "marketcheck",
+    "addedDate": "2026-09-08",
+    "lastSeen": "2026-09-08",
+    "lastChecked": "2026-09-08",
+    "priceHistory": [
+     {
+      "date": "2026-09-08",
+      "price": 26473
+     }
+    ],
+    "notes": "",
+    "scores": {
+     "deal": 8,
+     "color": 3,
+     "price": 9,
+     "dealer": 8,
+     "mileage": 5,
+     "features": 5,
+     "location": 9,
+     "condition": 7
+    },
+    "aiSummary": "A well-priced, low-mileage-for-cap, locally sourced 2024 Tucson Blue Hybrid AWD from a franchise dealer, but the black exterior, higher-than-ideal annual mileage, and unconfirmed MY2024 build-date/pretensioner certification are notable drawbacks worth clarifying before purchase.",
+    "aiRationales": {
+     "deal": "Priced about $2,273 under MSRP with a recent small price drop, suggesting a favorable deal relative to market value.",
+     "color": "Black Pearl exterior conflicts with the buyer's stated soft preference against black.",
+     "price": "At $26,473, this is below the 'good' baseline of $26,630 for this trim/mileage combo, offering solid value against the $28,000 ceiling.",
+     "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+     "mileage": "22,465 miles in roughly one year (~22k/yr) is well above the buyer's implied low-mileage preference, even though it's far under the 60,000 mi cap.",
+     "features": "This is the Blue AWD hybrid trim (meets AWD requirement) but lacks the more desirable SEL Convenience/Limited upgrades, and the listing doesn't confirm the critical MY2024 build-date/pretensioner certification the buyer requires.",
+     "location": "Located in Buford, GA, just 32 miles from the buyer and within a preferred low-salt-exposure sourcing region (GA).",
+     "condition": "No accident history, salvage/branded title, or mechanical issues are reported, but ownership history (one-owner/Carfax) isn't stated, so scored conservatively as presumed clean."
+    },
+    "scoredAt": "2026-09-08T01:52:28.520Z",
+    "compositeScore": 7.3,
+    "dealRating": "",
+    "dLat": 33.96,
+    "dLon": -84.038,
+    "link": "",
+    "photo": "/demo/cars/car-34.webp",
+    "status": "watch",
+    "skippedAt": "2026-10-29"
+   },
+   {
+    "vin": "4S4BTACC8L3248670",
+    "vehicle": "Subaru Outback",
+    "year": 2020,
+    "trim": "Premium",
+    "price": 23795,
+    "mileage": 21277,
+    "dealer": "Fernhollow Auto Sales",
+    "dealerType": "independent",
+    "location": "Bedford",
+    "state": "VA",
+    "color": "Crystal White Pearl",
+    "dom": 1226,
+    "carfax_1_owner": false,
+    "carfax_clean_title": false,
+    "price_change_percent": 0,
+    "msrp": 23795,
+    "profileId": "subaru-outback",
+    "source": "marketcheck",
+    "addedDate": "2026-07-05",
+    "lastSeen": "2026-07-05",
+    "lastChecked": "2026-07-05",
+    "notes": "",
+    "scores": {
+     "deal": 4,
+     "color": 9,
+     "price": 7,
+     "dealer": 5,
+     "mileage": 9,
+     "features": 7,
+     "location": 6,
+     "condition": 6
+    },
+    "aiSummary": "This 2020 Outback Premium offers excellent low mileage and a desirable color within budget, but the extremely long time on market with no price movement and an independent dealer listing raise some caution about its overall value and desirability.",
+    "aiRationales": {
+     "deal": "The vehicle has been on the market for 1,226 days with no price change, suggesting it has been hard to sell at this price and may not represent a standout deal compared to fresher listings.",
+     "color": "Crystal White Pearl is a neutral, widely desirable color and avoids both the gold dealbreaker and the soft black preference.",
+     "price": "At $23,795 the car sits about $1,200 (5%) under the buyer's $25,000 ceiling, which is reasonable but not a steep discount for a 2020 Premium with only 21k miles.",
+     "dealer": "Independent dealer: no franchise reconditioning or CPO program behind it, so average.",
+     "mileage": "21,277 miles on a 2020 model (about 4-5 years old) works out to roughly 4,500-5,000 mi/yr, well below the 12k/yr benchmark for low mileage.",
+     "features": "The Premium trim satisfies the buyer's nice-to-have trim preference and includes the required AWD and standard non-turbo 2.5L engine, though specific feature confirmations (moonroof, heated seats) aren't listed.",
+     "location": "Bedford, VA sees moderate winter road-salt use, giving a mid-level rust risk rather than a low-salt region ideal for long-term body condition.",
+     "condition": "No accident or title issues are reported, but the listing gives no explicit confirmation of a clean title, one-owner history, or service records, so a mid-range score is warranted without penalizing for missing data."
+    },
+    "scoredAt": "2026-07-05T17:15:06.679Z",
+    "compositeScore": 6.7,
+    "dealRating": "",
+    "dLat": 37.315,
+    "dLon": -79.533,
+    "link": "",
+    "photo": "/demo/cars/car-35.webp",
+    "status": "watch",
+    "skippedAt": "2026-10-29"
+   }
+  ],
+  "settings": {
+   "budget": 40000,
+   "taxRate": 0.07,
+   "tagline": "3 profiles · Durham NC · ≤$40K",
+   "homeBase": {
+    "n": "Durham NC",
+    "z": "27701",
+    "lat": 35.994,
+    "lon": -78.8986
+   },
+   "saltMode": "exclude",
+   "franchiseOnly": true,
+   "defaultExcludeColors": [
+    "Black",
+    "White",
+    "Beige",
+    "Gold",
+    "Orange",
+    "Purple"
+   ],
+   "compareCols": {
+    "order": [
+     "spec:color",
+     "spec:distance",
+     "spec:location",
+     "score",
+     "spec:price",
+     "spec:mileage",
+     "spec:year",
+     "spec:dealer",
+     "spec:dom",
+     "cpo",
+     "crit:price",
+     "crit:mileage",
+     "crit:dealer",
+     "crit:condition",
+     "crit:features",
+     "crit:color",
+     "crit:location",
+     "crit:deal"
+    ],
+    "pinned": [
+     "spec:color",
+     "spec:distance",
+     "spec:location",
+     "score"
+    ]
+   },
+   "mcProfiles": {
+    "bolt-ev": {
+     "sig": "[\"chevrolet\",\"bolt ev\",\"\",\"2018,2019\",13900,130000,true,true]",
+     "count": 2,
+     "trims": {
+      "at": "2026-11-07T02:49:36.578Z",
+      "counts": {
+       "LT Auto": 1,
+       "Premier Auto": 1
+      },
+      "unlisted": 0
+     },
+     "colors": {
+      "at": "2026-11-07T02:49:36.578Z",
+      "counts": {
+       "Gray": 1,
+       "Black": 1
+      },
+      "unlisted": 0
+     },
+     "fullAt": "2026-11-07T02:49:36.578Z",
+     "lastAt": "2026-11-07T02:49:36.578Z",
+     "countAt": "2026-11-07T02:49:36.578Z",
+     "countSig": "[\"chevrolet\",\"bolt ev\",\"\",\"2018,2019\",13900,130000,true,true]",
+     "drivetrains": {
+      "at": "2026-11-07T02:49:36.578Z",
+      "counts": {
+       "FWD": 2
+      },
+      "unlisted": 0
+     }
+    },
+    "rav4-hybrid": {
+     "count": 24,
+     "trims": {
+      "at": "2026-10-16T11:09:37.832Z",
+      "counts": {
+       "Hybrid LE AWD": 15,
+       "Hybrid XLE AWD": 6,
+       "Hybrid XSE AWD": 2,
+       "Hybrid Limited AWD": 1
+      },
+      "unlisted": 0
+     },
+     "colors": {
+      "at": "2026-10-16T11:09:37.832Z",
+      "counts": {
+       "Red": 1,
+       "Blue": 1,
+       "Gray": 7,
+       "Black": 3,
+       "White": 6,
+       "Silver": 4
+      },
+      "unlisted": 2
+     },
+     "countAt": "2026-10-16T11:09:37.832Z",
+     "countSig": "[\"toyota\",\"rav4\",\"hev\",\"2019,2020,2021,2022\",25000,90000,true,true]",
+     "drivetrains": {
+      "at": "2026-10-16T11:09:37.832Z",
+      "counts": {
+       "4WD": 24
+      },
+      "unlisted": 0
+     }
+    },
+    "tucson-hybrid": {
+     "sig": "[\"hyundai\",\"tucson\",\"hev\",\"2024,2025\",28000,60000,true,true]",
+     "count": 116,
+     "trims": {
+      "at": "2026-11-07T02:49:36.578Z",
+      "counts": {
+       "Blue HEV AWD": 43,
+       "N Line HEV AWD": 15,
+       "Limited HEV AWD": 12,
+       "SEL Convenience HEV AWD": 46
+      },
+      "unlisted": 0
+     },
+     "colors": {
+      "at": "2026-11-07T02:49:36.578Z",
+      "counts": {
+       "Red": 1,
+       "Blue": 17,
+       "Gray": 33,
+       "Black": 21,
+       "White": 22,
+       "Silver": 17
+      },
+      "unlisted": 5
+     },
+     "fullAt": "2026-11-07T02:49:36.578Z",
+     "lastAt": "2026-11-07T02:49:36.578Z",
+     "countAt": "2026-11-07T02:49:36.578Z",
+     "countSig": "[\"hyundai\",\"tucson\",\"hev\",\"2024,2025\",28000,60000,true,true]",
+     "drivetrains": {
+      "at": "2026-11-07T02:49:36.578Z",
+      "counts": {
+       "AWD": 116
+      },
+      "unlisted": 0
+     }
+    },
+    "subaru-outback": {
+     "count": 741,
+     "trims": {
+      "at": "2026-10-16T11:09:19.746Z",
+      "counts": {
+       "-": 28,
+       "Limited": 235,
+       "Premium": 236,
+       "Touring": 45,
+       "Limited XT": 73,
+       "Touring XT": 43,
+       "Onyx Edition XT": 56,
+       "Outback Wilderness": 25
+      },
+      "unlisted": 0
+     },
+     "colors": {
+      "at": "2026-10-16T11:09:19.746Z",
+      "counts": {
+       "Red": 31,
+       "Blue": 85,
+       "Gold": 2,
+       "Gray": 133,
+       "Beige": 2,
+       "Black": 81,
+       "Brown": 27,
+       "Green": 51,
+       "White": 201,
+       "Silver": 94
+      },
+      "unlisted": 34
+     },
+     "countAt": "2026-10-16T11:09:19.746Z",
+     "countSig": "[\"subaru\",\"outback\",\"\",\"2020,2021,2022\",25000,100000,true,true]",
+     "drivetrains": {
+      "at": "2026-10-16T11:09:19.746Z",
+      "counts": {
+       "4WD": 741
+      },
+      "unlisted": 0
+     }
+    }
+   }
+  },
+  "lastSynced": "2026-11-06T23:51:20.408Z"
+ },
+ "pool": [
+  {
+   "vin": "KM8JCCD13RU330782",
+   "vehicle": "Hyundai Tucson",
+   "year": 2024,
+   "trim": "SEL Convenience HEV AWD",
+   "drivetrain": "AWD",
+   "price": 25200,
+   "fees": 1428,
+   "mileage": 20854,
+   "dealer": "Wrenfield Hyundai",
+   "dealerType": "franchise",
+   "cpo": false,
+   "location": "Jacksonville",
+   "state": "FL",
+   "color": "Blue",
+   "baseColor": "Blue",
+   "dom": 19,
+   "mcSeen": "2026-11-05",
+   "carfax_1_owner": false,
+   "carfax_clean_title": false,
+   "price_change_percent": -1.84,
+   "msrp": 26628,
+   "profileId": "tucson-hybrid",
+   "source": "marketcheck",
+   "addedDate": "2026-11-07",
+   "lastSeen": "2026-11-07",
+   "lastChecked": "2026-11-07",
+   "priceHistory": [
+    {
+     "date": "2026-11-07",
+     "price": 25200
+    }
+   ],
+   "notes": "",
+   "scores": {
+    "deal": 8,
+    "color": 8,
+    "price": 9,
+    "dealer": 8,
+    "mileage": 8,
+    "features": 7,
+    "location": 6,
+    "condition": 6
+   },
+   "aiSummary": "A 2024 Tucson SEL Convenience Hybrid AWD with 20,854 mi at $25,200 from a Hyundai franchise dealer is priced below the good benchmark and has no salt-belt exposure. Before buying, verify the build date is after March 2024 on the certification label, confirm an independent inspection is allowed, and check the dealer fees.",
+   "aiRationales": {
+    "deal": "Asking $25,200 is $1,428 below the $26,628 MSRP and under the good-price benchmark, with a recent 1.84% price cut after 19 days listed; the dealer fees offset some of the advantage.",
+    "color": "Blue is a neutral, widely liked color and the buyer has no color restrictions.",
+    "price": "Asking $25,200 is below the $25,736 'good' threshold and well under the $28,000 ceiling for a 2024 SEL Convenience HEV AWD at 20,854 mi; $1,428 in dealer fees brings it to about $26,628, which is still under the fair $27,136.",
+    "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+    "mileage": "20,854 mi on a 2024 is roughly 10-11k/yr at most, well under the 60,000 mi cap and low for the age.",
+    "features": "This is the preferred SEL Convenience HEV AWD trim, so AWD is standard and it has no panoramic roof, but the build date is unconfirmed (a 2024 needs one after March 2024) and heated seats and power driver seat are not listed.",
+    "location": "Jacksonville FL is 427 mi straight-line (about 520-550 mi of driving) from Durham, but it is next to JAX airport (14 mi) so fly-in is easy, and Florida has no road-salt exposure, though coastal humidity is a minor factor.",
+    "condition": "No accident, branded title, or mechanical issue is reported, but the listing gives no confirmed history or inspection details, so I score conservatively at near average-plus."
+   },
+   "scoredAt": "2026-11-07T02:50:38.866Z",
+   "compositeScore": 7.6,
+   "dealRating": "",
+   "dLat": 30.337,
+   "dLon": -81.769,
+   "link": "",
+   "photo": "/demo/cars/car-22.webp",
+   "status": "watch"
+  },
+  {
+   "vin": "KM8JCCD14RU668742",
+   "vehicle": "Hyundai Tucson",
+   "year": 2024,
+   "trim": "SEL Convenience HEV AWD",
+   "drivetrain": "AWD",
+   "price": 25492,
+   "fees": 531,
+   "mileage": 29830,
+   "dealer": "Copperline Hyundai",
+   "dealerType": "franchise",
+   "cpo": false,
+   "location": "Charleston",
+   "state": "SC",
+   "color": "Amazon Gray",
+   "baseColor": "Gray",
+   "dom": 44,
+   "mcSeen": "2026-11-05",
+   "price_change_percent": -0.79,
+   "msrp": 25492,
+   "profileId": "tucson-hybrid",
+   "source": "marketcheck",
+   "addedDate": "2026-11-07",
+   "lastSeen": "2026-11-07",
+   "lastChecked": "2026-11-07",
+   "priceHistory": [
+    {
+     "date": "2026-11-07",
+     "price": 25492
+    }
+   ],
+   "notes": "",
+   "scores": {
+    "deal": 7,
+    "color": 7,
+    "price": 8,
+    "dealer": 8,
+    "mileage": 8,
+    "features": 7,
+    "location": 8,
+    "condition": 6
+   },
+   "aiSummary": "This 2024 SEL Convenience HEV AWD at $25,492 with 29,830 mi from a Carolinas franchise dealer is a strong, well-priced match for the buyer's profile. Before buying, verify the build date is after March 2024 on the certification label (a dealbreaker if it isn't), confirm rear cross-traffic alert, and arrange an independent pre-purchase inspection.",
+   "aiRationales": {
+    "deal": "It's priced below the fair value of $26,463 and has been cut 0.79%, and at 44 days listed there may be room to negotiate, but the $531 in dealer fees reduces the margin.",
+    "color": "Amazon Gray is a neutral color that hides dirt well and the buyer has no color restriction.",
+    "price": "Asking $25,492 (plus $531 fees, about $26,023 before tax) sits just above the 'good' line of $25,063 and well below the fair $26,463 and the $28,000 ceiling, for a 2024 SEL Convenience at 29,830 mi.",
+    "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+    "mileage": "29,830 mi on a 2024 is about 15k/yr if it's a ~2-year-old car, but it is well under the 60k cap and fine for a hybrid with most of its warranty remaining.",
+    "features": "It's the exact preferred SEL Convenience HEV AWD, which has AWD, a backup camera, and the larger screen and digital cluster with no panoramic roof; the listing doesn't confirm the build date, rear cross-traffic alert, heated seats, or power driver seat.",
+    "location": "Charleston, SC is 231 mi straight-line (about 280-300 mi of driving) from Durham, with CHS only 7 mi from the dealer, and a Carolinas-sourced car has low salt-belt exposure, though coastal air carries some corrosion risk.",
+    "condition": "No accident, branded title, or mechanical issues are reported, but the listing gives no ownership or service history, so this is a conservative score."
+   },
+   "scoredAt": "2026-11-07T02:50:38.866Z",
+   "compositeScore": 7.4,
+   "dealRating": "",
+   "dLat": 32.779,
+   "dLon": -79.937,
+   "link": "",
+   "photo": "/demo/cars/car-23.webp",
+   "status": "watch"
+  },
+  {
+   "vin": "KM8JCCD18RU885386",
+   "vehicle": "Hyundai Tucson",
+   "year": 2024,
+   "trim": "SEL Convenience HEV AWD",
+   "drivetrain": "AWD",
+   "price": 27876,
+   "fees": 122,
+   "mileage": 17903,
+   "dealer": "Marlowe Bend Hyundai",
+   "dealerType": "franchise",
+   "cpo": false,
+   "location": "El Cajon",
+   "state": "CA",
+   "color": "Shimmering Silver",
+   "baseColor": "Silver",
+   "dom": 2,
+   "mcSeen": "2026-11-05",
+   "carfax_1_owner": false,
+   "carfax_clean_title": false,
+   "price_change_percent": -24.95,
+   "msrp": 27876,
+   "profileId": "tucson-hybrid",
+   "source": "marketcheck",
+   "addedDate": "2026-11-07",
+   "lastSeen": "2026-11-07",
+   "lastChecked": "2026-11-07",
+   "priceHistory": [
+    {
+     "date": "2026-11-07",
+     "price": 27876
+    }
+   ],
+   "notes": "",
+   "scores": {
+    "deal": 5,
+    "color": 7,
+    "price": 5,
+    "dealer": 8,
+    "mileage": 9,
+    "features": 7,
+    "location": 3,
+    "condition": 6
+   },
+   "aiSummary": "A low-mile, exact-trim SEL Convenience HEV AWD from a franchise dealer in a rust-free climate, but priced near fair market and right at your budget ceiling once fees are added. The cross-country distance adds shipping or travel costs, and the MY2024 build date after March 2024 must be verified on the door label before you commit.",
+   "aiRationales": {
+    "deal": "Price is down ~25% since first seen and the listing is only 2 days old, but the current ask is near fair market (~$27,357) rather than clearly below comparables, so it's an average deal before adding shipping or travel costs.",
+    "color": "Shimmering Silver is a neutral, practical color with good resale and no buyer aversion stated.",
+    "price": "Asking $27,876 (plus $122 fees) sits right near the fair baseline of ~$27,357, above the $25,957 'good' line but under the $28,000 ceiling and the $28,557 'high' line; with fees it's essentially at the ceiling.",
+    "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+    "mileage": "17,903 mi on a 2024 is roughly 9-10k/yr or less, well under the 60k cap and the ~12k/yr benchmark.",
+    "features": "This is the exact target SEL Convenience HEV AWD trim (AWD standard, larger screen, digital cluster, no panoramic roof), but the MY2024 build date after March 2024 is unconfirmed and heated seats/power seat/RCTA are not listed in the data.",
+    "location": "El Cajon, CA is 2,167 mi straight-line from Durham (likely shipped), though SAN is only 15 mi away so a fly-in is feasible; it is a dry, low-salt Southwest climate, which helps, but it is not in the preferred sourcing states.",
+    "condition": "No accidents or branded title are reported and mileage is low, but ownership history, maintenance records, and the MY2024 build date (must be after March 2024 for rear belt pretensioners) are unverified, so score conservatively."
+   },
+   "scoredAt": "2026-11-07T02:50:39.513Z",
+   "compositeScore": 6.1,
+   "dealRating": "",
+   "dLat": 32.778,
+   "dLon": -116.919,
+   "link": "",
+   "photo": "/demo/cars/car-24.webp",
+   "status": "watch"
+  },
+  {
+   "vin": "KM8JCCD1XRU888127",
+   "vehicle": "Hyundai Tucson",
+   "year": 2024,
+   "trim": "SEL Convenience HEV AWD",
+   "drivetrain": "AWD",
+   "price": 27930,
+   "fees": 1399,
+   "mileage": 19361,
+   "dealer": "Ridgeholt Hyundai",
+   "dealerType": "franchise",
+   "cpo": true,
+   "location": "Vero Beach",
+   "state": "FL",
+   "color": "Deep Sea",
+   "baseColor": "Blue",
+   "dom": 10,
+   "mcSeen": "2026-11-05",
+   "carfax_1_owner": true,
+   "carfax_clean_title": false,
+   "price_change_percent": 0,
+   "msrp": 27930,
+   "profileId": "tucson-hybrid",
+   "source": "marketcheck",
+   "addedDate": "2026-11-07",
+   "lastSeen": "2026-11-07",
+   "lastChecked": "2026-11-07",
+   "priceHistory": [
+    {
+     "date": "2026-11-07",
+     "price": 27930
+    }
+   ],
+   "notes": "",
+   "scores": {
+    "deal": 4,
+    "color": 6,
+    "price": 4,
+    "dealer": 9,
+    "mileage": 8,
+    "features": 6,
+    "location": 4,
+    "condition": 8
+   },
+   "aiSummary": "This is the right trim and a CPO, 1-owner, low-mile Tucson Hybrid from a franchise dealer, but it is priced above fair value, has $1,399 in fees, and is a long haul from Durham. Verify the build date is after March 2024 on the certification label and confirm that a pre-purchase inspection is allowed before pursuing, and try to negotiate the price down.",
+   "aiRationales": {
+    "deal": "Priced slightly above the fair baseline with no price drop (0% change) after 10 days listed, and $1,399 in fees plus shipping cost make it less competitive than closer, cheaper comps; CPO coverage partly offsets this.",
+    "color": "Deep Sea is a dark teal-green; the buyer has no stated color preference or avoidance, so it is neutral and acceptable.",
+    "price": "Asking $27,930 (plus $1,399 dealer fees, ~$29.3k before tax) sits just under the $28,000 ceiling and above the ~$27,248 fair baseline, nowhere near the $25,848 good level; fees push it effectively past budget.",
+    "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+    "mileage": "19,361 mi on a 2024 is roughly 10k/yr or less, well under the 60k cap and below the ~12k/yr benchmark.",
+    "features": "It is the exact target SEL Convenience HEV AWD trim with AWD standard, but the 2024 build date (must be after March 2024 for rear belt pretensioners) is not stated in the listing and needs verification on the certification label; heated seats, power driver seat, and RCTA are not confirmed in the data.",
+    "location": "Vero Beach, FL is 585 mi straight-line (roughly 700+ driving miles), requiring shipping or a flight, with PBI 71 mi away being a mediocre airport option; Florida has no road-salt exposure, though coastal air is a mild concern.",
+    "condition": "Carfax confirms 1 owner and no accident or branded title is reported; CPO inspection adds confidence, though no maintenance details are given."
+   },
+   "scoredAt": "2026-11-07T02:50:39.513Z",
+   "compositeScore": 6,
+   "dealRating": "",
+   "dLat": 27.633,
+   "dLon": -80.403,
+   "link": "",
+   "photo": "/demo/cars/car-25.webp",
+   "status": "watch"
+  },
+  {
+   "vin": "4S4BTACC9N3876286",
+   "vehicle": "Subaru Outback",
+   "year": 2022,
+   "trim": "Premium",
+   "price": 23600,
+   "mileage": 63569,
+   "dealer": "Saltmarsh Auto Sales",
+   "dealerType": "independent",
+   "location": "Kernersville",
+   "state": "NC",
+   "color": "Crystal White Pearl",
+   "dom": 128,
+   "carfax_1_owner": false,
+   "carfax_clean_title": false,
+   "price_change_percent": -2.88,
+   "msrp": 24900,
+   "profileId": "subaru-outback",
+   "source": "marketcheck",
+   "addedDate": "2026-07-05",
+   "lastSeen": "2026-07-05",
+   "lastChecked": "2026-07-05",
+   "notes": "",
+   "scores": {
+    "deal": 7,
+    "color": 9,
+    "price": 8,
+    "dealer": 5,
+    "mileage": 5,
+    "features": 7,
+    "location": 7,
+    "condition": 6
+   },
+   "aiSummary": "This 2022 Outback Premium is a well-priced, feature-appropriate match under budget with a clean color and no reported title/accident issues, though its above-average mileage and independent dealer status keep it from being a standout choice.",
+   "aiRationales": {
+    "deal": "The price has dropped 2.88% since first listed and sits notably below MSRP, but 128 days on market suggests it hasn't been a hot seller, indicating a fair rather than exceptional deal.",
+    "color": "Crystal White Pearl is a neutral, widely desirable color and avoids both the gold dealbreaker and the soft black preference.",
+    "price": "At $23,600, this is $1,400 under the $25,000 ceiling and $1,300 below MSRP ($24,900), making it a solid value within budget.",
+    "dealer": "Independent dealer: no franchise reconditioning or CPO program behind it, so average.",
+    "mileage": "63,569 miles on a 2022 model (~3 years old) works out to roughly 21k mi/yr, higher than the ~12k/yr benchmark, though still well under the 100,000-mile cap.",
+    "features": "The Premium trim matches a nice-to-have preference and Outback Premium comes standard with AWD and the non-turbo 2.5L engine, satisfying key must-haves, though moonroof/heated seat details aren't explicitly listed.",
+    "location": "Kernersville, NC is not in a heavy road-salt region, which is favorable for long-term rust prevention, though exact proximity to the buyer isn't specified.",
+    "condition": "No accident or title issues are reported, so it appears clean, but the listing doesn't confirm ownership history or maintenance records, warranting a moderate score."
+   },
+   "scoredAt": "2026-07-05T17:14:49.784Z",
+   "compositeScore": 6.7,
+   "dealRating": "",
+   "dLat": 36.117,
+   "dLon": -80.083,
+   "link": "",
+   "photo": "/demo/cars/car-26.webp",
+   "status": "watch"
+  },
+  {
+   "vin": "4S4BTANC5N3040228",
+   "vehicle": "Subaru Outback",
+   "year": 2022,
+   "trim": "Limited",
+   "price": 23091,
+   "mileage": 88009,
+   "dealer": "Pinecrest Hollow Subaru",
+   "dealerType": "franchise",
+   "location": "Goldsboro",
+   "state": "NC",
+   "color": "Gray",
+   "dom": 49,
+   "carfax_1_owner": false,
+   "carfax_clean_title": true,
+   "price_change_percent": -1.13,
+   "msrp": 23091,
+   "profileId": "subaru-outback",
+   "source": "marketcheck",
+   "addedDate": "2026-07-05",
+   "lastSeen": "2026-07-05",
+   "lastChecked": "2026-07-05",
+   "notes": "",
+   "scores": {
+    "deal": 6,
+    "color": 8,
+    "price": 7,
+    "dealer": 8,
+    "mileage": 3,
+    "features": 8,
+    "location": 7,
+    "condition": 8
+   },
+   "aiSummary": "This 2022 Outback Limited is a clean-titled, well-equipped franchise-dealer car priced reasonably under budget, but its unusually high mileage (88k) for a 3-year-old vehicle is a notable drawback that tempers its overall value.",
+   "aiRationales": {
+    "deal": "A slight price drop (-1.13%) and 49 days on market suggest a fairly priced but not exceptional deal, especially given the high mileage for the model year.",
+    "color": "Gray is a neutral color that avoids both the gold dealbreaker and the soft black preference.",
+    "price": "At $23,091 the car is about $1,900 (7.6%) under the $25,000 ceiling, a modest but real discount rather than a standout deal.",
+    "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+    "mileage": "88,009 miles on a 2022 model (roughly 3 years old) averages ~29k miles/year, well above the ~12k/yr benchmark and close to the buyer's 100k mile cap.",
+    "features": "Limited trim is one of the buyer's preferred trims and typically includes the non-turbo 2.5L engine, AWD, moonroof, heated seats, and power driver seat, matching most must-have and nice-to-have criteria (features not individually itemized in listing).",
+    "location": "Goldsboro, NC is not a heavy road-salt region, suggesting lower rust risk, though exact distance from the buyer isn't specified.",
+    "condition": "Carfax confirms a clean title with no reported accidents, indicating solid history, though no explicit maintenance records are provided."
+   },
+   "scoredAt": "2026-07-05T17:14:49.784Z",
+   "compositeScore": 6.7,
+   "dealRating": "",
+   "dLat": 35.368,
+   "dLon": -78.093,
+   "link": "",
+   "photo": "/demo/cars/car-27.webp",
+   "status": "watch"
+  },
+  {
+   "vin": "4S4BTANC3L3158971",
+   "vehicle": "Subaru Outback",
+   "year": 2020,
+   "trim": "Limited",
+   "price": 19980,
+   "mileage": 80398,
+   "dealer": "Thistleway Auto Sales",
+   "dealerType": "independent",
+   "location": "Hampton",
+   "state": "NH",
+   "color": "Cinnamon Brown Pearl",
+   "dom": 214,
+   "carfax_1_owner": false,
+   "carfax_clean_title": false,
+   "price_change_percent": -4.77,
+   "msrp": 19980,
+   "profileId": "subaru-outback",
+   "source": "marketcheck",
+   "addedDate": "2026-07-05",
+   "lastSeen": "2026-07-05",
+   "lastChecked": "2026-07-05",
+   "notes": "",
+   "scores": {
+    "deal": 8,
+    "color": 8,
+    "price": 9,
+    "dealer": 5,
+    "mileage": 5,
+    "features": 7,
+    "location": 4,
+    "condition": 6
+   },
+   "aiSummary": "This 2020 Outback Limited is well-priced under budget and in the right trim/mileage range, with no reported red flags, though its higher mileage, independent dealer, and salt-belt location temper the overall appeal.",
+   "aiRationales": {
+    "deal": "A 4.77% price drop and 214 days on market suggest the dealer is motivated, and the price appears competitive for a 2020 Limited with this mileage.",
+    "color": "Cinnamon Brown Pearl is a neutral, non-black, non-gold color, aligning with the buyer's preferences.",
+    "price": "At $19,980 the car is roughly $5,000 under the $25,000 ceiling, a strong value even accounting for its mileage.",
+    "dealer": "Independent dealer: no franchise reconditioning or CPO program behind it, so average.",
+    "mileage": "80,398 miles on a 2020 model (~4-5 years old) is about 16-20k/yr, above the ideal low-mileage range and approaching the 100,000 mi cap.",
+    "features": "The Limited trim satisfies the nice-to-have trim preference and standard AWD/non-turbo 2.5L requirement, but the listing doesn't explicitly confirm moonroof, heated seats, or power driver seat.",
+    "location": "Hampton, NH is in the New England salt-belt, raising rust-risk concerns for an otherwise sound vehicle.",
+    "condition": "No accidents or title issues are reported, but the listing gives no explicit confirmation of a clean history or maintenance records, so a moderate, conservative score is warranted."
+   },
+   "scoredAt": "2026-07-05T17:14:16.495Z",
+   "compositeScore": 6.7,
+   "dealRating": "",
+   "dLat": 42.936,
+   "dLon": -70.824,
+   "link": "",
+   "photo": "/demo/cars/car-28.webp",
+   "status": "watch"
+  },
+  {
+   "vin": "1G1FX6S05J4447125",
+   "vehicle": "Chevrolet Bolt EV",
+   "year": 2018,
+   "trim": "Premier Auto",
+   "drivetrain": "FWD",
+   "price": 11655,
+   "fees": 172,
+   "mileage": 109254,
+   "dealer": "Larkmoor Chevrolet",
+   "dealerType": "franchise",
+   "cpo": false,
+   "location": "Watsonville",
+   "state": "CA",
+   "color": "(Includes (Tus) Black Grille.)",
+   "baseColor": "Black",
+   "dom": 6,
+   "mcSeen": "2026-11-05",
+   "carfax_1_owner": true,
+   "carfax_clean_title": false,
+   "price_change_percent": -10.07,
+   "msrp": 11827,
+   "profileId": "bolt-ev",
+   "source": "marketcheck",
+   "addedDate": "2026-11-07",
+   "lastSeen": "2026-11-07",
+   "lastChecked": "2026-11-07",
+   "priceHistory": [
+    {
+     "date": "2026-11-07",
+     "price": 11655
+    }
+   ],
+   "notes": "",
+   "scores": {
+    "deal": 4,
+    "color": 5,
+    "price": 3,
+    "dealer": 8,
+    "mileage": 5,
+    "features": 8,
+    "location": 4,
+    "condition": 6
+   },
+   "aiSummary": "A 1-owner 2018 Bolt Premier from a franchise GM dealer with a clean Carfax is a solid candidate, but at $11,655 plus fees it is priced above fair value and 2363 mi away, adding shipping cost. Before buying, you would need the GM VIN history printout showing a documented pack replacement for recall N212343881, a measured SOH of 80%+, and a PPI, none of which the listing confirms.",
+   "aiRationales": {
+    "deal": "The price dropped 10% since first seen and the listing is only 6 days old, but $11,655 is still above the ~$10,745 fair level, and shipping costs (~$1,200+) plus fees add to the total, so it is not a standout deal.",
+    "color": "Color is not clearly stated (only 'Includes Black Grille' appears), so it cannot be assessed and is scored neutral.",
+    "price": "Asking $11,655 (+$172 fees = ~$11,827) sits between the fair (~$10,745) and high (≥$12,045) baselines for a 2018 Premier at 109,254 mi; well under the $13,900 ceiling but above fair, closer to high once fees are included.",
+    "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+    "mileage": "109,254 mi on a 2018 is roughly 15k/yr, above average for age, but the buyer explicitly treats 90-120k as the right range to shop, so it is neutral rather than a penalty.",
+    "features": "Premier is the top Bolt trim (leather, heated seats, surround vision, etc.), and the Premier Auto listing satisfies the trim preference; 2018 rather than 2019 is a slight negative and the April 2018 build-date condition cannot be confirmed from the listing.",
+    "location": "Watsonville, CA is 2363 mi straight-line from Durham, so shipping or a cross-country trip is needed, but it is a low-salt region and only 32 mi from SJC, making a fly-in manageable.",
+    "condition": "Carfax confirms 1 owner with no reported accidents or branded title, but the listing does not show recall N212343881 closure, battery replacement date, measured SOH, or the pretensioner campaign, so those must-haves remain unverified."
+   },
+   "scoredAt": "2026-11-07T02:50:49.754Z",
+   "compositeScore": 5.3,
+   "dealRating": "",
+   "dLat": 36.91,
+   "dLon": -121.757,
+   "link": "",
+   "photo": "/demo/cars/car-29.webp",
+   "status": "watch"
+  },
+  {
+   "vin": "1G1FW6S08J4882885",
+   "vehicle": "Chevrolet Bolt EV",
+   "year": 2018,
+   "trim": "LT Auto",
+   "price": 12795,
+   "mileage": 60476,
+   "dealer": "Kestrelwood Chevrolet",
+   "dealerType": "franchise",
+   "cpo": false,
+   "location": "Commerce",
+   "state": "GA",
+   "color": "Nightfall Gray",
+   "dom": 244,
+   "carfax_1_owner": false,
+   "carfax_clean_title": false,
+   "msrp": 12795,
+   "profileId": "bolt-ev",
+   "source": "marketcheck",
+   "addedDate": "2026-09-14",
+   "lastSeen": "2026-09-21",
+   "lastChecked": "2026-09-21",
+   "priceHistory": [
+    {
+     "date": "2026-09-14",
+     "price": 12795
+    }
+   ],
+   "notes": "",
+   "scores": {
+    "deal": 3,
+    "color": 8,
+    "price": 2,
+    "dealer": 8,
+    "mileage": 7,
+    "features": 3,
+    "location": 4,
+    "condition": 6
+   },
+   "aiSummary": "Reasonable mileage and trim for the price ceiling, but the price sits at the high end of market for this configuration and — critically — the listing gives no evidence of the GM battery-recall documentation, measured state-of-health, or distinct battery warranty entry the buyer requires, so this car cannot be recommended without that verification.",
+   "aiRationales": {
+    "deal": "Priced near the top of the market baseline and sitting on the lot for 237 days suggests it hasn't attracted buyers at this price, indicating it's not a standout deal.",
+    "color": "Nightfall Gray is a neutral color, not gold, black, or white, so it aligns well with the buyer's color preferences.",
+    "price": "At $12,795 the car sits right at the 'high' end of the $9,429–$12,929 baseline range for a 2018 LT Auto with ~60k miles, leaving little to no margin under the $13,900 ceiling.",
+    "dealer": "Franchise dealer: brand-trained service and a CPO path, a modest plus.",
+    "mileage": "60,476 mi on a 2018 model (~10k mi/yr over 6 years) is below the 12k/yr benchmark, putting it in the favorable mid-mileage 'right end of the range' the buyer likes for battery-replacement candidates.",
+    "features": "The LT trim meets the buyer's preferred floor, but the listing gives no GM Investigate Vehicle History printout, no measured battery state-of-health figure, and no distinct Bolt Battery Limited Part Warranty entry — all must-have documentation is unconfirmed, which is a major gap given the recall/battery concern.",
+    "location": "Commerce, GA is roughly 250-260 miles from Durham, NC 27701, a several-hour haul rather than a local pickup, though the Southeast has relatively low road-salt exposure.",
+    "condition": "No accident or branded-title history is reported, but the listing provides no CPO certification or detailed condition report, so it's scored as average absent further documentation."
+   },
+   "scoredAt": "2026-09-14T14:09:47.033Z",
+   "compositeScore": 4.8,
+   "dealRating": "",
+   "dLat": 34.213,
+   "dLon": -83.448,
+   "link": "",
+   "photo": "/demo/cars/car-30.webp",
+   "status": "watch"
+  }
+ ]
+}

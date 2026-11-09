@@ -27,3 +27,8 @@ pnpm-debug.log*
 .idea/
 .DS_Store
 *.local
+
+# Demo fixture build inputs (real dealer photo URLs) — never commit
+photos.json
+dead-photos.json
+demo-fixture-photos.json
