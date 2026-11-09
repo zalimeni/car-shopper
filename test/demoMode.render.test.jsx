@@ -49,7 +49,7 @@ describe("demo mode", () => {
     const welcome = await screen.findByRole("dialog", { name: "Welcome" }, { timeout: 4000 });
     expect(within(welcome).getByText("How this app uses Supabase")).toBeTruthy();
     expect(within(welcome).getByText("— Michael")).toBeTruthy();
-    fireEvent.click(within(welcome).getByText("Take a look"));
+    fireEvent.click(within(welcome).getByText("Explore on my own"));
     expect(screen.queryByRole("dialog", { name: "Welcome" })).toBeNull();
     expect(localStorage.getItem("cs-demo-welcomed")).toBe("1");
     expect(screen.getByText("Demo · not saved")).toBeTruthy();

@@ -3,6 +3,8 @@ import storage from "./storage";
 import { signOut } from "./Auth";
 import { DEMO, demoFetchListings, registerDemoData } from "./demoRuntime";
 import { DemoPublishModal } from "./Demo";
+import { Tutorial } from "./Tutorial";
+import { startTutorial } from "./tutorial.js";
 import { fetchListings, postStep, fetchPriceComps, fetchRawSample, reconcile } from "./sync";
 import { planSync, trackedVins, nextProfileMeta, estimateCost, profileStatus, searchSig, mergeColorCache, COUNT_WARN, ROWS as MC_ROWS, FULL_REFRESH_DAYS, DECODE_MAX } from "./syncPlan";
 import { travelFacts, DRIVE_MAX_MI, AIRPORT_NEAR_MI } from "./travel";
@@ -1401,6 +1403,7 @@ export default function App() {
         </nav>
       </header>
 
+      <Tutorial demo={DEMO} />
       {publishOpen && <DemoPublishModal data={data} candidates={candidates} onClose={function () { setPublishOpen(false); }} />}
       {quotaOpen && (
         <QuotaModal data={data} summary={quotaSummary} onClose={function () { setQuotaOpen(false); }} />
@@ -1630,7 +1633,7 @@ export function QuotaGauge({ summary, onClick }) {
   var label = u == null ? "MarketCheck quota: not measured yet — click for details"
     : "MarketCheck quota: " + Math.round(u * 100) + "% used, " + Number(summary.totalRemaining).toLocaleString() + " calls left — click for details";
   return (
-    <button onClick={onClick} title={label} aria-label={label}
+    <button onClick={onClick} title={label} aria-label={label} data-tour="quota"
       style={{ background: "none", border: "none", padding: 2, cursor: "pointer", display: "flex", alignItems: "center", lineHeight: 0 }}>
       <QuotaRing used={u} size={24} stroke={3}>
         {u == null && <text x="12" y="16" textAnchor="middle" fontSize="11" fill="#777">?</text>}
@@ -2361,7 +2364,7 @@ function ProfilesTab({ data, save, keyOk, scoreModel, refreshFacets }) {
         <h2 style={S.secT}>Vehicle Profiles</h2>
         <div style={{ display: "flex", gap: 6 }}>
           <button style={S.secBtn} onClick={function () { setShowIO(!showIO); setImpMsg(null); }}>{showIO ? "Close" : "Import / export"}</button>
-          <button style={S.priBtn} onClick={function () { setWizard(true); }}>+ Add</button>
+          <button style={S.priBtn} data-tour="add-profile" onClick={function () { setWizard(true); }}>+ Add</button>
         </div>
       </div>
       {wizard && <ProfileWizard data={data} keyOk={keyOk} onClose={function () { setWizard(false); }}
@@ -2381,7 +2384,7 @@ function ProfilesTab({ data, save, keyOk, scoreModel, refreshFacets }) {
       )}
       {data.profiles.map(function (p) {
         return (
-          <div key={p.id} style={Object.assign({}, S.card, { opacity: p.active ? 1 : 0.5 })}>
+          <div key={p.id} data-tour="profile" style={Object.assign({}, S.card, { opacity: p.active ? 1 : 0.5 })}>
             <div style={S.profH}>
               <div style={S.profHL}>
                 <RoleBadge role={p.role} />
@@ -2778,7 +2781,7 @@ function CriteriaTab({ data, saveRecalc, save }) {
 
       <PromptEditor data={data} save={save} defaultSystem={defaults.system} />
 
-      <div style={S.card}>
+      <div style={S.card} data-tour="criteria">
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
           <span style={S.lbl}>Total: {tot}</span>{tot !== 100 && <span style={{ color: "#c44", fontSize: 13 }}>⚠ Should = 100</span>}
         </div>
@@ -3151,7 +3154,7 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings, onQuota
   return (
     <div>
       <div style={S.secH}><h2 style={S.secT}>Price check</h2></div>
-      <div style={S.card}>
+      <div style={S.card} data-tour="price">
         <p style={S.help}>Is an asking price fair? Enter a VIN or a description and it's judged against comparable cars in <span style={{ color: "#c8c8d0" }}>your own tracked + rejected data</span> — free and offline. Thin on comps? <span style={{ color: "#c8c8d0" }}>Check the live market</span> to widen the pool with current MarketCheck listings. With an Anthropic key set, you can also <span style={{ color: "#c8c8d0" }}>Ask AI for a verdict</span>.</p>
 
         {(data.profiles || []).length > 0 && (
@@ -3546,7 +3549,7 @@ function CompareTab({ data, cardCtx, saveCols }) {
         )}
         <div ref={wrapRef} className="cs-wide" style={Object.assign({}, S.card, { overflowX: "auto", padding: 0 })}>
           <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%" }}>
-            <thead>
+            <thead data-tour="compare">
               <tr>
                 <th {...headerProps(idCol)} ref={function (el) { thRefs.current.listing = el; }} style={Object.assign({}, rowLabel, { zIndex: 3,  color: "#6b6b76", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 500, borderBottom: "1px solid #2a2d38" })}>
                   {listings.length} listing{listings.length > 1 ? "s" : ""}{sortIndicator(sort, idCol)}
@@ -3630,10 +3633,13 @@ function HelpTab() {
   var note = { fontSize: 12, color: "#8a8a96", lineHeight: 1.55, margin: "4px 0 0" };
   return (
     <div>
-      <div style={S.secH}><h2 style={S.secT}>How this works</h2></div>
+      <div style={S.secH}><h2 style={S.secT}>How this works</h2>
+        <button style={S.priBtn} onClick={startTutorial}>▶ Start the tutorial</button>
+      </div>
 
       <div style={S.card}>
         <h3 style={S.cardH}>The basic flow</h3>
+        <p style={li}><span style={b}>Tutorial</span> — <span style={b}>▶ Start the tutorial</span> (above) walks through the app in about two minutes, spotlighting each feature in the order you'd use it. Steps that would spend MarketCheck calls or your Anthropic key only explain; in the demo they run, simulated.</p>
         <p style={li}><span style={b}>1. Profiles</span> — define the cars you're hunting (make/model/years/trims, price &amp; mileage caps, must-haves, dealbreakers). Active profiles drive every search. <span style={b}>+ Add</span> opens a wizard: pick the make, model, years and powertrain, then <span style={b}>Explore</span> (one MarketCheck call) shows how many are for sale nationwide, by year and trim, and what they cost — quick picks set the price and mileage caps by what share of cars they keep (no extra calls), and with an Anthropic key, AI suggests must-haves, dealbreakers and years to avoid. Creating the profile checks its exact count (one more call).</p>
         <p style={li}><span style={b}>2. Sync</span> — pulls matching dealer inventory and reconciles it with what you're already tracking.</p>
         <p style={li}><span style={b}>3. Candidates</span> — brand-new matches land in a review queue. Approve the good ones to your watchlist, skip the rest.</p>
@@ -3815,7 +3821,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       <div style={S.secH}>
         <h2 style={S.secT}>Listings</h2>
         <div style={{ display: "flex", gap: 6 }}>
-          <button style={Object.assign({}, S.secBtn, syncing ? { opacity: 0.6 } : {})} disabled={syncing} onClick={function () { var w = DEMO ? null : syncWarning(data); if (!w || window.confirm(w)) doSync(); }}>{syncing ? "Syncing…" : "↻ Sync"}</button>
+          <button data-tour="sync" style={Object.assign({}, S.secBtn, syncing ? { opacity: 0.6 } : {})} disabled={syncing} onClick={function () { var w = DEMO ? null : syncWarning(data); if (!w || window.confirm(w)) doSync(); }}>{syncing ? "Syncing…" : "↻ Sync"}</button>
           <button style={S.secBtn} onClick={function () { setShowImport(!showImport); setShowAdd(false); }}>{showImport ? "Close" : "Import"}</button>
           <button style={S.priBtn} onClick={function () { setShowAdd(!showAdd); setShowImport(false); setEdListing(null); }}>{showAdd ? "Cancel" : "+ Add"}</button>
         </div>
@@ -3838,7 +3844,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
 
       {/* Filter & Sort bar — also when only candidates / skipped cars exist */}
       {(totalAll > 0 || candidates.length > 0 || (skipped || []).length > 0) && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12, alignItems: "center" }}>
+        <div data-tour="filters" style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12, alignItems: "center" }}>
           <select style={Object.assign({}, S.inp, { flex: "0 0 auto", padding: "5px 8px", fontSize: 12 })} value={filterProf} onChange={function (e) {
             var v = e.target.value;
             setFilterProf(v);
@@ -3893,7 +3899,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       {/* Candidates (trim-filtered per profile) */}
       {shownCands.length > 0 && (
         <div style={S.card}>
-          <div style={S.secH}>
+          <div style={S.secH} data-tour="candidates">
             <h3 style={S.cardH}>Candidates ({shownCands.length})</h3>
             <div style={{ display: "flex", gap: 6 }}>
               {keyStatus.valid && (
@@ -4492,7 +4498,7 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
   var prof = data.profiles.find(function (p) { return p.id === cand.profileId; });
   var scoreColor = cand.compositeScore >= 7 ? "#2d8659" : cand.compositeScore >= 5 ? "#d4a017" : "#c44";
   return (
-    <div style={Object.assign({}, S.card, { borderLeft: "3px solid #2563eb", background: "#12141c" })}>
+    <div data-tour="cand-card" style={Object.assign({}, S.card, { borderLeft: "3px solid #2563eb", background: "#12141c" })}>
       <Thumb photo={cand.photo} link={cand.link} alt={cand.year + " " + cand.vehicle} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
         <div>
@@ -4542,7 +4548,7 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <button style={Object.assign({}, S.priBtn, { padding: "6px 14px", fontSize: 12 })} onClick={onApprove}>✓ Add to Watchlist</button>
         {keyOk && onScore && (
-          <button style={Object.assign({}, S.smBtn, { color: criteriaStale ? "#d4a017" : "#b89edd" }, scoreBusy ? { opacity: 0.6 } : {})} disabled={scoreBusy}
+          <button data-tour="score" style={Object.assign({}, S.smBtn, { color: criteriaStale ? "#d4a017" : "#b89edd" }, scoreBusy ? { opacity: 0.6 } : {})} disabled={scoreBusy}
             title={criteriaStale ? "Scored under criteria/prompt that have since changed — re-score to refresh" : ""}
             onClick={onScore}>{scoring ? "Scoring…" : (cand.scoredAt ? (criteriaStale ? "⟳ Re-score (changed)" : "✨ Re-score") : "✨ Score")}</button>
         )}
@@ -4711,7 +4717,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
   var bc = stale ? "#d4a017" : l.status === "watch" ? "#2d8659" : (l.status === "rejected" || l.status === "sold") ? "#888" : "#d4a017";
   var sc = l.compositeScore >= 7 ? "#2d8659" : l.compositeScore >= 5 ? "#d4a017" : "#c44";
   return (
-    <div style={Object.assign({}, S.card, { borderLeft: "3px solid " + bc })}>
+    <div data-tour={l.status === "watch" ? "watch-card" : undefined} style={Object.assign({}, S.card, { borderLeft: "3px solid " + bc })}>
       <Thumb photo={l.photo} link={l.link} alt={l.year + " " + l.vehicle} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
         <div>
