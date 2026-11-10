@@ -4,10 +4,7 @@
   "outputDirectory": "dist",
   "functions": {
     "api/marketcheck.js": { "maxDuration": 60 },
-    "api/score.js": { "maxDuration": 60 },
-    "api/baseline.js": { "maxDuration": 60 },
-    "api/profile-suggest.js": { "maxDuration": 60 },
-    "api/pricecheck.js": { "maxDuration": 60 },
+    "api/ai.js": { "maxDuration": 60 },
     "api/pricecomps.js": { "maxDuration": 60 },
     "api/cron-sync.js": { "maxDuration": 60 }
   },
