@@ -14,7 +14,7 @@ const oldState = {
 };
 const chain = () => { const c = {}; ["select","eq","maybeSingle","update","insert","order","limit","single","delete","upsert"].forEach(m => c[m] = () => c); c.then = (r) => r({ data: null, error: null }); return c; };
 
-vi.mock("../src/storage", () => ({ default: {
+vi.mock("../src/storage", () => ({ watchState: async () => () => {}, default: {
   get: async () => ({ key: "k", value: JSON.stringify(oldState), rev: 3 }),
   set: () => new Promise(() => {}), // HANGS forever
   delete: async () => ({}),

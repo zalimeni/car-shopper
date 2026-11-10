@@ -2,7 +2,7 @@
 import { describe, it, expect, vi } from "vitest";
 
 vi.mock("../src/supabaseClient", () => ({ supabase: { auth: { getSession: async () => ({ data: {} }) } } }));
-vi.mock("../src/storage", () => ({ default: { get: async () => null, set: async () => {} } }));
+vi.mock("../src/storage", () => ({ watchState: async () => () => {}, default: { get: async () => null, set: async () => {} } }));
 vi.mock("../src/Auth", () => ({ signOut: () => {} }));
 const { migrate } = await import("../src/App.jsx");
 

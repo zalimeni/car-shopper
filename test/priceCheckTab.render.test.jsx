@@ -6,7 +6,7 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 // Avoid importing the whole App/network stack — mock the side-effecty modules
 // App.jsx pulls in, so importing PriceCheckTab is cheap and offline.
 vi.mock("../src/supabaseClient", () => ({ supabase: { auth: { getSession: async () => ({ data: {} }) } } }));
-vi.mock("../src/storage", () => ({ default: { get: async () => null, set: async () => {} } }));
+vi.mock("../src/storage", () => ({ watchState: async () => () => {}, default: { get: async () => null, set: async () => {} } }));
 vi.mock("../src/Auth", () => ({ signOut: () => {} }));
 const fpc = vi.hoisted(() => ({ fn: null }));
 vi.mock("../src/sync", () => ({ fetchListings: async () => ({}), fetchPriceComps: (...a) => (fpc.fn ? fpc.fn(...a) : Promise.resolve({ listings: [] })), fetchRawSample: async () => ({}), reconcile: () => ({}) }));
