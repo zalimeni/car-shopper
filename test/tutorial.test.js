@@ -7,7 +7,7 @@ describe("tutorial steps", () => {
     expect(stepsFor(true).map((s) => s.id)).not.toContain("done");
     expect(stepsFor(false).map((s) => s.id)).toContain("done");
     expect(stepsFor(false).map((s) => s.id)).not.toContain("done-demo");
-    expect(stepsFor(true).length).toBe(14);
+    expect(stepsFor(true).length).toBe(18);
   });
   it("costly actions run only in the demo; signed in they just explain", () => {
     var sync = STEPS.find((s) => s.id === "sync");
@@ -51,5 +51,21 @@ describe("looksDone", () => {
     expect(looksDone({ disabled: false, textContent: "Syncing…" })).toBe(false);
     expect(looksDone({ disabled: false, textContent: "↻ Sync" })).toBe(true);
     expect(looksDone(null)).toBe(true);
+  });
+});
+
+describe("tutorial follow-ups", () => {
+  it("the result step follows the car that was scored", () => {
+    var scored = STEPS.find((s) => s.id === "scored");
+    expect(scored.targetFor({ car: "VIN1" })).toBe('[data-tour="cand-card"][data-car="VIN1"]');
+    expect(scored.targetFor({})).toBeNull(); // falls back to the first candidate card
+    expect(STEPS[STEPS.indexOf(scored) - 1].remember).toBe("car");
+  });
+  it("the quota dialog steps run in a row, opened by a free action", () => {
+    var ids = STEPS.map((s) => s.id);
+    var q = ids.indexOf("quota");
+    expect(ids.slice(q, q + 4)).toEqual(["quota", "quota-head", "quota-syncs", "quota-costs"]);
+    expect(runsAction(STEPS[q], false)).toBe(true); // opening it costs nothing, so it runs signed in too
+    expect(STEPS.slice(q + 1, q + 4).every((s) => s.modal === "quota")).toBe(true);
   });
 });
