@@ -1,7 +1,13 @@
-# Minimal Supabase CLI config. `project_id` is just a local label; CI selects the
-# production project with `supabase link --project-ref <ref>`. Regenerate with
-# `supabase init` if a newer CLI needs additional fields.
+# Supabase CLI config for local development and CI (`supabase db start`,
+# `supabase test db`). `project_id` is just a local label; CI selects the
+# production project with --db-url. Settings not listed here use the CLI's
+# defaults (`supabase init` writes the full file if you want to edit them).
 project_id = "car-shopper"
 
 [db]
-major_version = 15
+port = 54322
+# Same major version as the hosted project and CI.
+major_version = 16
+
+[db.seed]
+enabled = false
