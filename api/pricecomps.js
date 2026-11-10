@@ -1,6 +1,6 @@
 // Live-market comp broadening for the Price Check tool.
 //
-// POST { query:{year,make,model,trim,mileage}, hubs:[{n,z,lat,lon,r}], marketcheckKeys?:[...] }
+// POST { query:{year,make,model,trim,mileage}, hubs:[{n,z,lat,lon,r}], spentKeys? }
 //   -> { listings:[<normalized>], errors, rateLimited, rateLimitInfo, quota, keysUsed }
 //
 // Fires a one-off MarketCheck active search for the specific vehicle so the
@@ -12,6 +12,7 @@
 // control.
 
 import { authorize } from "./_auth.js";
+import { getMarketcheckKeys } from "./_keys.js";
 import { createSession, runStep, keyId, resolveKeys } from "./marketcheck.js";
 
 // How far above the subject's mileage to fetch (client bands around it after).
@@ -34,7 +35,7 @@ export default async function handler(req, res) {
 
   // The caller's own keys (in order), or the shared server key only if they have none.
   const envKey = process.env.MARKETCHECK_API_KEY;
-  const resolved = resolveKeys(body.marketcheckKeys, envKey);
+  const resolved = resolveKeys(await getMarketcheckKeys(auth.user.id), envKey);
   const keys = resolved.keys;
   if (!keys.length) { res.status(500).json({ error: "No MarketCheck API key — add one in Settings, or set MARKETCHECK_API_KEY on the server" }); return; }
 

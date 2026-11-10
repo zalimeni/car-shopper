@@ -13,7 +13,8 @@ import { layoutColumns, moveColumn, togglePin } from "./compareCols";
 import { trimHideReason, trimState, setTrimState, nextTrimState, facetChoices } from "./trims";
 import { shareUnder, capChoices, estimateMatches, rangeYears, yearOptions, yearChoices, defaultName } from "./profileWizard";
 import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBaseline, generatePriceAssessment, suggestProfile, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
-import { getMe, listAllowed, addAllowed, removeAllowed } from "./admin";
+import { getMe, listAllowed, addAllowed, removeAllowed, setAllowedFlags } from "./admin";
+import { listMarketcheckKeys, addMarketcheckKey, importMarketcheckKeys, renameMarketcheckKey, reorderMarketcheckKeys, removeMarketcheckKey, legacyBlobKeys } from "./keys";
 import { listSnapshots, restoreSnapshot } from "./snapshots";
 import { buildPriceHistoryCsv } from "./priceExport";
 import { localPriceCheck } from "./priceCheck";
@@ -94,7 +95,6 @@ var DEFAULT_SETTINGS = {
   taxRate: TAX,
   tagline: "2-car · Durham · ≤$40K",
   franchiseOnly: false, // when true, sync targets franchise dealers only (excludes independent)
-  marketcheckKeys: [], // per-user MarketCheck API keys, tried in order with quota fallback: [{ key, label }]
   // Where the buyer lives: distance flags (drive vs. ship), the "location" score,
   // and Price Check's live comps are all measured from here. Searches themselves
   // are nationwide.
@@ -108,14 +108,15 @@ var DEFAULT_SETTINGS = {
   compareCols: null, // Compare table layout { order: [colKey], pinned: [colKey] } (src/compareCols.js); null = default
 };
 function getSettings(data) { return Object.assign({}, DEFAULT_SETTINGS, (data && data.settings) || {}); }
-// Ordered list of the user's MarketCheck key strings (empty -> server uses its shared key).
-function mcKeys(data) {
-  return (getSettings(data).marketcheckKeys || []).map(function (k) { return (k && k.key ? k.key : k) || ""; }).filter(Boolean);
-}
+// The user's MarketCheck keys as metadata [{ id, label, last4 }], in the order
+// they're used — the keys themselves live in the server-side vault (src/keys.js,
+// api/_keys.js); an empty list means syncs use the app's shared key. The demo
+// keeps its pretend key in settings.
+function mcKeyList(data, vault) { return DEMO ? (getSettings(data).marketcheckKeys || []) : (vault || []); }
 // Ids of keys whose stored quota says they're spent this month — the server starts
 // past them instead of paying a call to find out again.
-function mcSpent(data) {
-  return spentKeyIds(getSettings(data).marketcheckKeys || [], getSettings(data).mcQuota);
+function mcSpent(data, vault) {
+  return spentKeyIds(mcKeyList(data, vault), getSettings(data).mcQuota);
 }
 // Settings that change what every search returns (part of each profile's search signature).
 function planOpts(data) {
@@ -845,13 +846,40 @@ export default function App() {
   var [scoringActive, setScoringActive] = useState([]); // the exact items being scored right now (for per-card "Scoring…")
   var [scoreMsg, setScoreMsg] = useState(null);
   var [isAdmin, setIsAdmin] = useState(false);
+  // MarketCheck key metadata from the vault; null until loaded (or unreachable).
+  var [mcVault, setMcVault] = useState(null);
+  var mcVaultRef = useRef(null);
+  mcVaultRef.current = mcVault;
 
   useEffect(function () {
     var cancelled = false;
     getKeyStatus().then(function (s) { if (!cancelled) { setKeyStatus(s); setKeyLoaded(true); } });
     getMe().then(function (m) { if (!cancelled && m && m.isAdmin) setIsAdmin(true); });
+    if (!DEMO) listMarketcheckKeys().then(function (l) { if (!cancelled && l) setMcVault(l); });
     return function () { cancelled = true; };
   }, []);
+
+  // One-time move: MarketCheck keys saved before the vault sit in the synced
+  // settings. Hand them to the server, and drop the blob's copy only once the
+  // server has them. (The scheduled sync and a backup restore move them too.)
+  var movingKeys = useRef(false);
+  useEffect(function () {
+    if (DEMO || !data || movingKeys.current) return;
+    var old = dedupeKeyEntries(legacyBlobKeys(data.settings));
+    if (!old.length) return;
+    movingKeys.current = true; // once per load; a failure retries on the next one
+    importMarketcheckKeys(old).then(function (list) {
+      setMcVault(list);
+      setData(function (prev) {
+        if (!prev || !prev.settings || !prev.settings.marketcheckKeys) return prev;
+        var st = Object.assign({}, prev.settings);
+        delete st.marketcheckKeys;
+        var nd = Object.assign({}, prev, { settings: st });
+        persist(nd);
+        return nd;
+      });
+    }).catch(function (e) { console.warn("Couldn't move MarketCheck keys to the vault:", e && e.message); });
+  }, [data, persist]);
 
   var autoScore = data ? data.autoScore !== false : true;
   var setAutoScore = useCallback(function (v) {
@@ -974,7 +1002,7 @@ export default function App() {
       }
       var po = planOpts(data);
       var steps = planSync(active, getSettings(data).mcProfiles || {}, Object.assign({ manual: !auto }, po));
-      var res = DEMO ? await demoFetchListings((dataRef.current || data).listings, steps, onSyncProgress, getSettings(data).mcQuota) : await fetchListings(steps, trackedVins(data.listings), opts, { franchiseOnly: po.franchiseOnly, excludeSalt: po.excludeSalt, marketcheckKeys: mcKeys(data), spentKeys: mcSpent(data), colorCache: getSettings(data).mcColors || {},
+      var res = DEMO ? await demoFetchListings((dataRef.current || data).listings, steps, onSyncProgress, getSettings(data).mcQuota) : await fetchListings(steps, trackedVins(data.listings), opts, { franchiseOnly: po.franchiseOnly, excludeSalt: po.excludeSalt, spentKeys: mcSpent(data, mcVaultRef.current), colorCache: getSettings(data).mcColors || {},
         // Queued candidates still without a color get decoded too (they may not come back in this sync).
         alsoDecode: candidates.filter(function (c) { return c.vin && !c.color && !c.baseColor; }).map(function (c) { return c.vin; }) }, onSyncProgress);
       // Reconcile + save against the LATEST state, not the `data` snapshot from
@@ -1085,7 +1113,7 @@ export default function App() {
     if (typeof window === "undefined" || !data) return;
     window.__rawSync = function (vin) {
       var active = data.profiles.filter(function (p) { return p.active; });
-      return fetchRawSample(active, [], vin, mcKeys(data)).then(function (r) { console.log("[rawSync]", r); return r; });
+      return fetchRawSample(active, [], vin).then(function (r) { console.log("[rawSync]", r); return r; });
     };
   }, [data]);
 
@@ -1099,7 +1127,7 @@ export default function App() {
     setRawBusy(true); setRawDebug("");
     try {
       var active = data.profiles.filter(function (p) { return p.active; });
-      var r = await fetchRawSample(active, [], vin.trim(), mcKeys(data));
+      var r = await fetchRawSample(active, [], vin.trim());
       setRawDebug(JSON.stringify(r, null, 2));
     } catch (e) { setRawDebug("Error: " + (e && e.message ? e.message : String(e))); }
     setRawBusy(false);
@@ -1107,7 +1135,7 @@ export default function App() {
 
   // ── MarketCheck quota gauge ──
   var [quotaOpen, setQuotaOpen] = useState(false);
-  var quotaSummary = summarize(((data && getSettings(data).marketcheckKeys) || []), data && getSettings(data).mcQuota);
+  var quotaSummary = summarize(mcKeyList(data, mcVault), data && getSettings(data).mcQuota);
   // Fold per-key quota that rode back on a response we were making anyway (a live
   // Price Check search) into the gauge. Never makes a request of its own.
   var noteQuota = useCallback(function (reports, apiInfo) {
@@ -1213,7 +1241,7 @@ export default function App() {
     var d0 = dataRef.current;
     if (!d0 || !profile || !profile.params || !(profile.params.make || profile.params.model)) return null;
     var po = planOpts(d0);
-    var r = await postStep({ kind: "count", profile: profile }, null, Object.assign({}, po, { marketcheckKeys: mcKeys(d0), spentKeys: mcSpent(d0) }));
+    var r = await postStep({ kind: "count", profile: profile }, null, Object.assign({}, po, { spentKeys: mcSpent(d0, mcVaultRef.current) }));
     var d = dataRef.current || d0;
     var st = getSettings(d);
     var nowIso = new Date().toISOString();
@@ -1423,7 +1451,7 @@ export default function App() {
         </div>
       )}
 
-      {!DEMO && mcKeys(data).length === 0 && tab !== "Settings" && (
+      {!DEMO && mcVault && mcVault.length === 0 && !legacyBlobKeys(data.settings).length && tab !== "Settings" && (
         <div style={S.conflictBar}>
           <span style={{ flex: 1 }}>No MarketCheck API key set — syncs use the app's shared key and may hit its monthly quota. Add your own for reliable results (once you do, the shared key is no longer used).</span>
           <button style={S.smBtn} onClick={function () { setTab("Settings"); }}>Open Settings</button>
@@ -1448,15 +1476,15 @@ export default function App() {
             filterProf={filterProf} setFilterProf={setFilterProf}
             doSync={doSync} syncing={syncing} syncMsg={syncMsg} lastSynced={data.lastSynced}
             unseenCount={data.listings.filter(isUnseenOld).length} archiveUnseen={archiveUnseen}
-            keyStatus={keyStatus} autoScore={autoScore} setAutoScore={setAutoScore}
+            keyStatus={keyStatus} autoScore={autoScore} setAutoScore={setAutoScore} mcKeys={mcKeyList(data, mcVault)}
             scoreBusy={scoreBusy} scoreMsg={scoreMsg} scoreItems={scoreItems} scoringActive={scoringActive}
             scoreModel={scoreModel} setScoreModel={setScoreModel} goSettings={function () { setTab("Settings"); }} />
         )}
         {tab === "Help" && <HelpTab />}
         {tab === "Compare" && <CompareTab data={data} saveCols={saveCompareCols} cardCtx={{ data: data, edListing: edListing, setEdListing: setEdListing, updListing: updListing, delListing: delListing,
           markChk: markChk, scoreItems: scoreItems, scoreBusy: scoreBusy, keyStatus: keyStatus, scoringActive: scoringActive }} />}
-        {tab === "Price" && <PriceCheckTab data={data} candidates={candidates} keyStatus={keyStatus} onQuota={noteQuota} goSettings={function () { setTab("Settings"); }} />}
-        {tab === "Settings" && <SettingsTab data={data} save={save} keyStatus={keyStatus} setKeyStatus={setKeyStatus} />}
+        {tab === "Price" && <PriceCheckTab data={data} candidates={candidates} keyStatus={keyStatus} mcKeys={mcKeyList(data, mcVault)} onQuota={noteQuota} goSettings={function () { setTab("Settings"); }} />}
+        {tab === "Settings" && <SettingsTab data={data} save={save} keyStatus={keyStatus} setKeyStatus={setKeyStatus} mcVault={mcVault} setMcVault={setMcVault} />}
         {tab === "Admin" && isAdmin && <AdminTab />}
       </main>
       <footer style={S.footer}>
@@ -1555,7 +1583,8 @@ var RESYNC_WARN_HOURS = 6;
 export function syncProgressText(info) {
   return "Searching… " + info.done + "/" + info.total + (info.label ? " · " + info.label : "") + " · " + (info.listings || []).length + " found";
 }
-export function syncWarning(data, nowMs) {
+// keys: the MarketCheck key list (mcKeyList) the quota is summed over.
+export function syncWarning(data, nowMs, keys) {
   if (!data || !data.lastSynced) return null;
   var now = nowMs != null ? nowMs : Date.now();
   var ageH = (now - Date.parse(data.lastSynced)) / 3600000;
@@ -1564,7 +1593,7 @@ export function syncWarning(data, nowMs) {
   var active = (data.profiles || []).filter(function (p) { return p.active; });
   // The ↻ Sync button fully refreshes every active profile.
   var cost = estimateCost(active, s.mcProfiles || {}, data.listings, Object.assign({ manual: true }, planOpts(data)), now);
-  var sum = summarize(s.marketcheckKeys || [], s.mcQuota, now);
+  var sum = summarize(keys || s.marketcheckKeys || [], s.mcQuota, now);
   var newest = (data.listings || []).reduce(function (m, l) { return l.mcSeen && l.mcSeen > m ? l.mcSeen : m; }, "");
   var ago = ageH < 1 ? Math.max(1, Math.round(ageH * 60)) + " min" : Math.round(ageH) + " hour" + (Math.round(ageH) === 1 ? "" : "s");
   var calls = cost.min === cost.max ? String(cost.min) : cost.min + "–" + cost.max;
@@ -1966,18 +1995,7 @@ export function SettingsCard({ data, save }) {
   var [franchiseOnly, setFranchiseOnly] = useState(!!s.franchiseOnly);
   var [saltMode, setSaltMode] = useState(s.saltMode === "flag" ? "flag" : "exclude");
   var [defColors, setDefColors] = useState((s.defaultExcludeColors || []).slice());
-  var [mck, setMck] = useState((s.marketcheckKeys || []).map(function (k) { return { key: (k && k.key ? k.key : k) || "", label: (k && k.label) || "" }; }));
   var [home, setHome] = useState(s.homeBase || null);
-
-  function setMckField(i, field, val) { setMck(function (prev) { return prev.map(function (k, j) { return j === i ? Object.assign({}, k, { [field]: val }) : k; }); }); }
-  function addMck() { setMck(function (prev) { return prev.concat([{ key: "", label: "" }]); }); }
-  function delMck(i) { setMck(function (prev) { return prev.filter(function (_, j) { return j !== i; }); }); }
-  function moveMck(i, dir) {
-    setMck(function (prev) {
-      var j = i + dir; if (j < 0 || j >= prev.length) return prev;
-      var copy = prev.slice(); var t = copy[i]; copy[i] = copy[j]; copy[j] = t; return copy;
-    });
-  }
 
   // A home base entered as a bare ZIP gets its coordinates on save (the location
   // list is loaded only then); if the list can't load, the save goes ahead.
@@ -1986,9 +2004,8 @@ export function SettingsCard({ data, save }) {
     else saveWith(null);
   }
   function saveWith(idx) {
-    var cleanMck = dedupeKeyEntries(mck); // the one place duplicate keys are handled
     var hb = withHomeCoords(home, idx);
-    save(Object.assign({}, data, { settings: Object.assign({}, s, { budget: parseInt(budget) || 0, tagline: tagline.trim(), franchiseOnly: franchiseOnly, saltMode: saltMode, defaultExcludeColors: defColors, marketcheckKeys: cleanMck, homeBase: hb ? { n: hb.n, z: hb.z, lat: hb.lat, lon: hb.lon } : null }) }));
+    save(Object.assign({}, data, { settings: Object.assign({}, s, { budget: parseInt(budget) || 0, tagline: tagline.trim(), franchiseOnly: franchiseOnly, saltMode: saltMode, defaultExcludeColors: defColors, homeBase: hb ? { n: hb.n, z: hb.z, lat: hb.lat, lon: hb.lon } : null }) }));
     setOpen(false);
   }
 
@@ -1999,7 +2016,7 @@ export function SettingsCard({ data, save }) {
         <button style={S.secBtn} onClick={function () { setOpen(!open); }}>{open ? "Close" : "Edit"}</button>
       </div>
       {!open ? (
-        <p style={S.help}>Budget ${Number(s.budget || 0).toLocaleString()} · home base {s.homeBase ? (s.homeBase.n || s.homeBase.z) : "not set"} · salt-belt dealers {s.saltMode === "flag" ? "flagged" : "excluded"}{s.franchiseOnly ? " · franchise dealers only" : ""}{(s.marketcheckKeys || []).length ? " · " + s.marketcheckKeys.length + " MarketCheck key" + (s.marketcheckKeys.length === 1 ? "" : "s") : ""}</p>
+        <p style={S.help}>Budget ${Number(s.budget || 0).toLocaleString()} · home base {s.homeBase ? (s.homeBase.n || s.homeBase.z) : "not set"} · salt-belt dealers {s.saltMode === "flag" ? "flagged" : "excluded"}{s.franchiseOnly ? " · franchise dealers only" : ""}</p>
       ) : (
         <div>
           <div style={S.grid2}>
@@ -2035,24 +2052,7 @@ export function SettingsCard({ data, save }) {
             <input type="checkbox" checked={franchiseOnly} onChange={function (e) { setFranchiseOnly(e.target.checked); }} />
             Franchise dealers only <span style={{ color: "#6b6b76" }}>— excludes independent dealers from sync results</span>
           </label>
-          <div style={{ marginTop: 14 }}>
-            <label style={S.lbl}>MarketCheck API keys (tried top-to-bottom; falls over to the next when one hits its quota)</label>
-            {mck.map(function (k, i) {
-              return (
-                <div key={i} style={{ display: "flex", gap: 6, marginTop: 6, alignItems: "center" }}>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 1, color: "#6b6b76", fontSize: 10 }}>
-                    <button style={Object.assign({}, S.smBtn, { padding: "0 5px", opacity: i === 0 ? 0.3 : 1 })} disabled={i === 0} onClick={function () { moveMck(i, -1); }}>▲</button>
-                    <button style={Object.assign({}, S.smBtn, { padding: "0 5px", opacity: i === mck.length - 1 ? 0.3 : 1 })} disabled={i === mck.length - 1} onClick={function () { moveMck(i, 1); }}>▼</button>
-                  </div>
-                  <input style={Object.assign({}, S.inp, { width: 110 })} value={k.label} placeholder="label (optional)" onChange={function (e) { setMckField(i, "label", e.target.value); }} />
-                  <input style={Object.assign({}, S.inp, { flex: 1, fontFamily: "monospace" })} type="password" autoComplete="off" value={k.key} placeholder="MarketCheck API key" onChange={function (e) { setMckField(i, "key", e.target.value); }} />
-                  <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { delMck(i); }}>×</button>
-                </div>
-              );
-            })}
-            <button style={Object.assign({}, S.smBtn, { marginTop: 6 })} onClick={addMck}>+ Add MarketCheck key</button>
-          </div>
-          <p style={S.help}>Budget powers the "budget left" math. Franchise-only applies to future syncs; listings already saved from independent dealers stay until you remove them. Your MarketCheck keys are stored in your synced settings and used server-side, top to bottom — the next one takes over only when the one before it has used up its monthly quota. Add any and the app's shared key is never used, even if yours run out; leave the list empty to use the shared key.</p>
+          <p style={S.help}>Budget powers the "budget left" math. Franchise-only applies to future syncs; listings already saved from independent dealers stay until you remove them.</p>
           <button style={Object.assign({}, S.priBtn, { marginTop: 6 })} onClick={saveAll}>Save settings</button>
         </div>
       )}
@@ -2061,11 +2061,12 @@ export function SettingsCard({ data, save }) {
 }
 
 // ── Settings tab: user-level config (was at the top of Profiles) ──
-function SettingsTab({ data, save, keyStatus, setKeyStatus }) {
+function SettingsTab({ data, save, keyStatus, setKeyStatus, mcVault, setMcVault }) {
   return (
     <div>
       <SettingsCard data={data} save={save} />
       <KeyCard keyStatus={keyStatus} setKeyStatus={setKeyStatus} />
+      {!DEMO && <McKeysCard keys={mcVault} setKeys={setMcVault} />}
     </div>
   );
 }
@@ -2111,6 +2112,70 @@ function KeyCard({ keyStatus, setKeyStatus }) {
           placeholder="sk-ant-..." value={keyInput} onChange={function (e) { setKeyInput(e.target.value); }} />
         <button style={Object.assign({}, S.priBtn, { padding: "7px 14px", fontSize: 13 }, busy ? { opacity: 0.6 } : {})} disabled={busy || !keyInput.trim()} onClick={doSave}>{busy ? "Validating…" : "Save"}</button>
         {configured && <button style={S.secBtn} disabled={busy} onClick={doRemove}>Remove</button>}
+      </div>
+      {err && <div style={{ fontSize: 12, color: "#c44", marginTop: 6 }}>{err}</div>}
+    </div>
+  );
+}
+
+// MarketCheck keys, kept in the same server-side vault as the Anthropic key.
+// Every change is one /api/keys call (src/keys.js) that answers with the new
+// list; the browser only ever sees each key's label and last 4 characters.
+export function McKeysCard({ keys, setKeys }) {
+  var [keyInput, setKeyInput] = useState("");
+  var [labelInput, setLabelInput] = useState("");
+  var [busy, setBusy] = useState(false);
+  var [err, setErr] = useState("");
+  var list = keys || [];
+
+  async function run(fn) {
+    setBusy(true); setErr("");
+    try { setKeys(await fn()); return true; }
+    catch (e) { setErr(e.message || "Couldn't update MarketCheck keys"); return false; }
+    finally { setBusy(false); }
+  }
+  async function doAdd() {
+    if (!keyInput.trim()) return;
+    if (await run(function () { return addMarketcheckKey(keyInput.trim(), labelInput.trim()); })) { setKeyInput(""); setLabelInput(""); }
+  }
+  function move(i, dir) {
+    var j = i + dir;
+    if (j < 0 || j >= list.length) return;
+    var ids = list.map(function (k) { return k.id; });
+    var t = ids[i]; ids[i] = ids[j]; ids[j] = t;
+    run(function () { return reorderMarketcheckKeys(ids); });
+  }
+  function rename(k) {
+    var v = window.prompt("Label for key ••••" + k.last4, k.label || "");
+    if (v === null) return;
+    run(function () { return renameMarketcheckKey(k.id, v.trim()); });
+  }
+
+  return (
+    <div style={S.card}>
+      <div style={S.secH}>
+        <h3 style={S.cardH}>MarketCheck keys</h3>
+        <span style={{ fontSize: 11, color: list.length ? "#2d8659" : "#888" }}>{keys == null ? "Loading…" : list.length ? list.length + " key" + (list.length === 1 ? "" : "s") : "Using the app's shared key"}</span>
+      </div>
+      <p style={S.help}>Syncs use your keys top to bottom — the next one takes over only when the one before it has used up its monthly quota. Add any and the app's shared key is never used, even if yours run out; with none, syncs use the shared key. Keys are stored encrypted server-side, like the Anthropic key, and never shown again. Get one at marketcheck.com/apis.</p>
+      {list.map(function (k, i) {
+        return (
+          <div key={k.id} style={{ display: "flex", gap: 6, marginTop: 6, alignItems: "center" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+              <button style={Object.assign({}, S.smBtn, { padding: "0 5px", opacity: i === 0 ? 0.3 : 1 })} disabled={busy || i === 0} aria-label="Move up" onClick={function () { move(i, -1); }}>▲</button>
+              <button style={Object.assign({}, S.smBtn, { padding: "0 5px", opacity: i === list.length - 1 ? 0.3 : 1 })} disabled={busy || i === list.length - 1} aria-label="Move down" onClick={function () { move(i, 1); }}>▼</button>
+            </div>
+            <span style={{ flex: 1, fontSize: 13, color: "#c8c8d0" }}>{k.label || "Key " + (i + 1)} <span style={{ fontFamily: "monospace", color: "#8a8a96" }}>••••{k.last4}</span>{k.valid === false && <span style={{ color: "#c44" }}> · unreadable — remove and re-add</span>}</span>
+            <button style={S.smBtn} disabled={busy} onClick={function () { rename(k); }}>Rename</button>
+            <button style={Object.assign({}, S.smBtn, { color: "#888" })} disabled={busy} aria-label="Remove key" onClick={function () { run(function () { return removeMarketcheckKey(k.id); }); }}>×</button>
+          </div>
+        );
+      })}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+        <input style={Object.assign({}, S.inp, { width: 120 })} value={labelInput} placeholder="label (optional)" onChange={function (e) { setLabelInput(e.target.value); }} />
+        <input style={Object.assign({}, S.inp, { flex: 1, minWidth: 160, fontFamily: "monospace" })} type="password" autoComplete="off"
+          placeholder="MarketCheck API key" value={keyInput} onChange={function (e) { setKeyInput(e.target.value); }} />
+        <button style={Object.assign({}, S.priBtn, { padding: "7px 14px", fontSize: 13 }, busy ? { opacity: 0.6 } : {})} disabled={busy || !keyInput.trim()} onClick={doAdd}>{busy ? "Saving…" : "Add key"}</button>
       </div>
       {err && <div style={{ fontSize: 12, color: "#c44", marginTop: 6 }}>{err}</div>}
     </div>
@@ -2980,12 +3045,17 @@ function AdminTab() {
     try { await removeAllowed(email); load(); } catch (e) { setMsg({ ok: false, text: e.message }); }
     setBusy(false);
   }
+  async function flag(email, patch) {
+    setBusy(true); setMsg(null);
+    try { await setAllowedFlags(email, patch); load(); } catch (e) { setMsg({ ok: false, text: e.message }); }
+    setBusy(false);
+  }
 
   return (
     <div>
       <div style={S.secH}><h2 style={S.secT}>Allowlist</h2></div>
       <div style={S.card}>
-        <p style={S.help}>Only these emails (plus any in the <code>ALLOWED_EMAILS</code> env var) can sign in and use the app. Changes here write the <code>allowed_emails</code> table and take effect immediately.</p>
+        <p style={S.help}>The app is invite-only: sign-ups are off, so people get in by an invite from here, and only emails on this list can use the app. Changes write the <code>allowed_emails</code> table and take effect immediately. <b>Admin</b> = this tab and Publish demo; <b>Daily sync</b> = the scheduled background sync runs for that account (spends its MarketCheck quota).</p>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
           <input style={Object.assign({}, S.inp, { flex: 1, minWidth: 180 })} type="email" autoComplete="off" placeholder="person@example.com"
             value={input} onChange={function (e) { setInput(e.target.value); }} onKeyDown={function (e) { if (e.key === "Enter") add(); }} />
@@ -2993,7 +3063,7 @@ function AdminTab() {
         </div>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#8a8a96", marginTop: 8, cursor: "pointer" }}>
           <input type="checkbox" checked={invite} onChange={function (e) { setInvite(e.target.checked); }} />
-          Also send a sign-in invite email (Supabase default email is rate-limited / may land in spam)
+          Also send an invite email (the only way a new person can get an account; Supabase's default email is rate-limited and may land in spam)
         </label>
         {msg && <div style={{ fontSize: 12, marginTop: 8, color: msg.ok ? "#2d8659" : "#c44" }}>{msg.text}</div>}
       </div>
@@ -3001,12 +3071,18 @@ function AdminTab() {
       <div style={S.card}>
         <h3 style={S.cardH}>Allowed emails {emails ? "(" + emails.length + ")" : ""}</h3>
         {emails === null ? <p style={S.empty}>Loading…</p>
-          : emails.length === 0 ? <p style={S.empty}>None in the table — the <code>ALLOWED_EMAILS</code> env var still applies.</p>
+          : emails.length === 0 ? <p style={S.empty}>None yet.</p>
           : emails.map(function (row) {
               return (
                 <div key={row.email} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: "1px solid #1e2028" }}>
                   <span style={{ flex: 1, fontSize: 13, color: "#c8c8d0" }}>{row.email}</span>
                   {row.added_at && <span style={{ fontSize: 11, color: "#555" }}>{String(row.added_at).slice(0, 10)}</span>}
+                  <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#8a8a96", cursor: "pointer" }}>
+                    <input type="checkbox" checked={!!row.is_admin} disabled={busy} onChange={function (e) { flag(row.email, { is_admin: e.target.checked }); }} />Admin
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#8a8a96", cursor: "pointer" }}>
+                    <input type="checkbox" checked={!!row.scheduled_sync} disabled={busy} onChange={function (e) { flag(row.email, { scheduled_sync: e.target.checked }); }} />Daily sync
+                  </label>
                   <button style={Object.assign({}, S.smBtn, { color: "#888" })} disabled={busy} onClick={function () { remove(row.email); }}>Remove</button>
                 </div>
               );
@@ -3080,7 +3156,7 @@ function ConfidenceBadge({ c }) {
   );
 }
 
-export function PriceCheckTab({ data, candidates, keyStatus, goSettings, onQuota }) {
+export function PriceCheckTab({ data, candidates, keyStatus, mcKeys, goSettings, onQuota }) {
   var toneColor = { good: "#2d8659", ok: "#d4a017", high: "#c44" };
   var [q, setQ] = useState({ vin: "", year: "", make: "", model: "", trim: "", mileage: "", askingPrice: "" });
   var [result, setResult] = useState(null);
@@ -3109,7 +3185,7 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings, onQuota
     setLive({ busy: true });
     // One location, not all of them: each location is a separate (billed) query,
     // and comps near home are the ones that matter for a fair-price read.
-    fetchPriceComps(result.query, [hub], mcKeys(data), mcSpent(data)).then(function (r) {
+    fetchPriceComps(result.query, [hub], spentKeyIds(mcKeys || [], getSettings(data).mcQuota)).then(function (r) {
       var merged = localPriceCheck(data, candidates, result.query, { extra: r.listings });
       setResult(Object.assign({ query: result.query }, merged));
       setAi(null); // comps changed — any prior AI verdict is stale
@@ -3702,6 +3778,8 @@ function HelpTab() {
         <p style={li}><span style={b}>Export Listings</span> (footer) dumps your listings as JSON to copy and back up. <span style={b}>Import</span> (Results) accepts the same shape.</p>
         <p style={li}><span style={b}>Export prices (CSV)</span> (footer) downloads every recorded price observation across <span style={b}>all</span> listings — watchlist, rejected, sold, skipped, and candidates — one row per price/date, with year/trim/mileage/dealer-type/CPO/status. Built for offline pricing analysis (e.g. uploading to Claude to reason about model/trim/mileage pricing, including private listings you're evaluating elsewhere).</p>
         <p style={li}><span style={b}>Demo</span> — <span style={b}>/?demo</span> (or "Try the demo" on the sign-in screen) opens a public demo with no sign-in, over a curated, anonymized slice of the owner's data (bundled with the app): edits stay in that tab, everything that would call MarketCheck or Claude is simulated and paced like the real call — ↻ Sync, ✨ Score (modeled on similar cars already scored), the wizard's Explore and suggestions, a profile's AI price baseline, and the Price tab's live market and AI verdict — while a pretend MarketCheck quota counts down. No real call is ever made; Reset in the banner starts over. Admins can also publish their current data with <span style={b}>Publish demo</span> (footer; keys removed, unchecked notes and typed reject reasons cleared) — that copy opens at <span style={b}>/?demo=live</span>.</p>
+        <p style={li}><span style={b}>Keys</span> — your Anthropic key and MarketCheck keys (Settings tab) are stored encrypted on the server and never sent back to the browser; only labels and the last 4 characters show. Keys saved by an older version (inside your synced settings) move there on their own the next time you open the app.</p>
+        <p style={li}><span style={b}>Access</span> — the app is invite-only: there's no sign-up. Admins invite people from the <span style={b}>Admin</span> tab, and set there who else is an admin and whose account gets the daily background sync.</p>
         <p style={li}><span style={b}>Backups</span> (footer) lists automatic server-side snapshots of your whole app state (up to 30, at most one per hour of activity) — restore any of them in two taps; the pre-restore state is snapshotted too, so a restore is undoable.</p>
         <p style={li}>Your data syncs to your account, so signing in elsewhere loads the same watchlist. <span style={b}>Reset All Data</span> (footer) replaces your data with the starter profiles and rules and restarts the wizard (your Anthropic key and the automatic backups are kept).</p>
       </div>
@@ -3716,7 +3794,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   skipped, restoreSkipped, watchSkipped, purgeSkipped,
   importText, setImportText, doImport, importResult, setImportResult,
   filterProf, setFilterProf, doSync, syncing, syncMsg, lastSynced, unseenCount, archiveUnseen,
-  keyStatus, autoScore, setAutoScore, scoreBusy, scoreMsg, scoreItems, scoringActive, scoreModel, setScoreModel, goSettings }) {
+  keyStatus, autoScore, setAutoScore, scoreBusy, scoreMsg, scoreItems, scoringActive, scoreModel, setScoreModel, goSettings, mcKeys }) {
   var [showAdd, setShowAdd] = useState(false);
   var [showImport, setShowImport] = useState(false);
   var [filterRole, setFilterRole] = useState("all");
@@ -3821,7 +3899,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       <div style={S.secH}>
         <h2 style={S.secT}>Listings</h2>
         <div style={{ display: "flex", gap: 6 }}>
-          <button data-tour="sync" style={Object.assign({}, S.secBtn, syncing ? { opacity: 0.6 } : {})} disabled={syncing} onClick={function () { var w = DEMO ? null : syncWarning(data); if (!w || window.confirm(w)) doSync(); }}>{syncing ? "Syncing…" : "↻ Sync"}</button>
+          <button data-tour="sync" style={Object.assign({}, S.secBtn, syncing ? { opacity: 0.6 } : {})} disabled={syncing} onClick={function () { var w = DEMO ? null : syncWarning(data, null, mcKeys); if (!w || window.confirm(w)) doSync(); }}>{syncing ? "Syncing…" : "↻ Sync"}</button>
           <button style={S.secBtn} onClick={function () { setShowImport(!showImport); setShowAdd(false); }}>{showImport ? "Close" : "Import"}</button>
           <button style={S.priBtn} onClick={function () { setShowAdd(!showAdd); setShowImport(false); setEdListing(null); }}>{showAdd ? "Cancel" : "+ Add"}</button>
         </div>

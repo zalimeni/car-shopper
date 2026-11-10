@@ -32,6 +32,12 @@ describe("ingestSnaps / mergeReports", () => {
 
 describe("summarize", () => {
   const store = (snaps) => ({ snaps });
+  it("reads the vault's key metadata (label + last4) the same as key strings", () => {
+    const meta = [{ id: 5, label: "Personal", last4: "1111" }, { id: 6, label: "", last4: "2222" }];
+    const s = summarize(meta, store({ "1111": { remaining: 0, limit: 500, exhausted: true, reset: "2026-11-01T00:00:00Z" } }), NOW);
+    expect(s.rows.map((r) => [r.id, r.label, r.state])).toEqual([["1111", "Personal", "spent"], ["2222", "Key 2", "in use"]]);
+    expect(summarize([{ id: 1, label: "", last4: "" }], store({}), NOW).rows.map((r) => r.id)).toEqual(["shared"]);
+  });
   it("sums capacity across keys and finds the key in use (first with calls left)", () => {
     const s = summarize(keys, store({ "1111": { remaining: 0, limit: 500, exhausted: true, reset: "2026-11-01T00:00:00Z" }, "2222": { remaining: 300, limit: 500, reset: "2026-11-02T00:00:00Z" } }), NOW);
     expect(s.totalRemaining).toBe(300);

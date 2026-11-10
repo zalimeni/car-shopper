@@ -1,12 +1,13 @@
 // Serverless proxy for MarketCheck active-inventory search.
 //
-// Holds MARKETCHECK_API_KEY (server-side only) and translates the app's active
-// vehicle profiles into MarketCheck queries, returning listings normalized to
-// the app's shape. The browser never sees the key.
+// Uses the caller's own MarketCheck keys from the server-only vault
+// (api/_keys.js), or the shared MARKETCHECK_API_KEY when they have none, and
+// translates the app's active vehicle profiles into MarketCheck queries,
+// returning listings normalized to the app's shape. The browser never sees a key.
 //
 // Request:  POST one sync step (see src/syncPlan.js):
 //           { kind: "full" | "new" | "count" | "vins", profile: { id, name, params },
-//             since, vins, excludeSalt, franchiseOnly, marketcheckKeys, spentKeys }
+//             since, vins, excludeSalt, franchiseOnly, spentKeys }
 // Response: { listings: [<normalized>], numFound, errors, notices, calls, keyQuotas, ... }
 //
 // Searches are nationwide, one profile at a time, with salt-belt states left out
@@ -22,20 +23,21 @@
 // maps it, for confirming live field names (API key redacted from the echo).
 
 import { authorize } from "./_auth.js";
+import { getMarketcheckKeys } from "./_keys.js";
 import { mapPowertrain, parseYears } from "../src/queryPlan.js";
 import { searchStates } from "../src/regions.js";
 import { isoMcTime } from "../src/quota.js";
 
 export { mapPowertrain, parseYears };
 
-const HOST = process.env.MARKETCHECK_HOST || "https://api.marketcheck.com";
+const HOST = "https://api.marketcheck.com";
 const ENDPOINT = "/v2/search/car/active";
 // Radius for the one location-based search left (Price Check's live comps around
-// the home base). Free tier caps it at 100mi; override with MARKETCHECK_RADIUS.
-const RADIUS_MI = Number(process.env.MARKETCHECK_RADIUS) || 100;
+// the home base). The free tier caps it at 100 mi.
+const RADIUS_MI = 100;
 const ROWS = 50; // page size per request
-// Rows Price Check's live comps search pages up to (override: MARKETCHECK_MAX_ROWS).
-const MAX_ROWS = Number(process.env.MARKETCHECK_MAX_ROWS) || 200;
+// Rows Price Check's live comps search pages up to.
+const MAX_ROWS = 200;
 // Only car_type=used is queried: it already includes certified pre-owned. Verified
 // against the live API (Oct 2026, 2021-22 RAV4 within 100 mi of Durham): used=167,
 // used+exclude_certified=156, certified=11 — so a separate certified query just
@@ -43,12 +45,16 @@ const MAX_ROWS = Number(process.env.MARKETCHECK_MAX_ROWS) || 200;
 // The account's pagination ceiling (start + rows); beyond it MarketCheck answers
 // 422 "Subscribed package pagination limit of 500 rows exceeded" — and still
 // charges the call.
-const PAGE_LIMIT = Number(process.env.MARKETCHECK_PAGE_LIMIT) || 500;
+const PAGE_LIMIT = 500;
 // Free tier rate-limits bursts; space sequential queries out and retry 429s.
-const THROTTLE_MS = Number(process.env.MARKETCHECK_THROTTLE_MS) || 500;
+let THROTTLE_MS = 500;
+// Tests shorten the spacing so they don't sit through it.
+export function setThrottleMs(ms) { THROTTLE_MS = ms; }
 const MAX_RETRIES = 3;
 // No single MarketCheck call may hang the function: past this it's abandoned.
-const CALL_TIMEOUT_MS = Number(process.env.MARKETCHECK_CALL_TIMEOUT_MS) || 15000;
+const CALL_TIMEOUT_MS = 15000;
+// Each step stops issuing calls after this, under the 60 s function limit.
+export const STEP_BUDGET_MS = 50000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -57,9 +63,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // unpinned clients to the next major version on its own schedule. Responses in
 // Oct 2026 said the default (v4.8.0) was deprecated 2026-08-07, sunset 2027-02-28.
 // Pinning keeps us on the version normalize()/buildUrl() were validated against
-// until we choose to move. Set MARKETCHECK_API_VERSION to change it, or to an
-// empty string to send no pin at all.
-export const API_VERSION = process.env.MARKETCHECK_API_VERSION != null ? String(process.env.MARKETCHECK_API_VERSION).trim() : "v4.8.0";
+// until we choose to move (change it here, with normalize()/buildUrl() and the
+// test fixture).
+export const API_VERSION = "v4.8.0";
 
 function withVersion(opts, pin) {
   const headers = Object.assign({ Accept: "application/json" }, (opts && opts.headers) || {});
@@ -216,7 +222,7 @@ export default async function handler(req, res) {
   // none, the shared server key. Search moves to the next key only when one's
   // monthly quota is spent (resolveKeys / isSpent).
   const envKey = process.env.MARKETCHECK_API_KEY;
-  const resolved = resolveKeys(body.marketcheckKeys, envKey);
+  const resolved = resolveKeys(await getMarketcheckKeys(auth.user.id), envKey);
   const keys = resolved.keys;
   if (!keys.length) {
     res.status(500).json({ error: "No MarketCheck API key — add one in Settings, or set MARKETCHECK_API_KEY on the server" });
@@ -373,7 +379,7 @@ export function createSession(keys, opts) {
     errors: [], notices: [], rateLimited: false, rateLimitInfo: null, quota: null,
     dealerType: opts.dealerType || null, first: true, timeUp: false,
     // Stop issuing new calls before the 60 s function limit, returning what we have.
-    deadline: Date.now() + (Number(opts.budgetMs) || Number(process.env.MARKETCHECK_BUDGET_MS) || 50000),
+    deadline: Date.now() + (Number(opts.budgetMs) || STEP_BUDGET_MS),
     rowsSeen: 0, malformed: 0, shapeless: false,
   };
 }

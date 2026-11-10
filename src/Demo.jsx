@@ -97,10 +97,10 @@ export function WelcomeModal({ onClose, first }) {
 
         <h3 style={D.h3}>How this app uses Supabase</h3>
         <ul style={{ margin: "0 0 12px", paddingLeft: 18, fontSize: 13, color: "#c8c8d0" }}>
-          <li style={li}><b>Sign-in:</b> email magic links or one-time codes (Supabase Auth), plus an allowlist — anyone can request a link, only approved emails get in.</li>
+          <li style={li}><b>Sign-in:</b> invite-only — sign-ups are off, an admin invites people by email, and they sign in with a magic link or one-time code (Supabase Auth). An allowlist table decides who may use the app and who is an admin.</li>
           <li style={li}><b>User data:</b> one JSON document per user in a Postgres table, guarded by row-level security, so a user can only ever read or write their own row. A simple revision counter stops two devices from overwriting each other.</li>
           <li style={li}><b>Backups:</b> a database trigger keeps rolling snapshots of that document, restorable from the app.</li>
-          <li style={li}><b>AI key vault:</b> each user's Anthropic key is encrypted (AES-256-GCM) and only the server functions can read it.</li>
+          <li style={li}><b>Key vault:</b> each user's Anthropic and MarketCheck keys are encrypted (AES-256-GCM, bound to their owner) in a table only the server functions can read.</li>
           <li style={li}><b>Schema changes:</b> SQL migrations, applied by GitHub Actions on merge.</li>
           <li style={li}><b>This demo:</b> none of it. The data is a static file that ships with the app, and nothing you do here is sent anywhere.</li>
         </ul>

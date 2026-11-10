@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-process.env.MARKETCHECK_THROTTLE_MS = "1";
 vi.mock("../api/_auth.js", () => ({ authorize: async () => ({ user: { id: "u1" } }), safeEqual: () => true, DEFAULT_ALLOW: "" }));
-const { createSession, runStep, readApiInfo, API_VERSION } = await import("../api/marketcheck.js");
+const { createSession, runStep, readApiInfo, API_VERSION, setThrottleMs } = await import("../api/marketcheck.js");
+setThrottleMs(1); // don't sit through the real 500 ms spacing
 // One full-refresh step for the first profile (the old searchListings shape).
 const searchListings = (key, profiles) => runStep(createSession([key]), { kind: "full", profile: profiles[0] });
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 
-process.env.MARKETCHECK_THROTTLE_MS = "1";
-const { createSession, runStep, buildUrl, buildVinUrl } = await import("../api/marketcheck.js");
+const { createSession, runStep, buildUrl, buildVinUrl, setThrottleMs } = await import("../api/marketcheck.js");
+setThrottleMs(1); // don't sit through the real 500 ms spacing
 const { SALT_STATES, searchStates } = await import("../src/regions.js");
 
 let calls;

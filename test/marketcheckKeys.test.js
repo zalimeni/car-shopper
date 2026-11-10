@@ -1,13 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-process.env.MARKETCHECK_THROTTLE_MS = "1";
+// The server reads the caller's MarketCheck keys from the vault (api/_keys.js);
+// each request below puts its `marketcheckKeys` there first.
+const vault = vi.hoisted(() => ({ keys: [] }));
+vi.mock("../api/_keys.js", () => ({ getMarketcheckKeys: async () => vault.keys }));
 vi.mock("../api/_auth.js", () => ({ authorize: async () => ({ user: { id: "u1" } }), safeEqual: () => true, DEFAULT_ALLOW: "" }));
-const { default: handler, resolveKeys } = await import("../api/marketcheck.js");
+const { default: handler, resolveKeys, setThrottleMs } = await import("../api/marketcheck.js");
+setThrottleMs(1); // don't sit through the real 500 ms spacing
 
 const VIN = "KM8JBDD22RU123456";
 const rec = (price) => ({ vin: VIN, price: price, msrp: 31000, dealer: { name: "Kia of the Shoals" }, build: { make: "Hyundai", model: "Tucson", year: 2024 }, media: { photo_links_cached: ["https://x/?api_key=SECRETKEY"] } });
 const res = () => { const r = { code: 0, body: null, status(c) { r.code = c; return r; }, json(b) { r.body = b; return r; } }; return r; };
-const call = (body, query) => { const r = res(); return handler({ method: "POST", headers: { authorization: "Bearer t" }, body, query: query || { raw: "1" } }, r).then(() => r); };
+const call = (body, query) => { const r = res(); vault.keys = (body && body.marketcheckKeys) || []; return handler({ method: "POST", headers: { authorization: "Bearer t" }, body, query: query || { raw: "1" } }, r).then(() => r); };
 const keyOf = (url) => new URL(url).searchParams.get("api_key");
 
 // spec per key: { status, q:{remaining,limit,reset}, retryAfter, body, listings } — or { seq:[spec,...] } consumed in order.
@@ -107,6 +111,17 @@ describe("fails over only when the monthly quota is actually spent", () => {
     const text = JSON.stringify((await call({ vin: VIN, marketcheckKeys: ["K1"] })).body);
     expect(text).not.toContain("SECRETKEY");
     expect(text).not.toMatch(/api_key=K1/);
+  });
+});
+
+describe("keys come from the vault, never the request", () => {
+  it("ignores marketcheckKeys sent in the body", async () => {
+    process.env.MARKETCHECK_API_KEY = "ENV";
+    mockFetch({ ENV: OK(1), INJECTED: OK(2) });
+    vault.keys = [];
+    const r = res();
+    await handler({ method: "POST", headers: { authorization: "Bearer t" }, body: { vin: VIN, marketcheckKeys: ["INJECTED"] }, query: { raw: "1" } }, r);
+    expect(calls).toEqual(["ENV"]);
   });
 });
 

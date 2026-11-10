@@ -38,3 +38,11 @@ export async function removeAllowed(email) {
   if (!res.ok) throw new Error(j.error || ("HTTP " + res.status));
   return j;
 }
+
+// patch: { is_admin?, scheduled_sync? }
+export async function setAllowedFlags(email, patch) {
+  const res = await fetch("/api/allowlist", { method: "PATCH", headers: await authHeaders(), body: JSON.stringify(Object.assign({ email: email }, patch)) });
+  const j = await res.json().catch(function () { return {}; });
+  if (!res.ok) throw new Error(j.error || ("HTTP " + res.status));
+  return j;
+}

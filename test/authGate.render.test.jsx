@@ -51,10 +51,20 @@ describe("sign-in: tap the link, paste it, or type a code", () => {
   }
   const flush = () => new Promise((r) => setTimeout(r, 0));
 
+  it("invite-only: never asks Supabase to create an account, and says so for an unknown email", async () => {
+    const calls = { otp: [] };
+    supabaseMock = mkSupabase(async () => ({ data: { session: null } }));
+    supabaseMock.auth.signInWithOtp = async (a) => { calls.otp.push(a); return { error: { code: "otp_disabled", message: "Signups not allowed for otp" } }; };
+    render(<AuthGate><div>APPBODY</div></AuthGate>);
+    fireEvent.change(await screen.findByPlaceholderText("you@example.com"), { target: { value: "new@x.com" } });
+    fireEvent.click(screen.getByText("Email me a sign-in link"));
+    expect(await screen.findByText(/invite-only/)).toBeTruthy();
+    expect(calls.otp[0].options.shouldCreateUser).toBe(false);
+  });
   it("a pasted emailed link is verified in this window (token hash)", async () => {
     const calls = setup();
     const box = await sendTo("me@x.com");
-    expect(calls.otp[0]).toMatchObject({ email: "me@x.com" });
+    expect(calls.otp[0]).toMatchObject({ email: "me@x.com", options: { shouldCreateUser: false } });
     fireEvent.change(box, { target: { value: LINK } });
     fireEvent.click(screen.getByText("Sign in with link"));
     await flush();

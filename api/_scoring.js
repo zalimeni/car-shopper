@@ -9,21 +9,15 @@ import { travelFacts, DRIVE_MAX_MI, AIRPORT_NEAR_MI } from "../src/travel.js";
 
 // Models the user may pick for scoring (allowlisted so a request can't drive
 // arbitrary model strings). Default is Sonnet — strong judgment for this
-// structured task at a lower cost than Opus. SCORING_MODEL env var, when set to
-// one of these, overrides the default; the per-request model (from the UI) wins
-// over both when it's in this list.
+// structured task at a lower cost than Opus. The per-request model (from the
+// UI) wins when it's in this list.
 export const SCORE_MODELS = {
   "claude-sonnet-5-5": "Sonnet 5.5 — balanced (recommended)",
   "claude-opus-5-5": "Opus 5.5 — most nuanced",
   "claude-haiku-5-5": "Haiku 5.5 — fastest / cheapest",
 };
 
-// (`process` guarded: the demo bundles this file for its prompt text.)
-const ENV_MODEL = typeof process !== "undefined" && process.env ? process.env.SCORING_MODEL : "";
-export const DEFAULT_SCORE_MODEL =
-  ENV_MODEL && Object.prototype.hasOwnProperty.call(SCORE_MODELS, ENV_MODEL)
-    ? ENV_MODEL
-    : "claude-sonnet-5-5";
+export const DEFAULT_SCORE_MODEL = "claude-sonnet-5-5";
 
 export function resolveScoreModel(requested) {
   if (requested && Object.prototype.hasOwnProperty.call(SCORE_MODELS, requested)) return requested;

@@ -14,8 +14,8 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { authorize } from "./_auth.js";
-import { decrypt, cryptoReady } from "./_crypto.js";
-import { getKeyRow, setKeyValid } from "./_supabaseAdmin.js";
+import { cryptoReady } from "./_crypto.js";
+import { getAnthropicKey, setAnthropicValid } from "./_keys.js";
 import { resolveScoreModel, SCORE_SYSTEM, CRITERION_GUIDANCE, buildScoreSchema, buildUserPrompt, coerceResult } from "./_scoring.js";
 
 const MAX_LISTINGS = 12; // client chunks; this bounds a single request's fan-out
@@ -25,14 +25,13 @@ export default async function handler(req, res) {
   if (auth.error) { res.status(auth.status).json({ error: auth.error }); return; }
 
   // Expose the default prompt + per-criterion guidance so the UI can show/reset
-  // them (any authorized user, incl. the debug bypass).
+  // them (any authorized user).
   if (req.method === "GET") {
     res.status(200).json({ system: SCORE_SYSTEM, guidance: CRITERION_GUIDANCE });
     return;
   }
   if (req.method !== "POST") { res.status(405).json({ error: "Use GET or POST" }); return; }
 
-  if (auth.user.debug) { res.status(400).json({ error: "AI scoring requires a real signed-in account" }); return; }
   if (!cryptoReady()) { res.status(500).json({ error: "Key encryption is not configured on the server" }); return; }
 
   const body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
@@ -46,15 +45,9 @@ export default async function handler(req, res) {
   }
 
   // Decrypt the caller's key from the server-only vault.
-  const row = await getKeyRow(auth.user.id);
-  if (!row) { res.status(400).json({ error: "no_key", message: "No Anthropic key on file — add one to enable scoring" }); return; }
-  let apiKey;
-  try { apiKey = decrypt(row.ciphertext); }
-  catch (e) {
-    await setKeyValid(auth.user.id, false);
-    res.status(400).json({ error: "key_unreadable", message: "Stored key couldn't be decrypted — re-enter it" });
-    return;
-  }
+  const k = await getAnthropicKey(auth.user.id);
+  if (k.error) { res.status(k.error === "not_configured" ? 500 : 400).json({ error: k.error, message: k.message }); return; }
+  const apiKey = k.key;
 
   const client = new Anthropic({ apiKey: apiKey });
   const schema = buildScoreSchema(criteria);
@@ -77,7 +70,7 @@ export default async function handler(req, res) {
   }));
 
   if (authFailed) {
-    await setKeyValid(auth.user.id, false);
+    await setAnthropicValid(auth.user.id, false);
     res.status(401).json({ error: "key_rejected", message: "Anthropic rejected your key — re-enter it" });
     return;
   }

@@ -13,9 +13,18 @@
 // the sum across keys, and "where we are" is the first key with calls left. The
 // shared server key is used only when you have no keys of your own.
 
-// Settings' save step: trim, drop blanks, and drop repeats of the same key (first
-// wins, but it adopts a later copy's label if it had none). This is the ONLY place
-// duplicates are handled — everything else assumes the saved list is already clean.
+// Plaintext MarketCheck keys still in an old app-state blob (settings.marketcheckKeys,
+// from before the key vault) -> [{ key, label }], in order, blanks skipped. Used
+// by the one-time moves into the vault (App.jsx on load, the cron, a restore).
+export function legacyBlobKeys(settings) {
+  const list = settings && Array.isArray(settings.marketcheckKeys) ? settings.marketcheckKeys : [];
+  return list.map(function (k) { return typeof k === "string" ? { key: k, label: "" } : { key: (k && k.key) || "", label: (k && k.label) || "" }; })
+    .filter(function (k) { return String(k.key).trim() !== ""; });
+}
+
+// The one-time move of keys out of an old blob (App.jsx): trim, drop blanks, and drop repeats of the same key (first
+// wins, but it adopts a later copy's label if it had none). The vault (api/_keys.js)
+// also skips a key it already holds.
 export function dedupeKeyEntries(entries) {
   const out = [];
   const at = {};
@@ -105,15 +114,17 @@ function effective(snap, nowMs) {
   return { known: true, assumed: false, remaining: snap.remaining == null ? 0 : snap.remaining, limit: snap.limit, reset: snap.reset, at: snap.at };
 }
 
-// The keys in the order they're used. `userKeys` = [{ key, label }] from settings.
+// The keys in the order they're used. `userKeys` = the vault's metadata
+// [{ id, label, last4 }] (src/keys.js), or key strings / [{ key, label }] (the
+// server's decrypted list, the demo's pretend key).
 // If there's a configured list at all the shared server key is ignored entirely — never a row, never in the totals,
 // even if an old snapshot for it is lying around; it appears only when the list is empty.
 export function keyRows(userKeys) {
   const rows = [];
   (userKeys || []).forEach(function (k) {
     const key = typeof k === "string" ? k : (k && k.key) || "";
-    if (!key) return;
-    const id = keyIdOf(key);
+    const id = key ? keyIdOf(key) : String((k && k.last4) || "");
+    if (!id) return;
     rows.push({ id: id, shared: false, label: (typeof k === "object" && k.label) || "Key " + (rows.length + 1), tail: "…" + id });
   });
   if (!rows.length) rows.push({ id: "shared", shared: true, label: "Shared app key", tail: "" });

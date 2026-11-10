@@ -13,17 +13,16 @@
 // RLS-locked with no client policies, so this endpoint reaches it via the
 // service-role client — always scoped to the authenticated caller's user_id.
 
-import { authorize, isAdmin } from "./_auth.js";
+import { authorize } from "./_auth.js";
 import { scrubSettings, DEMO_VERSION } from "../src/demo.js";
 import { adminClient } from "./_supabaseAdmin.js";
+import { importBlobKeys } from "./_keys.js";
 
 const DEMO_MAX_BYTES = 3 * 1024 * 1024;
 
 export default async function handler(req, res) {
   const auth = await authorize(req);
   if (auth.error) { res.status(auth.status).json({ error: auth.error }); return; }
-  // The debug bypass has no real auth.users row, so it owns no state to back up.
-  if (auth.user.debug) { res.status(400).json({ error: "Backups require a real signed-in account" }); return; }
   const userId = auth.user.id;
 
   const db = adminClient();
@@ -64,14 +63,17 @@ export default async function handler(req, res) {
     cur = await db.from("app_state").select("data").eq("user_id", userId).maybeSingle();
   }
   if (!cur.error && cur.data && cur.data.data != null) {
-    await db.from("app_state_history").insert({ user_id: userId, data: cur.data.data });
+    // MarketCheck keys left in an old blob move to the vault first; snapshots
+    // never hold them (the trigger strips them the same way).
+    await importBlobKeys(userId, cur.data.data.settings);
+    await db.from("app_state_history").insert({ user_id: userId, data: withoutBlobKeys(cur.data.data) });
   }
 
   // Bump rev so any still-open session's compare-and-swap write loses to the
   // restore (it reloads) instead of silently clobbering it.
   const payload = {
     user_id: userId,
-    data: snap.data.data,
+    data: withoutBlobKeys(snap.data.data),
     updated_at: new Date().toISOString(),
     rev: ((cur.data && cur.data.rev) || 0) + 1,
   };
@@ -87,7 +89,7 @@ export default async function handler(req, res) {
 }
 
 async function publishDemo(db, auth, demo, res) {
-  if (!isAdmin(auth.user.email)) { res.status(403).json({ error: "Admins only" }); return; }
+  if (!auth.admin) { res.status(403).json({ error: "Admins only" }); return; }
   if (!demo || typeof demo !== "object" || !demo.data || typeof demo.data !== "object" || !Array.isArray(demo.data.listings)) {
     res.status(400).json({ error: "Not a demo snapshot" }); return;
   }
@@ -99,6 +101,14 @@ async function publishDemo(db, auth, demo, res) {
   const { error } = await db.from("demo_snapshot").upsert({ id: 1, data: snap, updated_at: new Date().toISOString(), updated_by: auth.user.id }, { onConflict: "id" });
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.status(200).json({ ok: true, bytes: size, listings: data.listings.length, pool: snap.pool.length });
+}
+
+// The blob minus settings.marketcheckKeys (they live in the key vault).
+function withoutBlobKeys(d) {
+  if (!d || !d.settings || d.settings.marketcheckKeys == null) return d;
+  const settings = Object.assign({}, d.settings);
+  delete settings.marketcheckKeys;
+  return Object.assign({}, d, { settings: settings });
 }
 
 function safeParse(s) { try { return JSON.parse(s); } catch (e) { return {}; } }

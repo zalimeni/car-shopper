@@ -6,6 +6,9 @@ import { demoAvailable } from "./demoRuntime";
 // Gates the app behind Supabase email auth (magic link or one-time code). Renders a sign-in
 // screen until there's a session, then renders children. Signing in with the
 // same email on any device gives you the same synced data.
+//
+// Invite-only: the app never creates accounts (shouldCreateUser: false, and the
+// project has sign-ups turned off). An admin invites people from the Admin tab.
 export default function AuthGate({ children }) {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -84,10 +87,10 @@ function NotAuthorized({ email }) {
         <p style={S.sub}>
           {email ? "The account " : "This account "}
           {email && <strong>{email}</strong>}
-          {email ? " isn’t on the allowlist for this app." : " isn’t on the allowlist for this app."}
+          {" doesn't have access to this app any more."}
         </p>
         <p style={{ ...S.sub, marginTop: 0 }}>
-          If you think this is a mistake, ask the owner to add you, then sign in again.
+          The app is invite-only. If you think this is a mistake, ask the owner.
         </p>
         <button style={S.button} onClick={() => signOut()}>Sign out</button>
       </div>
@@ -122,10 +125,10 @@ function SignIn() {
     setError("");
     const { error } = await supabase.auth.signInWithOtp({
       email: email.trim(),
-      options: { emailRedirectTo: window.location.origin },
+      options: { emailRedirectTo: window.location.origin, shouldCreateUser: false },
     });
     if (error) {
-      setError(error.message);
+      setError(isNoAccount(error) ? INVITE_ONLY : error.message);
       setStatus("error");
     } else {
       setSent(true);
@@ -259,6 +262,16 @@ function SignIn() {
       </div>
     </div>
   );
+}
+
+var INVITE_ONLY = "This app is invite-only, and there's no account for that email. Ask the owner for an invite, then use the email address it was sent to.";
+
+// Supabase's answer when the email has no account and none may be created
+// (shouldCreateUser: false, or sign-ups turned off for the project).
+export function isNoAccount(err) {
+  var code = String((err && (err.code || err.error_code)) || "");
+  var msg = String((err && err.message) || "");
+  return code === "otp_disabled" || code === "signup_disabled" || code === "user_not_found" || /signups? not allowed|user not found/i.test(msg);
 }
 
 // Running as an installed Home Screen web app (not a Safari tab)?
