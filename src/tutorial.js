@@ -1,7 +1,8 @@
 // The guided tutorial — steps + placement math (pure, tested). The overlay that
 // runs it is src/Tutorial.jsx; start it with startTutorial() from anywhere.
 //
-// A step: { id, title, text, tab?, target?, action?, costly?, demoOnly?, signedInOnly?, signedInText? }
+// A step: { id, title, text, tab?, target?, action?, costly?, demoOnly?, signedInOnly?, signedInText?,
+//           remember?, targetFor?, modal? }
 //  - tab: switch to it first (through the URL hash the app already follows).
 //  - target: a [data-tour="…"] element to spotlight (first match). Missing → the step is skipped.
 //  - action: "click" — the visitor taps the highlighted control, or Next taps it for them;
@@ -10,6 +11,11 @@
 //  - costly: the action spends real MarketCheck calls / the owner's Anthropic key. Signed in,
 //    such a step only explains (the control can't be tapped through the overlay); in the
 //    demo everything is simulated, so it runs.
+//  - remember: "car" — note which candidate card the tapped control sits in (its
+//    data-car VIN); a later step's targetFor(memory) can spotlight that same car
+//    even after the list re-sorts.
+//  - modal: steps that live inside a dialog the tutorial opened (e.g. "quota");
+//    leaving the last of them closes it via [data-tour-close="<modal>"].
 
 export var TUTORIAL_EVENT = "cs-tutorial";
 export function startTutorial() {
@@ -32,9 +38,13 @@ export var STEPS = [
     signedInText: "↻ Sync runs one nationwide search per active profile: new cars join the queue, price changes get noted, and cars that sold are flagged. It uses your MarketCheck quota, so the tutorial won't run it for you." },
   { id: "cand-card", tab: "Results", target: "cand-card", title: "Review a candidate",
     text: "Price, miles, dealer, distance, days listed and the AI's take, at a glance. ✓ Add to Watchlist keeps it; Skip sets it aside for good." },
-  { id: "score", tab: "Results", target: "score", action: "click", costly: true, title: "AI scoring",
+  { id: "score", tab: "Results", target: "score", action: "click", costly: true, remember: "car", title: "AI scoring",
     text: "✨ Score grades a car against your criteria and profile with Claude. Here it's simulated from similar cars already scored. Tap it, or tap Next.",
     signedInText: "✨ Score grades a car against your criteria and profile with Claude, using your Anthropic key, so the tutorial won't run it for you." },
+  { id: "scored", tab: "Results", target: "cand-card", targetFor: function (m) { return m && m.car ? '[data-tour="cand-card"][data-car="' + m.car + '"]' : null; },
+    title: "The result",
+    text: "The overall score sits top right, weighted by your criteria. Below it, the AI's assessment in a sentence or two; Per-criterion opens the score and reasoning for each one.",
+    signedInText: "Once scored, the overall score sits top right, weighted by your criteria. Below it, the AI's assessment in a sentence or two; Per-criterion opens the score and reasoning for each one." },
   { id: "watch-card", tab: "Results", target: "watch-card", title: "Your watchlist",
     text: "Saved cars keep a price history. Drops show on the card, and a car that sells is called out so you can archive it." },
   { id: "filters", tab: "Results", target: "filters", title: "Slice the list",
@@ -43,8 +53,14 @@ export var STEPS = [
     text: "Every watched car in one table. Drag a header to reorder, pin columns to keep them on the left, and tap a row to open its card." },
   { id: "price", tab: "Price", target: "price", title: "Is it a fair price?",
     text: "Check any car, even one you found elsewhere, against comparable listings. Pull in the live market and ask AI for a verdict." },
-  { id: "quota", target: "quota", title: "MarketCheck usage",
-    text: "The ring shows how much of this month's MarketCheck quota is left. Tap it any time for what each action costs." },
+  { id: "quota", target: "quota", action: "click", title: "MarketCheck usage",
+    text: "MarketCheck's free plan allows 500 calls a month per key, so the app tracks every one. The ring shows what's left. Tap it, or Next, to open the details." },
+  { id: "quota-head", modal: "quota", target: "quota-head", title: "This month's quota",
+    text: "Calls left across your keys and when the counter resets. Keys are used in order, and the next takes over when one runs out." },
+  { id: "quota-syncs", modal: "quota", target: "quota-syncs", title: "What a sync costs",
+    text: "Each active profile is one nationwide search, about one call per 50 matching cars. This estimates a ↻ Sync and how many full syncs the quota still covers." },
+  { id: "quota-costs", modal: "quota", target: "quota-costs", title: "Every action, priced",
+    text: "What each action spends, from a sync to a Price Check live search, so nothing uses calls by surprise." },
   { id: "done-demo", demoOnly: true, target: "banner", title: "That's the tutorial",
     text: "Reset starts the demo over, Tutorial replays this, and About has the notes on how it's built. Have fun poking around!" },
   { id: "done", signedInOnly: true, title: "That's the tutorial",
