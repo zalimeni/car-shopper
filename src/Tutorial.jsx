@@ -28,9 +28,20 @@ export function Tutorial({ demo }) {
   var [card, setCard] = useState({ w: 320, h: 180 });
   var cardRef = useRef(null);
   var stepRef = useRef(0); // guards async work against a step that's since moved on
+  var memRef = useRef({});  // what earlier steps noted (remember: "car")
+  var modalRef = useRef(null); // a dialog the tutorial opened (step.modal), closed when we leave it
+  var query = function (s) { return (s.targetFor && s.targetFor(memRef.current)) || sel(s.target); };
+  function leaveModal(next) {
+    var m = modalRef.current;
+    if (m && (!next || next.modal !== m)) {
+      var btn = document.querySelector('[data-tour-close="' + m + '"]');
+      if (btn) btn.click();
+      modalRef.current = null;
+    }
+  }
   var step = on ? steps[i] : null;
 
-  var close = useCallback(function () { setOn(false); setBusy(false); setEl(null); setRect(null); }, []);
+  var close = useCallback(function () { leaveModal(null); setOn(false); setBusy(false); setEl(null); setRect(null); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   var go = useCallback(function (d) {
     setDir(d);
     setI(function (n) {
@@ -41,7 +52,7 @@ export function Tutorial({ demo }) {
   }, [steps.length]);
 
   useEffect(function () {
-    function start() { setI(0); setDir(1); setBusy(false); setOn(true); }
+    function start() { memRef.current = {}; modalRef.current = null; setI(0); setDir(1); setBusy(false); setOn(true); }
     window.addEventListener(TUTORIAL_EVENT, start);
     return function () { window.removeEventListener(TUTORIAL_EVENT, start); };
   }, []);
@@ -53,12 +64,14 @@ export function Tutorial({ demo }) {
     if (!s) { close(); return; }
     var token = ++stepRef.current;
     setReady(false); setEl(null); setRect(null); setBusy(false);
+    leaveModal(s);
+    if (s.modal) modalRef.current = s.modal;
     if (s.tab) { var h = "#" + s.tab.toLowerCase(); if (window.location.hash.split("/")[0] !== h) window.location.hash = h; }
     if (!s.target) { setReady(true); return; }
     (async function () {
       var t0 = Date.now(), found = null;
       while (!found && Date.now() - t0 < FIND_MS) {
-        found = document.querySelector(sel(s.target));
+        found = document.querySelector(query(s));
         if (!found) await sleep(100);
         if (token !== stepRef.current) return;
       }
@@ -71,6 +84,7 @@ export function Tutorial({ demo }) {
         try { found.scrollIntoView({ block: tall ? "start" : "center", behavior: "smooth" }); } catch (e) { found.scrollIntoView(); }
       }
       setEl(found);
+      if (s.remember === "car") { var card = found.closest("[data-car]"); memRef.current.car = card ? card.getAttribute("data-car") : null; }
       // Show the card once the scroll has settled (same spot for ~150 ms).
       var last = null, still = 0, t1 = Date.now();
       while (Date.now() - t1 < 1500) {
@@ -90,7 +104,7 @@ export function Tutorial({ demo }) {
     if (!on || !step || !step.target) return;
     var raf, cur = el;
     function tick() {
-      if (cur && !cur.isConnected) cur = document.querySelector(sel(step.target));
+      if (cur && !cur.isConnected) cur = document.querySelector(query(step));
       if (cur) {
         var r = cur.getBoundingClientRect();
         var nr = { top: Math.round(r.top), left: Math.round(r.left), width: Math.round(r.width), height: Math.round(r.height) };
@@ -124,7 +138,7 @@ export function Tutorial({ demo }) {
     var t0 = Date.now();
     while (Date.now() - t0 < DONE_MAX_MS) {
       if (token !== stepRef.current) return;
-      var cur = target && target.isConnected ? target : document.querySelector(sel(steps[i].target));
+      var cur = target && target.isConnected ? target : document.querySelector(query(steps[i]));
       if (looksDone(cur)) break;
       await sleep(200);
     }
