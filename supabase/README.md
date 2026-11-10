@@ -29,7 +29,7 @@ Dashboard → SQL editor. The migrations are idempotent, so re-running is safe.
   that keeps the latest 30 snapshots per user (at most one per hour, plus one
   before every delete). Server-only.
 - `20260713223000_app_state_rev.sql` — the `rev` counter for compare-and-swap
-  writes (`src/storage.js`).
+  writes (`save_app_state()`).
 - `20261107120000_demo_snapshot.sql` — the one-row public demo snapshot
   (anyone can read it; only the service role writes it).
 - `20261107190000_tighten_grants_and_rls.sql` — revokes the default
@@ -38,6 +38,11 @@ Dashboard → SQL editor. The migrations are idempotent, so re-running is safe.
   `is_allowed()` calls in `(select …)` (the Performance Advisor's
   `auth_rls_initplan` lint). `is_allowed()` now ignores letter case.
 
+- `20261110120000_save_app_state_and_realtime.sql` — `save_app_state(data,
+  expected_rev)`, the one call the browser saves with (compare-and-swap on
+  `rev`, SECURITY INVOKER so RLS applies), and `app_state` added to the
+  `supabase_realtime` publication.
+
 All are idempotent and ordered by filename, so applying the full set against an
 existing database is safe.
 
@@ -45,20 +50,26 @@ existing database is safe.
 
 `.github/workflows/migrations.yml` runs on changes under `supabase/`:
 
-- **validate** (every push / PR, no secrets): applies the CI shim
-  (`ci/shim.sql`, which stubs the Supabase `auth` schema + roles) and then every
-  migration — twice — against a throwaway Postgres to prove they run cleanly and
-  are idempotent. Then `ci/rls_checks.sql` acts as the `anon` and
-  `authenticated` roles (with JWT claims set the way PostgREST sets them) and
-  checks the RLS policies and grants: each user sees only their own row, a user
-  not on the allowlist sees nothing, the server-only tables refuse both roles,
-  and the demo snapshot is read-only. Run it locally the same way:
+- **validate** (every push / PR, no secrets): `supabase db start` runs the
+  Supabase CLI's local database (Postgres 15, with the real `auth` schema,
+  roles and Realtime publication) and applies every migration. Each migration
+  is then applied a second time with `psql` to prove it is idempotent. Then
+  `supabase test db` runs the pgTAP tests in `tests/`: acting as the `anon`
+  and `authenticated` roles (with JWT claims set the way PostgREST sets them),
+  they check that each user sees only their own row, a user not on the
+  allowlist sees nothing, the server-only tables refuse both roles, the demo
+  snapshot is read-only, `save_app_state()` does its compare-and-swap, and
+  `app_state` is published to Realtime. Run it locally the same way (needs
+  Docker):
 
   ```bash
-  psql "$PGURL" -f supabase/ci/shim.sql
-  for f in supabase/migrations/*.sql; do psql "$PGURL" -v ON_ERROR_STOP=1 -f "$f"; done
-  psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/ci/rls_checks.sql
+  supabase db start
+  for f in supabase/migrations/*.sql; do
+    psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -v ON_ERROR_STOP=1 -q -f "$f"
+  done
+  supabase test db
   ```
+  The CLI version is pinned in the workflow (`supabase/setup-cli`).
 - **apply** (merge to `main` only): `supabase db push --db-url "$SUPABASE_DB_URL"`
   against the real project. Dormant until the secret below is set; without it the
   job logs a skip and passes.

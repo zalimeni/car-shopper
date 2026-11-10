@@ -117,21 +117,24 @@ a table row to load or save data. Anyone can sign up via magic-link, but
 non-allowlisted accounts see an "access not enabled" screen and the API/RLS
 reject them. Admins manage the table from the in-app Admin tab.
 
-CI checks these rules: `supabase/ci/rls_checks.sql` signs in as different
-users (and as `anon`) against a throwaway Postgres and asserts what each can
-and can't read or write.
+CI checks these rules: pgTAP tests (`supabase/tests/`, run by `supabase test
+db` against the Supabase CLI's local database) sign in as different users
+(and as `anon`) and assert what each can and can't read or write.
 
 ## Data storage
 
 Per-user state is a single JSON blob — one row per user in the `app_state`
-table (`src/storage.js` wraps it with an async `get/set/delete`). Signing in
+table (`src/storage.js` wraps it with an async `get/set`). Signing in
 with the same email on any device loads the same data. **Export Listings**
 (footer) gives a manual JSON backup; **Import** (Results) restores/seeds.
 A DB trigger also keeps automatic rolling snapshots of the blob (up to 30 per
 user, at most one per hour of activity) in `app_state_history`; the footer
-**Backups** panel lists and restores them. Writes are compare-and-swap on a
-`rev` counter, so two open devices can't silently overwrite each other — the
-losing session reloads the latest data and says so.
+**Backups** panel lists and restores them. Every save is one call to the
+`save_app_state()` database function, a compare-and-swap on a `rev` counter,
+so two open devices can't silently overwrite each other — the losing session
+reloads the latest data and says so. Open sessions also subscribe to their
+row with Supabase Realtime, so a save on one device shows up on the others
+within seconds.
 
 Each user's Anthropic API key (for AI scoring) is stored **encrypted** in a
 separate, server-only `user_anthropic_keys` table — RLS-locked with no client
@@ -173,7 +176,7 @@ auto-detected), then add the environment variables.
 src/
   App.jsx           single-file React UI (components, logic, inline styles)
   Auth.jsx          Supabase email-auth gate + allowlist check
-  storage.js        async get/set/delete over the app_state row (compare-and-swap on rev)
+  storage.js        get/set over the app_state row (save_app_state RPC) + Realtime watch
   supabaseClient.js configured Supabase client
   sync.js           dealer-sync client (calls /api/marketcheck) + reconcile()
   syncPlan.js       what a sync does and costs (shared with the scheduled sync)
@@ -194,16 +197,16 @@ api/                Vercel serverless functions (server-side secrets)
   …                 allowlist, snapshots, pricecheck, pricecomps, baseline, profile-suggest
 supabase/
   migrations/       schema, RLS, grants, triggers (append-only, idempotent)
-  ci/               CI stand-in for Supabase's auth schema + RLS/grant checks
+  tests/            pgTAP tests: RLS, grants, save_app_state (supabase test db)
 test/               vitest unit + jsdom render tests, fixtures
 ```
 
 `AGENTS.md` has the full file map.
 
 CI (GitHub Actions): `test.yml` runs tests + build on every push/PR;
-`migrations.yml` applies the SQL twice to a throwaway Postgres, runs the
-RLS/grant checks, and applies it to the project on `main` if `SUPABASE_DB_URL`
-is configured.
+`migrations.yml` starts the Supabase CLI's local database (Postgres 15),
+applies the SQL twice, runs the pgTAP tests, and applies it to the project on
+`main` if `SUPABASE_DB_URL` is configured.
 
 ## Roadmap
 
@@ -218,6 +221,7 @@ Shipped:
 - ✅ Configurable budget / locations / freeform categories + setup wizard
 
 - ✅ One-click archiving of listings unseen in sync for 14+ days (restorable)
+- ✅ Realtime sync across open devices (Supabase Realtime on the user's row)
 - ✅ Scheduled background sync (Vercel Cron, opt-in per account) — price
   changes land as review flags and new finds land in the candidate queue on
   next open
@@ -226,4 +230,4 @@ Backlog:
 
 - [ ] Component decomposition (`App.jsx` is large)
 - [ ] Normalized per-listing tables for history/dedup
-- [ ] Realtime sync across open devices; offline support (service worker)
+- [ ] Offline support (service worker)
