@@ -6,8 +6,9 @@ project_id = "car-shopper"
 
 [db]
 port = 54322
-# Same major version as the hosted project and CI.
-major_version = 16
+# The Supabase CLI ships Postgres 15 and 17 images (no 16). Keep this equal
+# to the hosted project's major version (Dashboard → Settings → Infrastructure).
+major_version = 15
 
 [db.seed]
 enabled = false
