@@ -115,4 +115,58 @@ select pg_temp.expect_denied('truncate public.demo_snapshot', 'anon cannot trunc
 select pg_temp.expect_denied('select public.is_allowed()', 'anon cannot call is_allowed()');
 reset role;
 
+-- ── Allowlist flags, my_access(), the key vault (20261110120000) ──
+update public.allowed_emails set is_admin = true where email = 'owner@example.com';
+insert into public.user_api_keys (user_id, provider, position, ciphertext, last4) values
+  ('00000000-0000-0000-0000-0000000000a1', 'anthropic', 0, 'v2:opaque', 'abcd'),
+  ('00000000-0000-0000-0000-0000000000a1', 'marketcheck', 0, 'v2:opaque', 'wxyz');
+
+do $$
+begin
+  insert into public.user_api_keys (user_id, provider, ciphertext) values ('00000000-0000-0000-0000-0000000000a1', 'anthropic', 'x');
+  raise exception 'FAIL: a second Anthropic key for one user was accepted';
+exception when unique_violation then
+  raise notice 'ok: a second Anthropic key for one user is refused';
+end $$;
+
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000a1","email":"owner@example.com","role":"authenticated"}', true);
+select pg_temp.expect((select allowed and admin from public.my_access()), 'my_access(): an admin is allowed and admin');
+select pg_temp.expect_denied('select * from public.user_api_keys', 'authenticated cannot read user_api_keys, even its own rows');
+select pg_temp.expect_denied($q$update public.allowed_emails set is_admin = true$q$, 'authenticated cannot make itself an admin');
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000b2","email":"FRIEND@example.com","role":"authenticated"}', true);
+select pg_temp.expect((select allowed and not admin from public.my_access()), 'my_access(): an allowlisted non-admin (any letter case)');
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000c3","email":"stranger@example.com","role":"authenticated"}', true);
+select pg_temp.expect((select not allowed and not admin from public.my_access()), 'my_access(): not on the list');
+reset role;
+
+set local role anon;
+select set_config('request.jwt.claims', '{"role":"anon"}', true);
+select pg_temp.expect_denied('select * from public.my_access()', 'anon cannot call my_access()');
+select pg_temp.expect_denied('select * from public.user_api_keys', 'anon cannot read user_api_keys');
+reset role;
+
+-- Snapshots never keep MarketCheck keys from the blob.
+update public.app_state set data = '{"who":"stranger","settings":{"budget":1,"marketcheckKeys":[{"key":"PLAINTEXT"}]}}'
+  where user_id = '00000000-0000-0000-0000-0000000000c3';
+delete from public.app_state_history where user_id = '00000000-0000-0000-0000-0000000000c3';
+update public.app_state set data = '{"who":"stranger"}' where user_id = '00000000-0000-0000-0000-0000000000c3';
+select pg_temp.expect(
+  (select count(*) = 1 and bool_and(data #> '{settings,marketcheckKeys}' is null and (data #>> '{settings,budget}') = '1')
+   from public.app_state_history where user_id = '00000000-0000-0000-0000-0000000000c3'),
+  'the snapshot trigger strips settings.marketcheckKeys and keeps the rest');
+
+-- Deleting a user cascades through app_state without tripping the trigger.
+delete from auth.users where id = '00000000-0000-0000-0000-0000000000c3';
+select pg_temp.expect(
+  not exists (select 1 from public.app_state where user_id = '00000000-0000-0000-0000-0000000000c3')
+  and not exists (select 1 from public.app_state_history where user_id = '00000000-0000-0000-0000-0000000000c3'),
+  'deleting a user removes their app_state and backups');
+
 rollback;

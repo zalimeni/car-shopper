@@ -5,3 +5,10 @@ project_id = "car-shopper"
 
 [db]
 major_version = 15
+
+[auth]
+# Invite-only: nobody can create an account by signing in; an admin invites
+# people from the Admin tab. (Local CLI stack only — on the hosted project, turn
+# off "Allow new users to sign up" in the Dashboard; see supabase/README.md.)
+enable_signup = false
+enable_anonymous_sign_ins = false
