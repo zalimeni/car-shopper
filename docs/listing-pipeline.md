@@ -106,7 +106,7 @@ sync) does as little as it can:
    each its own function invocation, clear of the 60 s limit.
    Keys: requests carry spentKeys (from the stored quota and earlier steps), so the
    server starts on the first key with calls left. A failover is a notice.
-   → normalized listings (§5)                      [holds MARKETCHECK_API_KEY only]
+   → normalized listings (§5)                      [user's vault keys or MARKETCHECK_API_KEY]
    └─> Browser (authed) reconciles vs. stored listings (§6), goneVins included
    └─> settings.mcProfiles[id] = { fullAt, lastAt, sig, count, countSig, countAt }
    └─> Browser writes the updated app_state blob via the user's session (RLS)
@@ -141,45 +141,42 @@ straight-line miles from the home base ("ship or fly" past 500), the nearest
 major airport (`src/airports.js`, "fly-in friendly" within 50 mi), and a
 salt-belt state. Cards show them; AI scoring gets them as facts.
 
-**No service-role key anywhere.** The only server-held secret is the MarketCheck
-data key (unrelated to the user's accounts). Unattended refreshes come from the
-optional scheduled sync (§4a), which runs the same plan server-side.
+**No service-role key in the sync path.** The proxy reads the caller's own
+MarketCheck keys from the key vault (`api/_keys.js`) or uses the shared
+`MARKETCHECK_API_KEY`. Unattended refreshes come from the optional scheduled
+sync (§4a), which runs the same plan server-side.
 
 ## 4. Runtime & secrets
 
 - **Where:** `api/marketcheck.js` (the proxy, one sync step per request) and
   `api/cron-sync.js` (the optional daily scheduled sync, §4a).
 - **Secrets (Vercel env vars only — never committed, never shipped to client):**
-  - `MARKETCHECK_API_KEY` — the aggregator key. A data-API credential, fully
-    separate from the user's personal Anthropic/Claude account. **This is the
-    only server-held secret.**
-  - `ALLOWED_EMAILS` (optional) — comma-separated allowlist; always applies, in
-    addition to the DB table. See "Access control" below.
-- **Access control (two layers, allow if EITHER source grants):**
+  - `MARKETCHECK_API_KEY` (optional) — the shared aggregator key, used only for
+    accounts with no MarketCheck keys of their own.
+  - Users' own MarketCheck (and Anthropic) keys are not env vars: they live
+    encrypted in `public.user_api_keys`, decrypted only in `api/_keys.js`.
+- **Access control (two layers, one source — `public.allowed_emails`):**
+  - **Sign-in is invite-only:** the app never creates accounts
+    (`shouldCreateUser: false`) and the project has sign-ups turned off; an
+    admin invites people from the Admin tab.
   - **Data layer (`supabase/migrations/*_user_allowlist.sql`):** RLS on `app_state` requires both
-    `auth.uid() = user_id` *and* `public.is_allowed()`. The `public.allowed_emails`
-    table backs `is_allowed()`; non-allowlisted accounts can sign up but can't
-    read or write any data.
+    `auth.uid() = user_id` *and* `public.is_allowed()`, which reads
+    `public.allowed_emails`.
   - **API layer (`api/_auth.js` → `authorize()`):** the sync proxy requires a
-    valid Supabase token and is allowed if the email is in `ALLOWED_EMAILS` **or**
-    the DB table (`is_allowed()` RPC). The browser attaches its session token
+    valid Supabase token and an `allowed_emails` row (`my_access()` RPC, which
+    also returns the admin flag). The browser attaches its session token
     (`Authorization: Bearer`) on every sync; 401 = not signed in, 403 = not
-    allowlisted. Note: the env list grants the API, but not DB rows — to also
-    read/write data, an email must be in the `allowed_emails` table (or be added
-    to both).
+    allowlisted.
   - **Friendly screen:** `AuthGate` calls `GET /api/me` after login; a 403
     renders a "not authorized" screen (with sign-out) instead of an empty app.
     This is UX only — it fails open on errors since RLS/the API are the real
     boundary.
-  - Magic-link signup stays open to anyone, so the allowlist — enforced
-    server-side in the DB and the proxy, never in the client — is what protects
-    both the data and the MarketCheck quota.
 - The browser keeps using the existing **anon key + Supabase session** to read
   and write `app_state`; RLS continues to enforce that the user only touches
   their own row. The reconcile logic (§6) moves client-side.
-- **Service-role key:** the in-app sync never needs it (it has the user's
-  session). Only the sessionless paths hold `SUPABASE_SECRET_KEY`: the Anthropic
-  key vault and the scheduled sync (§4a).
+- **Service-role key:** the in-app sync uses it only to read the caller's own
+  keys from the vault. The other holders of `SUPABASE_SECRET_KEY` are the
+  allowlist admin, backups, and the scheduled sync (§4a).
 - **Auth note (for the deferred LLM phase):** Anthropic has no third-party
   consumer OAuth; programmatic access is API-key / Workload Identity Federation,
   both server-side. When we add enrichment, the clean path is a small server
@@ -192,7 +189,8 @@ Unattended refresh so new matches arrive without opening the app:
 
 - Vercel Cron (`vercel.json`, daily 10:00 UTC) → `/api/cron-sync`, gated by
   `CRON_SECRET` (unset = off; the cron then only pings Supabase as a keepalive).
-- Runs for the accounts in `CRON_SYNC_EMAILS`, loading/writing each row with
+- Runs for the accounts marked **Daily sync** in the Admin tab
+  (`allowed_emails.scheduled_sync`), loading/writing each row with
   `SUPABASE_SECRET_KEY` (no user session), compare-and-swap on `app_state.rev`
   so an active app session wins.
 - New VINs go onto the synced review queue (`data.candidates`, flagged

@@ -10,7 +10,7 @@ aggregator, scores listings against weighted criteria (optionally with AI using
 the user's own Anthropic key), and keeps a watchlist with price/availability
 tracking. Budget, home base, and freeform categories are configurable
 (one car or several); a setup wizard handles first-run. Access is allowlisted;
-the default config is opinionated (the owner's two-car ≤$40K Durham-based hybrid/EV
+sign-in is invite-only; the default config is opinionated (the owner's two-car ≤$40K Durham-based hybrid/EV
 search) but fully editable.
 
 It is a small, pragmatic app — not a framework. Favor simple, surgical changes
@@ -21,16 +21,17 @@ over architecture.
 - **Frontend:** React 18 + Vite 8, plain JS (no TypeScript). One big component
   file (`src/App.jsx`).
 - **Backend:** Vercel **serverless functions** in `api/` (Node 24, ESM).
-- **Data/auth:** Supabase — email auth (magic link, pasted link, or one-time code
-  — see `supabase/README.md`) + `app_state` (one JSONB blob per
-  user) and a server-only `user_anthropic_keys` vault (encrypted per-user
-  Anthropic key). RLS + an email allowlist.
+- **Data/auth:** Supabase — invite-only email auth (magic link, pasted link, or
+  one-time code — see `supabase/README.md`) + `app_state` (one JSONB blob per
+  user) and a server-only `user_api_keys` vault (each user's encrypted
+  Anthropic and MarketCheck keys). RLS + the `allowed_emails` allowlist.
 - **External APIs:** MarketCheck (dealer inventory) and Anthropic (AI scoring),
-  both called only from `api/`. The Anthropic key and the shared
-  `MARKETCHECK_API_KEY` never reach the browser. MarketCheck keys a user adds
-  in Settings are the exception: they live in `settings.marketcheckKeys` (the
-  user's own blob, so also in its backups) and go to `api/marketcheck` with
-  each request.
+  both called only from `api/`. Keys never reach the browser: the user's own
+  keys live encrypted in `user_api_keys` (`api/_keys.js` is the only place that
+  decrypts them), the shared `MARKETCHECK_API_KEY` in the server env. The
+  browser sees labels + last 4 only. (Blobs from before the vault may still
+  hold `settings.marketcheckKeys`; the app, the cron and a backup restore move
+  them into the vault and drop the blob's copy.)
 - **Deploy:** Vercel (`vercel.json`). CI for DB migrations via GitHub Actions.
 - Node version: **24** (`.nvmrc`, `package.json` engines, CI).
 
@@ -44,6 +45,7 @@ over architecture.
 | `src/sync.js` | Client side of the listing sync: `fetchListings`, `fetchRawSample` (re-exports `reconcile`). |
 | `src/reconcile.js` | `reconcile()` — pure, import-free (shared with server-side sync). |
 | `src/score.js` | Client side of AI scoring + Anthropic-key management; `scoreSet`, model list. |
+| `src/keys.js` | Client for the MarketCheck keys in the vault (list / add / rename / reorder / remove / the one-time import from an old blob). |
 | `src/storage.js` | Supabase-backed get/set/delete of the per-user JSONB blob. |
 | `src/supabaseClient.js` | Supabase client + default URL/anon key. |
 | `src/Auth.jsx` | Email auth gate: tap the magic link, **paste** it (`src/authLink.js` — how an iOS Home Screen web app signs in, since links open in Safari), or type the one-time code (needs custom SMTP + template) — plus the "not authorized" screen. |
@@ -65,18 +67,19 @@ over architecture.
 | `src/quota.js` | MarketCheck quota bookkeeping for the header gauge + modal: per-key snapshots (from syncs / live searches — never its own calls), capacity across keys (used in order), sync-cost estimates. Pure, tested. |
 | `public/locations.txt` | Flat file (`ST|City|ZIP|lat|lon`, ~41k rows) behind the location picker; lazy-loaded, not bundled. Built by `scripts/build-locations.mjs` from GeoNames (CC BY 4.0). |
 | `api/marketcheck.js` | Serverless proxy to MarketCheck (holds the API key). One sync step per request (`runStep`: full / new / count / vins / local) over a `createSession` (key failover, throttle, time budget). `buildUrl`/`normalize`. |
-| `api/_auth.js` | Server-side auth + allowlist (`authorize()`, `isAdmin()`). Shared module. |
-| `api/allowlist.js`, `src/admin.js` | Admin tab (admins only, `ADMIN_EMAILS`): list / add / remove `allowed_emails`, optionally send an invite. |
-| `api/me.js` | Allowlist + Anthropic-key-status check for the UI. |
+| `api/_auth.js` | Server-side auth + allowlist: `authorize()` → `{ user, admin }` from one `my_access()` RPC. Shared module. |
+| `api/allowlist.js`, `src/admin.js` | Admin tab (admins only, `allowed_emails.is_admin`): list / add / remove emails, send an invite (the only way to get an account), toggle Admin / Daily sync per row. |
+| `api/me.js` | Allowlist + admin + key-status check for the UI (key metadata only). |
 | `api/_scoring.js` | Scoring prompt/schema/coercion + model allowlist (`resolveScoreModel`). |
-| `api/_crypto.js` | AES-256-GCM encrypt/decrypt for the Anthropic-key vault. |
-| `api/_supabaseAdmin.js` | Service-role (`SUPABASE_SECRET_KEY`) client for the key vault; also the server's one copy of the project URL + publishable key. |
-| `api/anthropic-key.js` | Validate / store (encrypted) / remove the per-user Anthropic key. |
+| `api/_crypto.js` | AES-256-GCM for the key vault: v2 = HKDF key + AAD `<user_id>:<provider>`, `v2:` prefix; reads legacy v1. Tested. |
+| `api/_keys.js` | The key vault (`user_api_keys`): the only module that decrypts. `getAnthropicKey`, `getMarketcheckKeys`, `keyMeta`, add/rename/reorder/remove, `importBlobKeys`, `reencryptLegacy` (cron). Tested. |
+| `api/_supabaseAdmin.js` | Service-role (`SUPABASE_SECRET_KEY`) client for the server-only tables; also the server's one copy of the project URL + publishable key. |
+| `api/keys.js` | `/api/keys`: validate / store (encrypted) / remove the Anthropic key; add / rename / reorder / remove MarketCheck keys. Answers with metadata only. |
 | `api/snapshots.js`, `src/snapshots.js` | List/restore the automatic app-state backups (`app_state_history`); admins also publish the demo snapshot here (`POST { demo }`). |
 | `api/pricecheck.js`, `api/pricecomps.js`, `api/baseline.js` | Price tab: AI fair-price verdict (user's key), live MarketCheck comps around the home base (a `local` step), and AI price baselines per profile. |
 | `src/priceCheck.js`, `src/priceExport.js` | Price tab's local-comps math (pure, 0 API calls) and the price-history CSV export. Pure, tested. |
 | `src/geo.js`, `src/tableSort.js` | Straight-line distance to the home base; shared sortable-table helpers (Compare, Price comps). Pure, tested. |
-| `api/cron-sync.js` | Scheduled background sync (Vercel Cron; `CRON_SECRET`-gated, `CRON_SYNC_EMAILS` accounts). |
+| `api/cron-sync.js` | Scheduled background sync (Vercel Cron; `CRON_SECRET`-gated; accounts with `allowed_emails.scheduled_sync`), plus the vault's v1 → v2 re-encryption sweep. |
 | `api/score.js` | Batch listing scoring with the user's decrypted key. |
 | `api/profile-suggest.js`, `api/_suggest.js` | The wizard's optional AI step (user's key): must-haves / dealbreakers / years to avoid / trim notes from the vehicle + Explore's market snapshot. Prompt, schema, `coerceSuggestion` in `_suggest.js` (tested). Same model plumbing as `api/baseline.js`. |
 | `supabase/migrations/*.sql` | DB schema: `app_state` + RLS, allowlist, Anthropic-key vault, backup history + trigger, `rev`, demo snapshot, grant/RLS tightening. |
@@ -125,13 +128,15 @@ See `docs/listing-pipeline.md` for the full design. In short:
   the review queue) goes in the synced blob so every device agrees — the owner
   asked for this explicitly. `localStorage` is only for throwaway per-device state.
 - **AI scoring:** `src/score.js` → `POST /api/score` decrypts the user's vaulted
-  Anthropic key (`_crypto` + `_supabaseAdmin`) and scores each listing against a
+  Anthropic key (`api/_keys.js`) and scores each listing against a
   JSON schema built from the user's criteria (`_scoring.js`, model allowlisted).
   Roles/categories are freeform; budget/home base live in `data.settings`.
-- **Auth + allowlist (server-enforced):** anyone can sign up via magic link, but
-  `api/_auth.js` requires the email be allowlisted — via the `ALLOWED_EMAILS`
-  env var **or** the `allowed_emails` DB table (`is_allowed()` RPC). RLS on
-  `app_state` enforces the same at the data layer. The UI calls `GET /api/me`
+- **Auth + allowlist (server-enforced):** sign-in is invite-only (the client
+  never creates users — `shouldCreateUser: false` — and the project has
+  sign-ups off; admins invite from the Admin tab). `api/_auth.js` also requires
+  the email be in the `allowed_emails` table (`my_access()` RPC, which also says
+  whether they're an admin) — there is no env-var allowlist. RLS on `app_state`
+  enforces the same at the data layer (`is_allowed()`). The UI calls `GET /api/me`
   and shows a friendly screen for non-allowlisted users (fails open on error —
   RLS/API are the real boundary).
 - **Sync pipeline:** `src/syncPlan.js` plans it; `src/sync.js` → `POST
@@ -147,7 +152,7 @@ See `docs/listing-pipeline.md` for the full design. In short:
   `normalize()` in `api/marketcheck.js`** — if the API shape is wrong, that's the
   only place to change.
 - **API version is pinned** (`x-version`, `API_VERSION` in `api/marketcheck.js`,
-  default `v4.8.0`, overridable via `MARKETCHECK_API_VERSION`). Every response's
+  `v4.8.0`). Every response's
   `served-by-version` / `deprecation` / `sunset` headers are stored in
   `settings.mcApi`; the app shows a banner within 60 days of sunset, if a different
   major version answers, or if the pin is rejected (sync then retries unpinned).
@@ -200,17 +205,14 @@ Defined/documented in `.env.example`. Summary:
 | Var | Where | Purpose |
 |---|---|---|
 | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | client (bundled) | Supabase connection. Public by design (RLS protects data). |
-| `MARKETCHECK_API_KEY` | server only | Shared MarketCheck key — used only for accounts with no keys of their own in Settings; ignored entirely once a user has any (never a fallback). **Never** `VITE_`-prefixed. (Optional: `MARKETCHECK_HOST`, `MARKETCHECK_RADIUS` default 100 — Price Check's live comps only, `MARKETCHECK_THROTTLE_MS`.) |
-| `SUPABASE_SECRET_KEY` | server only | Supabase Secret key (`sb_secret_…`); service-role access to the `user_anthropic_keys` vault. |
-| `KEY_ENCRYPTION_SECRET` | server only | ≥16 chars; AES-256-GCM key for the stored Anthropic keys. Rotating invalidates them. |
-| `SCORING_MODEL` | server (optional) | Override default scoring model (`claude-sonnet-5-5`); must be allowlisted in `_scoring.js`. |
-| `ALLOWED_EMAILS` | server (optional) | Comma-separated allowlist; union with the `allowed_emails` DB table. |
-| `ADMIN_EMAILS` | server (optional) | Who sees the Admin tab and may publish the demo (default owner). |
-| `SITE_URL` | server (optional) | Invite-email redirect target (default: the request host). |
-| `DEBUG_TOKEN` | server (optional) | ≥24-char bearer bypass for headless `/api` debugging (no DB access). |
-| `CRON_SECRET` | server (optional) | ≥16 chars; authorizes the daily `/api/cron-sync` (Vercel Cron Bearer token). Unset = scheduled sync off. |
-| `CRON_SYNC_EMAILS` | server (optional) | Accounts the scheduled sync runs for (comma-separated; default owner). |
+| `MARKETCHECK_API_KEY` | server only (optional) | Shared MarketCheck key — used only for accounts with no keys of their own in Settings; ignored entirely once a user has any (never a fallback). **Never** `VITE_`-prefixed. The MarketCheck host, radius, throttle and time budgets are constants in `api/marketcheck.js`. |
+| `SUPABASE_SECRET_KEY` | server only | Supabase Secret key (`sb_secret_…`); service-role access to the server-only tables (allowlist, key vault, backups). |
+| `KEY_ENCRYPTION_SECRET` | server only | ≥16 chars; the stored API keys' encryption secret (HKDF → AES-256-GCM). Rotating invalidates them. |
+| `CRON_SECRET` | server (optional) | ≥16 chars; authorizes the daily `/api/cron-sync` (Vercel Cron Bearer token). Unset = scheduled sync off. Which accounts it syncs is `allowed_emails.scheduled_sync`. |
 | `SUPABASE_DB_URL` | GitHub Actions secret | Session-pooler URL for CI `db push`. |
+
+That's all of them: who may use the app, who is an admin, and who gets the
+daily sync are rows in `allowed_emails`, not env vars.
 
 **Golden rule:** only `VITE_`-prefixed vars reach the browser bundle. Anything
 secret (API keys, DB URLs) must NOT start with `VITE_`. Vercel scopes env vars
@@ -289,7 +291,6 @@ per environment (Preview vs Production) — set keys in the env you're testing.
    - HTTP 401/403 → bad key or the plan lacks the active-search endpoint.
    - HTTP 4xx on every query → wrong host/param (it's `api.marketcheck.com`,
      `year` as an exact-year CSV, `price_range`/`miles_range`, `state` CSV).
-   - Radius > 100 on the free tier (Price Check's live comps) → set `MARKETCHECK_RADIUS=100`.
 4. To exercise the full candidate/approve flow **without** the API or key, the
    proxy supports `?mock=1` (synthetic listings).
 
@@ -310,26 +311,28 @@ that call Anthropic or page MarketCheck need a `maxDuration` entry in
 `vercel.json`.
 
 ### Headless / agent debugging (no email login)
-If `DEBUG_TOKEN` is set in the server env (a long random secret), call the API
-directly with it as the Bearer token — sidesteps the magic-link flow. It grants
-the **API surface only** (no DB/user-data access; RLS still applies). Example:
+There is no token bypass (the old `DEBUG_TOKEN` was removed): every `/api` call
+needs a real, allowlisted Supabase session. For headless use, create a
+dedicated password user with the service role
+(`auth.admin.createUser({ email, password, email_confirm: true })`), add its
+email to `allowed_emails`, sign in with `signInWithPassword`, and send the
+access token as the Bearer token:
 ```bash
-curl -X POST "$SITE/api/marketcheck?raw=1" \
-  -H "Authorization: Bearer $DEBUG_TOKEN" -H "Content-Type: application/json" \
-  -d '{"profiles":[{"id":"rav4-hybrid","name":"RAV4 Hybrid","params":{"make":"Toyota","model":"RAV4","powertrain":"Hybrid","years":"2019-2022","maxPrice":25000,"maxMiles":90000}}]}'
+curl -X POST "$SITE/api/marketcheck?mock=1" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"kind":"full","profile":{"id":"rav4-hybrid","name":"RAV4 Hybrid","params":{"make":"Toyota","model":"RAV4","powertrain":"Hybrid","years":"2019-2022","maxPrice":25000,"maxMiles":90000}}}'
 ```
-Use `?mock=1` instead of `?raw=1` to avoid hitting MarketCheck. Rotate
-`DEBUG_TOKEN` to revoke. For a *real user* session (to exercise data/RLS), the
-Supabase-idiomatic route is a dedicated password user via
-`auth.admin.createUser({ email_confirm: true })` + `signInWithPassword`.
+`?mock=1` costs nothing; `?raw=1` makes one real (billed) call. Remove the
+user's `allowed_emails` row to revoke.
 
 ### Auth / allowlist
 - `401` from `/api/*` = not signed in / missing-invalid token. `403` = signed in
   but not allowlisted.
-- Allowed if email is in `ALLOWED_EMAILS` **or** the `allowed_emails` table.
-  Manage the table in Supabase; env var is a quick API-only grant (note: env-only
-  grants pass the API but RLS still needs a table row to read/write data).
-- Non-allowlisted users see the "Access not enabled" screen (`Auth.jsx`).
+- Allowed if the email is in the `allowed_emails` table (any letter case) —
+  manage it from the Admin tab. Admin = `is_admin`.
+- Someone with no account who asks for a sign-in email gets "invite-only" back
+  (`isNoAccount` in `Auth.jsx`); invite them from the Admin tab.
+- A signed-in account not on the list sees the "Access not enabled" screen.
 
 ### Data not loading / saving
 - `storage.js` operates as the logged-in user; RLS requires `auth.uid() =

@@ -88,34 +88,31 @@ the client). See `.env.example`.
 | Variable | Scope | Required for | Notes |
 |---|---|---|---|
 | `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` | client | auth + storage | Defaults baked into `src/supabaseClient.js`; override to point at another project. |
-| `MARKETCHECK_API_KEY` | server | dealer sync | Shared key, used only by accounts with no MarketCheck keys of their own (never a fallback for those that have some). From marketcheck.com/apis. Optional: `MARKETCHECK_HOST`, `MARKETCHECK_RADIUS` (Price Check's live comps only; free tier ≤100 mi), `MARKETCHECK_THROTTLE_MS`, and the others in `.env.example`. |
-| `SUPABASE_SECRET_KEY` | server | AI key vault | Supabase **Secret key** (`sb_secret_…`) — bypasses RLS to read/write the server-only key vault. |
-| `KEY_ENCRYPTION_SECRET` | server | AI key vault | ≥16 chars; AES-256-GCM key for encrypting each user's Anthropic key at rest. Rotating it invalidates stored keys (users re-enter). |
-| `SCORING_MODEL` | server | — | Overrides the default scoring model (`claude-sonnet-5-5`); must be one of the allowlisted models. |
-| `ALLOWED_EMAILS` | server | access control | **The email allowlist.** Comma-separated. Defaults to the owner's email. |
-| `ADMIN_EMAILS` | server | Admin tab | Who may manage the allowlist and publish the demo. Defaults to the owner's email. |
-| `SITE_URL` | server | — | Invite-email redirect target. Defaults to the request host. |
-| `DEBUG_TOKEN` | server | — | Optional ≥24-char bypass token for headless `/api` debugging (no DB access). Unset = disabled. |
+| `SUPABASE_SECRET_KEY` | server | allowlist, key vault, backups | Supabase **Secret key** (`sb_secret_…`) — bypasses RLS to read/write the server-only tables. |
+| `KEY_ENCRYPTION_SECRET` | server | key vault | ≥16 chars; the secret each user's stored API keys are encrypted with (HKDF → AES-256-GCM). Rotating it invalidates stored keys (users re-enter). |
+| `MARKETCHECK_API_KEY` | server | — | Optional shared key, used only by accounts with no MarketCheck keys of their own (never a fallback for those that have some). From marketcheck.com/apis. |
 | `CRON_SECRET` | server | scheduled sync | ≥16 chars; authorizes the daily `/api/cron-sync` invocations (Vercel Cron sends it as the Bearer token). Unset = scheduled sync disabled. |
-| `CRON_SYNC_EMAILS` | server | — | Which accounts the scheduled sync runs for (comma-separated). Defaults to the owner. |
+
+That's all. Who may use the app, who is an admin, and who gets the daily sync
+are rows in the `allowed_emails` table (the Admin tab), not env vars.
 
 ## Auth & access control
 
-The app is gated by **Supabase email auth**: tap the magic link, paste it into
-the app (how an iPhone Home Screen web app signs in), or type its one-time code
-(needs custom SMTP — see `supabase/README.md`). Beyond signing in, a user must
-be **allowlisted** to be served by the API or to read/write data.
-Access is granted if the signed-in email is **either**:
+The app is gated by **Supabase email auth** and is **invite-only**: there is no
+sign-up. An admin adds an email in the Admin tab and sends an invite; the
+invitee then signs in by tapping the magic link, pasting it into the app (how
+an iPhone Home Screen web app signs in), or typing its one-time code (needs
+custom SMTP — see `supabase/README.md`). The app never asks Supabase to create
+an account (`shouldCreateUser: false`), and the project has sign-ups turned
+off, so an unknown email gets "invite-only" back.
 
-1. in the **`ALLOWED_EMAILS`** env var (comma-separated), or
-2. in the **`public.allowed_emails`** table (checked via the `is_allowed()`
-   RPC, which also backs Row Level Security).
-
-Either one suffices for the API. The env var is convenient for granting API
-access without a DB write, but RLS reads only the table, so a user also needs
-a table row to load or save data. Anyone can sign up via magic-link, but
-non-allowlisted accounts see an "access not enabled" screen and the API/RLS
-reject them. Admins manage the table from the in-app Admin tab.
+Beyond signing in, a user must be in the **`public.allowed_emails`** table to
+be served by the API or to read/write data. The API checks it through the
+`my_access()` RPC (which also says whether the user is an admin) and Row Level
+Security through `is_allowed()`. Each row also carries two flags: **Admin**
+(the Admin tab, Publish demo) and **Daily sync** (the scheduled sync runs for
+that account). Accounts removed from the list see an "access not enabled"
+screen.
 
 CI checks these rules: `supabase/ci/rls_checks.sql` signs in as different
 users (and as `anon`) against a throwaway Postgres and asserts what each can
@@ -133,13 +130,14 @@ user, at most one per hour of activity) in `app_state_history`; the footer
 `rev` counter, so two open devices can't silently overwrite each other — the
 losing session reloads the latest data and says so.
 
-Each user's Anthropic API key (for AI scoring) is stored **encrypted** in a
-separate, server-only `user_anthropic_keys` table — RLS-locked with no client
-policies and no `anon`/`authenticated` grants, reachable only by the
-serverless functions via `SUPABASE_SECRET_KEY`. The plaintext key never
-returns to the browser (the UI shows only status + last 4). MarketCheck keys
-you add in Settings are different: they are stored in your own app-state
-blob and sent with each sync request.
+Each user's API keys — the Anthropic key (AI scoring) and any MarketCheck keys
+(syncs) — are stored **encrypted** in a separate, server-only `user_api_keys`
+table: RLS-locked with no client policies and no `anon`/`authenticated`
+grants, reachable only by the serverless functions via `SUPABASE_SECRET_KEY`.
+Each ciphertext is AES-256-GCM, bound to its owner and provider, so it can't be
+moved to another user's row. A plaintext key never returns to the browser (the
+UI shows only labels, status and the last 4 characters). See
+`supabase/README.md` for the encryption migration plan.
 
 ### Supabase setup
 
@@ -149,11 +147,13 @@ different project, set `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`.
 
 Apply the SQL in `supabase/migrations/` (via the Supabase CLI `supabase db
 push`, or paste into the SQL editor) — it creates `app_state` + RLS, the
-`allowed_emails` allowlist + `is_allowed()`, the encrypted
-`user_anthropic_keys` vault, the backup history + trigger, and the public
-demo snapshot (see `supabase/README.md`). Then under **Authentication → URL Configuration**
-set the Site URL to your deployed URL and add `http://localhost:3000` (and any
-preview URLs) to the redirect allowlist so magic links return correctly.
+`allowed_emails` allowlist + `is_allowed()` / `my_access()`, the encrypted
+`user_api_keys` vault, the backup history + trigger, and the public demo
+snapshot (see `supabase/README.md`). Then, in the Dashboard: turn off
+**Authentication → Sign In / Providers → Allow new users to sign up**, set
+**Authentication → URL Configuration → Site URL** to your deployed URL, and add
+`http://localhost:3000` (and any preview URLs) to the redirect allowlist so
+magic links return correctly.
 
 ## Deployment
 
@@ -184,12 +184,13 @@ src/
 api/                Vercel serverless functions (server-side secrets)
   _auth.js          shared auth + allowlist gate
   _crypto.js        AES-256-GCM encrypt/decrypt for the key vault
+  _keys.js          the key vault (the only module that decrypts)
   _supabaseAdmin.js service-role client for the server-only tables
   _scoring.js       scoring prompt/schema/coercion + model allowlist
   marketcheck.js    MarketCheck proxy (buildUrl/normalize, one sync step per request)
   cron-sync.js      daily scheduled sync + Supabase keepalive (Vercel Cron)
   me.js             auth + key-status check for the client
-  anthropic-key.js  set/validate/remove the per-user Anthropic key
+  keys.js           set/validate/remove the user's Anthropic + MarketCheck keys
   score.js          batch listing scoring with the user's key
   …                 allowlist, snapshots, pricecheck, pricecomps, baseline, profile-suggest
 supabase/
