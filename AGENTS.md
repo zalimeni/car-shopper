@@ -58,7 +58,9 @@ over architecture.
 | `src/tags.js` | Freeform listing tags (`listing.tags`): add/remove (case-insensitive, adopts an existing tag's spelling), `allTags` for suggestions + the Results/Compare tag filter. AI scoring sees them; editing never marks a score stale. Pure, tested. |
 | `src/compareCols.js` | Compare table column layout: user order (drag a header) + pins (sticky on the left), stored in `settings.compareCols`. `layoutColumns`/`moveColumn`/`togglePin`. Pure, tested. |
 | `src/profileWizard.js` | The new-profile wizard's arithmetic over one Explore answer (a `count` step: facets + `stats=price,miles` percentiles): `shareUnder` (≈ share of cars under a cap), `capChoices` (25/50/75/90th-percentile quick picks), `estimateMatches`, years as a From–To range minus skipped years (`rangeYears`/`yearOptions`/`yearChoices`/`formatYears`). UI: `ProfileWizard` in `App.jsx`. Pure, tested. |
-| `src/demo.js`, `src/demoRuntime.js`, `src/Demo.jsx` | **Demo mode** (`/?demo`, no sign-in). `demo.js` (pure, tested): `buildDemoSnapshot` (scrub secrets + unchecked notes, hold back the newest queued cars as a sync `pool`), `prepareDemo` (shift every date so it reads as today), `simulateSync`. `demoRuntime.js`: `DEMO` flag, loads `public.demo_snapshot`, `installFetchGuard` (answers every `/api` call locally + toasts), `demoFetchListings`. `Demo.jsx`: banner, welcome / "how this app uses Supabase" modal, toasts, admins' `DemoPublishModal`. |
+| `src/demo.js`, `src/demoRuntime.js`, `src/Demo.jsx` | **Demo mode** (`/?demo`, no sign-in). `demo.js` (pure, tested): `buildDemoSnapshot` (scrub secrets + unchecked notes, hold back the newest queued cars as a sync `pool`), `prepareDemo` (shift every date so it reads as today; swap in a demo MarketCheck key + made-up quota, `demoQuota`), `simulateSync`, `demoScore` (copies the nearest already-scored car's scores, nudged for price/mileage), and the market/AI stand-ins `demoCount` (a `count` step from the demo's cars + stored `mcProfiles` breakdowns), `demoMarketComps`, `demoPriceAssessment`, `demoBaseline`, `demoSuggestion`. `demoRuntime.js`: `DEMO` flag, loads `public.demo_snapshot`, `installFetchGuard` (answers every `/api` call locally + toasts), `demoFetchListings` / `demoScoreSet` (paced with fake network time — `setDemoDelay(0)` in tests). In demo, `score.js` (`scoreSet`, `getKeyStatus`, `getScorePrompt`, `generateBaseline`, `generatePriceAssessment`, `suggestProfile`) and `sync.js` (`postStep`, `fetchPriceComps`) hand off to `demoRuntime.js`, which reads the visitor's live state via `registerDemoData` — a new client API call needs the same hand-off. `Demo.jsx`: banner, welcome / "how this app uses Supabase" modal, toasts, admins' `DemoPublishModal`. |
+| `src/tutorial.js`, `src/Tutorial.jsx` | **Guided tutorial** (dim overlay + spotlight + card). `tutorial.js` (pure, tested): `STEPS` (tab, `data-tour` target, text; `action: "click"` steps wait for the tapped control to finish; `costly` ones only explain when signed in), `placeCard`, `startTutorial()` (an event). `Tutorial.jsx` is mounted once in `App`. Launched from Help (signed in) and the demo's welcome (first visit) + banner. |
+| `public/demo/`, `scripts/demo-fixture/` | **The demo's data**: `snapshot.json` (a curated, anonymized fixture in the demo-snapshot shape) + `cars/car-NN.webp` thumbnails. Regenerate with `scripts/demo-fixture/` (see its README): `build.mjs` picks ~35 cars from an export by rule and synthesizes VINs, dealers and free text (no owner data in the script); `thumb.py` cuts each car out of its dealer photo onto a studio backdrop. `test/demoFixture.test.js` fails on anything sensitive (contacts, keys, links, real VIN checks, stray build inputs). |
 | `src/markdown.js` | Safe Markdown parser for listing notes (text → typed tree, never HTML; http(s)-only links) + the `MEMO_MAX` (4,000-char) limit. Pure, tested. Rendered by `MarkdownView` / `ListingMemo` in `App.jsx`. |
 | `src/quota.js` | MarketCheck quota bookkeeping for the header gauge + modal: per-key snapshots (from syncs / live searches — never its own calls), capacity across keys (used in order), sync-cost estimates. Pure, tested. |
 | `public/locations.txt` | Flat file (`ST|City|ZIP|lat|lon`, ~41k rows) behind the location picker; lazy-loaded, not bundled. Built by `scripts/build-locations.mjs` from GeoNames (CC BY 4.0). |
@@ -93,7 +95,9 @@ over architecture.
   bundles. Never read; rebuild instead.
 - `package-lock.json` — generated lockfile (~36K). Only consult for a specific
   dependency version; never read in full.
-- `public/` — static assets (favicon, Home Screen icons + `manifest.webmanifest`).
+- `public/` — static assets (favicon, Home Screen icons + `manifest.webmanifest`),
+  plus `public/demo/` (the demo fixture — generated; read `snapshot.json` only
+  to debug the demo, never the thumbnails).
 
 There is **no generated source** in `src/` or `api/` — it's all authored by hand.
 
@@ -245,7 +249,13 @@ per environment (Preview vs Production) — set keys in the env you're testing.
   new endpoint a message in `BLOCKED` (`demoRuntime.js`). Hide owner-only
   chrome with `!DEMO` (quota gauge, Backups, Debug raw). The snapshot is
   published by admins via `POST /api/snapshots { demo }` into
-  `public.demo_snapshot` (anyone can read; only the service role writes).
+  `public.demo_snapshot` (anyone can read; only the service role writes) —
+  served at `/?demo=live`. Plain `/?demo` loads the bundled fixture
+  (`public/demo/snapshot.json`), falling back to the live row.
+- **Tutorial targets:** a step spotlights the first `[data-tour="…"]` element
+  (profile, add-profile, criteria, candidates, sync, cand-card, score,
+  watch-card, filters, compare, price, quota, banner). Keep those attributes
+  when reworking a view; a missing target just skips its step.
 - **New profiles** go through `ProfileWizard` ("+ Add"; "start from a blank
   profile" keeps the old path). Its Explore is `refreshProfileFacets(p,
   { quotaOnly: true })`; create stores the facets in `mcProfiles` and then runs

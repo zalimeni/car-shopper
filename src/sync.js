@@ -10,6 +10,7 @@
 //                      the server-side scheduled sync) and re-exported here.
 
 import { supabase } from "./supabaseClient";
+import { DEMO, demoPostStep, demoPriceComps } from "./demoRuntime";
 import { runSync } from "./syncPlan.js";
 export { reconcile } from "./reconcile.js";
 
@@ -30,6 +31,7 @@ export async function fetchListings(steps, tracked, opts, filters, onProgress) {
 
 // One step -> the proxy's report. Throws on an HTTP failure (err.rateLimited for 429/503/402).
 export async function postStep(step, opts, filters) {
+  if (DEMO) return demoPostStep(step);
   const f = filters || {};
   const qs = opts && opts.mock ? "?mock=1" : "";
   const { data: sess } = await supabase.auth.getSession();
@@ -70,6 +72,7 @@ export async function postStep(step, opts, filters) {
 // fold into the local comp pool. Separate from fetchListings (which reconciles
 // against tracked inventory) — this is a read-only, on-demand widen.
 export async function fetchPriceComps(query, hubs, marketcheckKeys, spentKeys) {
+  if (DEMO) return demoPriceComps(query);
   const { data: sess } = await supabase.auth.getSession();
   const token = sess && sess.session ? sess.session.access_token : "";
   const res = await fetch("/api/pricecomps", {

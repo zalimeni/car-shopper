@@ -7,6 +7,7 @@
 // /api/score, which decrypts the key server-side to call Anthropic.
 
 import { supabase } from "./supabaseClient";
+import { DEMO, demoScoreSet, demoPriceRead, demoBaselineFor, demoSuggest, demoScorePrompt } from "./demoRuntime";
 
 const CHUNK = 4; // listings per /api/score request; bounds request time/size
 const REQUEST_TIMEOUT_MS = 75000; // > server function budget, so a real hang surfaces
@@ -28,6 +29,7 @@ async function authHeaders() {
 
 // AI fair-price verdict for the Price Check tool, grounded in the observed comps.
 export async function generatePriceAssessment(query, comps, stats, confidence) {
+  if (DEMO) return demoPriceRead(query, comps, stats, confidence);
   const res = await fetch("/api/pricecheck", {
     method: "POST", headers: await authHeaders(),
     body: JSON.stringify({ query: query, comps: comps || [], stats: stats || null, confidence: confidence || null }),
@@ -42,6 +44,7 @@ export async function generatePriceAssessment(query, comps, stats, confidence) {
 
 // AI-assisted price baseline for a profile, grounded in its real listings.
 export async function generateBaseline(profile, listings, model) {
+  if (DEMO) return demoBaselineFor(profile, listings);
   const res = await fetch("/api/baseline", {
     method: "POST", headers: await authHeaders(),
     body: JSON.stringify({ profile: profile, listings: listings || [], model: model }),
@@ -57,6 +60,7 @@ export async function generateBaseline(profile, listings, model) {
 // The profile wizard's AI step: must-haves / dealbreakers / years to avoid for a
 // vehicle, given the explore call's market snapshot. Uses the user's own key.
 export async function suggestProfile(profile, market) {
+  if (DEMO) return demoSuggest(profile, market);
   const res = await fetch("/api/profile-suggest", {
     method: "POST", headers: await authHeaders(),
     body: JSON.stringify({ profile: profile, market: market || {} }),
@@ -71,6 +75,7 @@ export async function suggestProfile(profile, market) {
 
 // Default scoring system prompt + per-criterion guidance, for the prompt editor.
 export async function getScorePrompt() {
+  if (DEMO) return demoScorePrompt();
   try {
     const res = await fetch("/api/score", { method: "GET", headers: await authHeaders() });
     if (!res.ok) return { system: "", guidance: {} };
@@ -81,6 +86,8 @@ export async function getScorePrompt() {
 // ── Key management ──
 
 export async function getKeyStatus() {
+  // Demo: a pretend key, so scoring (simulated — demoScoreSet) can be tried.
+  if (DEMO) return { configured: true, valid: true, last4: "DEMO", demo: true };
   try {
     const res = await fetch("/api/anthropic-key", { method: "GET", headers: await authHeaders() });
     if (!res.ok) return { configured: false, valid: false, last4: "" };
@@ -119,6 +126,7 @@ const CONCURRENCY = 3; // chunks in flight at once (speed vs. Anthropic rate lim
 // get re-scored on the next run. Only a key-level failure throws (with .code)
 // so the caller can prompt for a fresh key. Returns all pairs when done.
 export async function scoreSet(items, ctx, opts) {
+  if (DEMO) return demoScoreSet(items, ctx, opts);
   opts = opts || {};
   const groups = {};
   items.forEach(function (it) {

@@ -6,7 +6,7 @@ import { render, screen, fireEvent, waitFor, within } from "@testing-library/rea
 // /?demo end to end: the published snapshot loads with no session, the welcome
 // shows once, edits stay in memory, ↻ Sync is simulated (held-back cars with
 // their scores, a price drop, a car gone), and no /api call leaves the browser.
-window.history.replaceState(null, "", "/?demo#results");
+window.history.replaceState(null, "", "/?demo=live#results"); // the published copy (Supabase); the fixture has its own test
 
 const car = (id, o) => Object.assign({ id: id, vin: "VIN000000000000" + id, year: 2021, make: "Subaru", model: "Outback", vehicle: "Subaru Outback", trim: "Premium",
   status: "watch", source: "marketcheck", profileId: "p1", price: 22000, miles: 40000, dealer: "Dealer " + id, addedDate: "2026-10-01", lastSeen: "2026-10-30", lastChecked: "2026-10-30" }, o || {});
@@ -36,8 +36,9 @@ vi.mock("../src/supabaseClient", () => ({ supabase: {
 const apiCalls = [];
 window.fetch = async (u) => { apiCalls.push(String(u)); return new Response("{}", { status: 200 }); };
 
-const { installFetchGuard } = await import("../src/demoRuntime.js");
+const { installFetchGuard, setDemoDelay } = await import("../src/demoRuntime.js");
 installFetchGuard();
+setDemoDelay(0);
 const { DemoShell } = await import("../src/Demo.jsx");
 const App = (await import("../src/App.jsx")).default;
 
@@ -48,7 +49,7 @@ describe("demo mode", () => {
     const welcome = await screen.findByRole("dialog", { name: "Welcome" }, { timeout: 4000 });
     expect(within(welcome).getByText("How this app uses Supabase")).toBeTruthy();
     expect(within(welcome).getByText("— Michael")).toBeTruthy();
-    fireEvent.click(within(welcome).getByText("Take a look"));
+    fireEvent.click(within(welcome).getByText("Explore on my own"));
     expect(screen.queryByRole("dialog", { name: "Welcome" })).toBeNull();
     expect(localStorage.getItem("cs-demo-welcomed")).toBe("1");
     expect(screen.getByText("Demo · not saved")).toBeTruthy();

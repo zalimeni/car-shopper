@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isDemoUrl, buildDemoSnapshot, reviewableNotes, autoNotes, userNotes, shiftDateStr, shiftDates, daysSince, prepareDemo, simulateSync, scoreFieldsOf } from "../src/demo.js";
+import { demoScore, demoCount, demoMarketComps, demoPriceAssessment, demoBaseline, demoSuggestion, sameModel, statsOf, isDemoUrl, buildDemoSnapshot, reviewableNotes, autoNotes, userNotes, shiftDateStr, shiftDates, daysSince, prepareDemo, simulateSync, scoreFieldsOf } from "../src/demo.js";
 import { reconcile } from "../src/reconcile.js";
 
 var car = function (id, o) {
@@ -88,8 +88,9 @@ describe("dates", () => {
     expect(p.data.lastSynced).toBe("2026-11-07T09:00:00Z");
     expect(p.data.listings[0].lastSeen).toBe("2026-11-05");
     expect(p.pool[0].addedDate).toBe("2026-10-07");
-    expect(p.data.settings.marketcheckKeys).toBeUndefined();
-    expect(p.data.autoScore).toBe(false);
+    expect(p.data.settings.marketcheckKeys).toEqual([{ key: "demo-key-DEMO", label: "Demo key" }]);
+    expect(p.data.settings.mcQuota.snaps.DEMO).toMatchObject({ remaining: 382, limit: 500, reset: "2026-12-01T00:00:00.000Z" });
+    expect(p.data.autoScore).toBe(true); // simulated scoring
     expect(prepareDemo(null)).toBeNull();
   });
 });
@@ -122,5 +123,90 @@ describe("simulateSync", () => {
     expect(rec.summary.notSeen).toBe(1);
     expect(rec.candidates.map((c) => c.vin)).toEqual(["VINp1", "VINp2", "VINp3"]);
     expect(Object.assign({}, rec.candidates[0], scoreFieldsOf(pool[0])).scores).toEqual({ price: 9 });
+  });
+});
+
+describe("demoScore", () => {
+  var crit = [{ id: "price" }, { id: "mileage" }, { id: "color" }];
+  var refs = [
+    car("r1", { profileId: "p1", trim: "Premium", price: 22000, miles: 40000, scoredAt: "x", scores: { price: 6, mileage: 6, color: 8 } }),
+    car("r2", { profileId: "p2", trim: "Premium", price: 21000, miles: 41000, scoredAt: "x", scores: { price: 2, mileage: 2, color: 2 } }),
+    car("r3", { profileId: "p1", price: 9000, miles: 40000, scores: { price: 10 } }), // not scored
+  ];
+  it("copies the nearest scored car in the same profile, nudging price and mileage", () => {
+    var r = demoScore(car("x", { profileId: "p1", trim: "Premium", price: 19000, miles: 64000 }), refs, crit);
+    expect(r.ok).toBe(true);
+    expect(r.scores).toEqual({ price: 8, mileage: 4, color: 8 });
+    expect(r.rationales.price).toBe("Demo estimate: $19,000 vs $22,000 on a similar 2021 Subaru Outback Premium.");
+    expect(r.summary).toMatch(/^Demo score — no AI call\. Modeled on a similar 2021 Subaru Outback Premium at \$22,000/);
+  });
+  it("clamps to 1–10 and never models a car on itself", () => {
+    var self = demoScore(car("r1", { profileId: "p1", trim: "Premium", price: 60000, miles: 40000 }), refs, crit);
+    expect(self.scores.color).toBe(2); // modeled on r2 (other profile), not itself
+    expect(self.scores.price).toBe(1);
+    expect(demoScore(car("y", { profileId: "p1", price: 1000 }), refs, crit).scores.price).toBe(10);
+  });
+  it("middle scores with nothing to go on", () => {
+    expect(demoScore(car("z"), [], crit).scores).toEqual({ price: 5, mileage: 5, color: 5 });
+  });
+});
+
+describe("demo market answers", () => {
+  var m = (id, o) => Object.assign({ id: id, vin: "M" + id, vehicle: "Subaru Outback", year: 2021, trim: "Premium", price: 20000, mileage: 40000, baseColor: "Blue", drivetrain: "4WD" }, o || {});
+  var cars = [m(1), m(2, { year: 2020, trim: "Limited", price: 24000, mileage: 30000, baseColor: "Gray" }), m(3, { year: 2022, price: 26000, mileage: 20000 }),
+    m(4, { vehicle: "Toyota RAV4" }), m(1)];
+  var profiles = [{ id: "ob", name: "Outback", params: { make: "Subaru", model: "Outback", mustHave: "AWD", dealbreakers: "XT" } }];
+  it("matches on make/model", () => {
+    expect(sameModel(cars[0], "subaru", "outback")).toBe(true);
+    expect(sameModel(cars[3], "Subaru", "")).toBe(false);
+    expect(sameModel({ make: "Subaru", model: "Outback" }, "Subaru", "Outback")).toBe(true);
+  });
+  it("count: facets + stats from the demo's cars, within the years", () => {
+    var r = demoCount({ params: { make: "Subaru", model: "Outback", years: "2020-2021" } }, cars, [], null);
+    expect(r.numFound).toBe(2);
+    expect(r.trims.counts).toEqual({ Premium: 1, Limited: 1 });
+    expect(r.years.counts).toEqual({ 2021: 1, 2020: 1 });
+    expect(r.stats.price.median).toBe(22000);
+  });
+  it("count: stored nationwide breakdowns win and set the total", () => {
+    var r = demoCount({ params: { make: "Subaru", model: "Outback" } }, cars, profiles, { ob: { count: 812, trims: { counts: { Premium: 400, Touring: 90 }, unlisted: 0, at: "x" } } });
+    expect(r.numFound).toBe(812);
+    expect(r.trims).toEqual({ counts: { Premium: 400, Touring: 90 }, unlisted: 0 });
+    expect(r.colors.counts).toEqual({ Blue: 2, Gray: 1 });
+  });
+  it("stats percentiles", () => {
+    expect(statsOf([10, 20, 30, 40, 50]).percentiles["25.0"]).toBe(20);
+    expect(statsOf([])).toBeNull();
+  });
+  it("market comps: made-up, near the demo's own, deterministic", () => {
+    var a = demoMarketComps({ make: "Subaru", model: "Outback", year: 2021 }, cars, 6);
+    expect(a.length).toBe(6);
+    expect(a.every((c) => c.dealer === "Simulated market listing" && /^DEMOCOMP/.test(c.vin))).toBe(true);
+    a.forEach((c) => { expect(c.price).toBeGreaterThan(18000); expect(c.price).toBeLessThan(28000); });
+    expect(demoMarketComps({ make: "Subaru", model: "Outback", year: 2021 }, cars, 6)).toEqual(a);
+    expect(demoMarketComps({ make: "Honda", model: "Fit" }, cars)).toEqual([]);
+  });
+  it("price read from the numbers", () => {
+    var t = demoPriceAssessment({ year: 2021, make: "Subaru", model: "Outback", askingPrice: 23000 },
+      { stats: { n: 5, p25: 20000, median: 22000, p75: 24000 }, verdict: { vsMedian: 1000, verdict: "Fair — typical range", tone: "ok" }, confidence: { level: "low" } });
+    expect(t).toBe("Demo read (no AI call): across 5 comparable listings for a 2021 Subaru Outback, the middle half ask $20,000–$24,000 (median $22,000). At $23,000 it's $1,000 over the median — fair — typical range. A modest offer near $20,000 is reasonable. Confidence is low — the sample is small or spread out.");
+  });
+  it("baseline: per-year bands from the profile's cars", () => {
+    var b = demoBaseline(profiles[0], cars);
+    expect(b.tiers.map((t) => t.years)).toEqual(["2020", "2021", "2022"]);
+    expect(b.tiers[1]).toEqual({ years: "2021", trim: "", good: 18800, fair: 20000, high: 21200 });
+    expect(b.refMileage).toBe(30000);
+    expect(demoBaseline({ params: { make: "Honda", model: "Fit", maxPrice: 10000 } }, cars).default).toEqual({ good: 8500, fair: 9500, high: 10500 });
+  });
+  it("suggestions borrow the owner's wording", () => {
+    var s = demoSuggestion({ params: { make: "Subaru", model: "Outback" } }, { trims: { counts: { Premium: 9, Limited: 4 } } }, profiles);
+    expect(s.mustHave).toBe("AWD");
+    expect(s.trimNotes[0]).toEqual({ trim: "Premium", note: "Most listed trim right now (9)" });
+    expect(s.summary).toMatch(/owner's own Outback profile/);
+    expect(demoSuggestion({ params: { make: "Honda", model: "Fit" } }, {}, profiles).mustHave).toBe("");
+  });
+  it("prepareDemo flags the two newest queued cars as found by the background sync", () => {
+    var p = prepareDemo({ exportedAt: "2026-11-01T00:00:00Z", data: { settings: {}, listings: [], candidates: [m(1, { addedDate: "2026-10-01" }), m(2, { addedDate: "2026-10-09" }), m(3, { addedDate: "2026-10-05" })] } }, new Date("2026-11-01T12:00:00Z"));
+    expect(p.data.candidates.map((c) => !!c.fromScheduled)).toEqual([false, true, true]);
   });
 });

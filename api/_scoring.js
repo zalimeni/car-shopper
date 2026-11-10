@@ -18,9 +18,11 @@ export const SCORE_MODELS = {
   "claude-haiku-5-5": "Haiku 5.5 — fastest / cheapest",
 };
 
+// (`process` guarded: the demo bundles this file for its prompt text.)
+const ENV_MODEL = typeof process !== "undefined" && process.env ? process.env.SCORING_MODEL : "";
 export const DEFAULT_SCORE_MODEL =
-  process.env.SCORING_MODEL && Object.prototype.hasOwnProperty.call(SCORE_MODELS, process.env.SCORING_MODEL)
-    ? process.env.SCORING_MODEL
+  ENV_MODEL && Object.prototype.hasOwnProperty.call(SCORE_MODELS, ENV_MODEL)
+    ? ENV_MODEL
     : "claude-sonnet-5-5";
 
 export function resolveScoreModel(requested) {

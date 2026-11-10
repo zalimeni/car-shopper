@@ -1,8 +1,10 @@
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, Fragment, cloneElement } from "react";
 import storage from "./storage";
 import { signOut } from "./Auth";
-import { DEMO, demoFetchListings } from "./demoRuntime";
+import { DEMO, demoFetchListings, registerDemoData } from "./demoRuntime";
 import { DemoPublishModal } from "./Demo";
+import { Tutorial } from "./Tutorial";
+import { startTutorial } from "./tutorial.js";
 import { fetchListings, postStep, fetchPriceComps, fetchRawSample, reconcile } from "./sync";
 import { planSync, trackedVins, nextProfileMeta, estimateCost, profileStatus, searchSig, mergeColorCache, COUNT_WARN, ROWS as MC_ROWS, FULL_REFRESH_DAYS, DECODE_MAX } from "./syncPlan";
 import { travelFacts, DRIVE_MAX_MI, AIRPORT_NEAR_MI } from "./travel";
@@ -654,6 +656,10 @@ export default function App() {
   // from it would clobber approvals/edits/AI scores landed mid-sync.
   var dataRef = useRef(null);
   dataRef.current = data;
+  var candRef = useRef([]);
+  candRef.current = candidates;
+  // Demo: the simulated market answers read the visitor's in-memory state.
+  if (DEMO) registerDemoData(function () { return { data: dataRef.current, candidates: candRef.current }; });
 
   // Optimistic concurrency for the single-blob state: `revRef` is the row
   // revision we loaded, writes go through a serialized queue (rapid saves CAS
@@ -890,6 +896,8 @@ export default function App() {
     var profileById = {};
     (data.profiles || []).forEach(function (p) { profileById[p.id] = p; });
     var ctx = { criteria: data.criteria, globalReqs: data.globalReqs || [], profileById: profileById, model: data.scoreModel || DEFAULT_SCORE_MODEL, system: data.scorePrompt || "", homeBase: getSettings(data).homeBase || null };
+    // Demo: scores are modeled on the cars already scored (src/demo.js demoScore).
+    if (DEMO) ctx.demoRefs = (data.listings || []).concat(candidates || [], data.skipped || []);
     setScoreBusy(true);
     setScoringActive(all.map(function (x) { return x.id || x.vin || null; }).filter(Boolean));
     setScoreMsg({ busy: true, text: "Scoring " + all.length + " listing" + (all.length > 1 ? "s" : "") + "…" });
@@ -925,7 +933,7 @@ export default function App() {
       setScoreBusy(false);
       setScoringActive([]);
     }
-  }, [data, scoreBusy, patchListings]);
+  }, [data, scoreBusy, patchListings, candidates]);
 
   // Pull dealer inventory via the proxy and reconcile. New VINs flow into the
   // candidate queue (same review path as Import); known VINs get price/last-seen
@@ -966,7 +974,7 @@ export default function App() {
       }
       var po = planOpts(data);
       var steps = planSync(active, getSettings(data).mcProfiles || {}, Object.assign({ manual: !auto }, po));
-      var res = DEMO ? await demoFetchListings((dataRef.current || data).listings) : await fetchListings(steps, trackedVins(data.listings), opts, { franchiseOnly: po.franchiseOnly, excludeSalt: po.excludeSalt, marketcheckKeys: mcKeys(data), spentKeys: mcSpent(data), colorCache: getSettings(data).mcColors || {},
+      var res = DEMO ? await demoFetchListings((dataRef.current || data).listings, steps, onSyncProgress, getSettings(data).mcQuota) : await fetchListings(steps, trackedVins(data.listings), opts, { franchiseOnly: po.franchiseOnly, excludeSalt: po.excludeSalt, marketcheckKeys: mcKeys(data), spentKeys: mcSpent(data), colorCache: getSettings(data).mcColors || {},
         // Queued candidates still without a color get decoded too (they may not come back in this sync).
         alsoDecode: candidates.filter(function (c) { return c.vin && !c.color && !c.baseColor; }).map(function (c) { return c.vin; }) }, onSyncProgress);
       // Reconcile + save against the LATEST state, not the `data` snapshot from
@@ -1008,7 +1016,7 @@ export default function App() {
       if (!res.rateLimited) syncPatch.lastSynced = new Date().toISOString();
       // Keep each key's latest monthly quota (MarketCheck reports it on every
       // response) and — for a clean, complete run — what the sync actually cost.
-      if (!res.mock && !res.demo) {
+      if (!res.mock) {
         var nowIso = new Date().toISOString();
         var mq1 = ingestSnaps(getSettings(base).mcQuota, res.keyQuotas, nowIso);
         // A query error still paid for its call, so the count stands; only a run cut
@@ -1377,7 +1385,7 @@ export default function App() {
         <div style={S.hRow}>
           <h1 style={S.title}>Car Shopper</h1>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            {!DEMO && <QuotaGauge summary={quotaSummary} onClick={function () { setQuotaOpen(true); }} />}
+            <QuotaGauge summary={quotaSummary} onClick={function () { setQuotaOpen(true); }} />
             <span style={S.badge}>{DEMO ? "Demo · not saved" : saving ? "Saving..." : "Saved ✓"}</span>
           </div>
         </div>
@@ -1395,6 +1403,7 @@ export default function App() {
         </nav>
       </header>
 
+      <Tutorial demo={DEMO} />
       {publishOpen && <DemoPublishModal data={data} candidates={candidates} onClose={function () { setPublishOpen(false); }} />}
       {quotaOpen && (
         <QuotaModal data={data} summary={quotaSummary} onClose={function () { setQuotaOpen(false); }} />
@@ -1624,7 +1633,7 @@ export function QuotaGauge({ summary, onClick }) {
   var label = u == null ? "MarketCheck quota: not measured yet — click for details"
     : "MarketCheck quota: " + Math.round(u * 100) + "% used, " + Number(summary.totalRemaining).toLocaleString() + " calls left — click for details";
   return (
-    <button onClick={onClick} title={label} aria-label={label}
+    <button onClick={onClick} title={label} aria-label={label} data-tour="quota"
       style={{ background: "none", border: "none", padding: 2, cursor: "pointer", display: "flex", alignItems: "center", lineHeight: 0 }}>
       <QuotaRing used={u} size={24} stroke={3}>
         {u == null && <text x="12" y="16" textAnchor="middle" fontSize="11" fill="#777">?</text>}
@@ -2096,7 +2105,7 @@ function KeyCard({ keyStatus, setKeyStatus }) {
         <h3 style={S.cardH}>✨ AI key (Anthropic)</h3>
         <span style={{ fontSize: 11, color: statusColor }}>{statusText}</span>
       </div>
-      <p style={S.help}>Powers AI scoring, price baselines, the Price Check verdict, and the new-profile wizard's suggestions. Your key is validated, then stored encrypted server-side and used only to run against your own account/quota. Only its last 4 characters are ever shown again. Create one at console.anthropic.com.</p>
+      <p style={S.help}>Powers AI scoring, price baselines, the Price Check verdict, and the new-profile wizard's suggestions. Your key is validated, then stored encrypted server-side and used only to run against your own account/quota. It's never displayed again. Create one at console.anthropic.com.</p>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         <input style={Object.assign({}, S.inp, { flex: 1, minWidth: 180, fontFamily: "monospace" })} type="password" autoComplete="off"
           placeholder="sk-ant-..." value={keyInput} onChange={function (e) { setKeyInput(e.target.value); }} />
@@ -2355,7 +2364,7 @@ function ProfilesTab({ data, save, keyOk, scoreModel, refreshFacets }) {
         <h2 style={S.secT}>Vehicle Profiles</h2>
         <div style={{ display: "flex", gap: 6 }}>
           <button style={S.secBtn} onClick={function () { setShowIO(!showIO); setImpMsg(null); }}>{showIO ? "Close" : "Import / export"}</button>
-          <button style={S.priBtn} onClick={function () { setWizard(true); }}>+ Add</button>
+          <button style={S.priBtn} data-tour="add-profile" onClick={function () { setWizard(true); }}>+ Add</button>
         </div>
       </div>
       {wizard && <ProfileWizard data={data} keyOk={keyOk} onClose={function () { setWizard(false); }}
@@ -2375,14 +2384,14 @@ function ProfilesTab({ data, save, keyOk, scoreModel, refreshFacets }) {
       )}
       {data.profiles.map(function (p) {
         return (
-          <div key={p.id} style={Object.assign({}, S.card, { opacity: p.active ? 1 : 0.5 })}>
+          <div key={p.id} data-tour="profile" style={Object.assign({}, S.card, { opacity: p.active ? 1 : 0.5 })}>
             <div style={S.profH}>
               <div style={S.profHL}>
                 <RoleBadge role={p.role} />
                 <strong style={{ fontSize: 15, color: "#e4e4e7" }}>{p.name}</strong>
               </div>
               <div style={S.profA}>
-                <button style={S.smBtn} onClick={function () { toggleActive(p.id); }}><Swap labels={["On", "Off"]} show={p.active ? 1 : 0} /></button>
+                <Toggle on={!!p.active} label={(p.active ? "Turn off " : "Turn on ") + p.name} onChange={function () { toggleActive(p.id); }} />
                 <button style={S.smBtn} onClick={function () { setEd(ed === p.id ? null : p.id); }}><Swap labels={["Edit", "Done"]} show={ed === p.id ? 1 : 0} /></button>
                 <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { delProf(p.id); }}>Del</button>
               </div>
@@ -2392,7 +2401,7 @@ function ProfilesTab({ data, save, keyOk, scoreModel, refreshFacets }) {
               queued={(data.candidates || []).filter(function (c) { return c.profileId === p.id; })} keyOk={keyOk} model={scoreModel} />) : (
               <div style={{ fontSize: 13, color: "#8a8a96", lineHeight: 1.6 }}>
                 <div>{p.params.make} {p.params.model} · {p.params.years} · {p.params.trims}</div>
-                <div>≤${p.params.maxPrice.toLocaleString()} · ≤{p.params.maxMiles.toLocaleString()} mi</div>
+                <div>≤${Number(p.params.maxPrice || 0).toLocaleString()} · ≤{Number(p.params.maxMiles || 0).toLocaleString()} mi</div>
                 {p.params.mustHave && <div style={{ marginTop: 4 }}><span style={{ fontSize: 11, fontWeight: 600, color: "#2d8659" }}>Must:</span> {p.params.mustHave}</div>}
                 {((p.params.excludeTrims || []).length > 0 || (p.params.excludeDrivetrains || []).length > 0) && (
                   <div style={{ marginTop: 4, fontSize: 12 }}>
@@ -2772,7 +2781,7 @@ function CriteriaTab({ data, saveRecalc, save }) {
 
       <PromptEditor data={data} save={save} defaultSystem={defaults.system} />
 
-      <div style={S.card}>
+      <div style={S.card} data-tour="criteria">
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
           <span style={S.lbl}>Total: {tot}</span>{tot !== 100 && <span style={{ color: "#c44", fontSize: 13 }}>⚠ Should = 100</span>}
         </div>
@@ -3020,6 +3029,18 @@ function Swap({ labels, show }) {
     </span>
   );
 }
+// An on/off switch (role="switch"): a fixed-size track with a sliding knob, so
+// flipping it never moves anything beside it.
+function Toggle({ on, onChange, label }) {
+  return (
+    <button type="button" role="switch" aria-checked={on} aria-label={label} title={label} onClick={onChange}
+      style={{ position: "relative", width: 38, height: 22, flex: "0 0 auto", borderRadius: 11, border: "1px solid " + (on ? "#2d8659" : "#3a3d48"),
+        background: on ? "#1f6b45" : "#22252e", padding: 0, cursor: "pointer", transition: "background 0.15s, border-color 0.15s", verticalAlign: "middle" }}>
+      <span aria-hidden="true" style={{ position: "absolute", top: 2, left: on ? 18 : 2, width: 16, height: 16, borderRadius: "50%",
+        background: on ? "#e8f5ee" : "#8a8a96", transition: "left 0.15s, background 0.15s" }} />
+    </button>
+  );
+}
 function scoreHue(v) { return v >= 7 ? "#2d8659" : v >= 5 ? "#d4a017" : "#c44"; }
 
 // Is a list price fair? Checks a VIN-or-description against comparable cars in
@@ -3133,7 +3154,7 @@ export function PriceCheckTab({ data, candidates, keyStatus, goSettings, onQuota
   return (
     <div>
       <div style={S.secH}><h2 style={S.secT}>Price check</h2></div>
-      <div style={S.card}>
+      <div style={S.card} data-tour="price">
         <p style={S.help}>Is an asking price fair? Enter a description (or the VIN of a car already in your data) and it's judged against comparable cars in <span style={{ color: "#c8c8d0" }}>your own tracked, rejected, sold, skipped &amp; candidate data</span> — free and offline. Thin on comps? <span style={{ color: "#c8c8d0" }}>Check the live market</span> to widen the pool with current MarketCheck listings. With an Anthropic key set, you can also <span style={{ color: "#c8c8d0" }}>Ask AI for a verdict</span>.</p>
 
         {(data.profiles || []).length > 0 && (
@@ -3528,7 +3549,7 @@ function CompareTab({ data, cardCtx, saveCols }) {
         )}
         <div ref={wrapRef} className="cs-wide" style={Object.assign({}, S.card, { overflowX: "auto", padding: 0 })}>
           <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%" }}>
-            <thead>
+            <thead data-tour="compare">
               <tr>
                 <th {...headerProps(idCol)} ref={function (el) { thRefs.current.listing = el; }} style={Object.assign({}, rowLabel, { zIndex: 3,  color: "#6b6b76", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 500, borderBottom: "1px solid #2a2d38" })}>
                   {listings.length} listing{listings.length > 1 ? "s" : ""}{sortIndicator(sort, idCol)}
@@ -3612,10 +3633,13 @@ function HelpTab() {
   var note = { fontSize: 12, color: "#8a8a96", lineHeight: 1.55, margin: "4px 0 0" };
   return (
     <div>
-      <div style={S.secH}><h2 style={S.secT}>How this works</h2></div>
+      <div style={S.secH}><h2 style={S.secT}>How this works</h2>
+        <button style={S.priBtn} onClick={startTutorial}>▶ Start the tutorial</button>
+      </div>
 
       <div style={S.card}>
         <h3 style={S.cardH}>The basic flow</h3>
+        <p style={li}><span style={b}>Tutorial</span> — <span style={b}>▶ Start the tutorial</span> (above) walks through the app in about two minutes, spotlighting each feature in the order you'd use it. Steps that would spend MarketCheck calls or your Anthropic key only explain; in the demo they run, simulated.</p>
         <p style={li}><span style={b}>1. Profiles</span> — define the cars you're hunting (make/model/years/trims, price &amp; mileage caps, must-haves, dealbreakers). Active profiles drive every search. <span style={b}>+ Add</span> opens a wizard: pick the make, model, years and powertrain, then <span style={b}>Explore</span> (one MarketCheck call) shows how many are for sale nationwide, by year and trim, and what they cost — quick picks set the price and mileage caps by what share of cars they keep (no extra calls), and with an Anthropic key, AI suggests must-haves, dealbreakers and years to avoid. Creating the profile checks its exact count (one more call).</p>
         <p style={li}><span style={b}>2. Sync</span> — pulls matching dealer inventory and reconciles it with what you're already tracking.</p>
         <p style={li}><span style={b}>3. Candidates</span> — brand-new matches land in a review queue. Approve the good ones to your watchlist, skip the rest.</p>
@@ -3653,7 +3677,7 @@ function HelpTab() {
         <p style={li}><span style={b}>Model</span> — pick Sonnet 5.5 (default, balanced), Opus 5.5 (most nuanced), or Haiku 5.5 (fastest/cheapest). <span style={b}>Auto-score on sync</span> scores only unscored candidates and listings whose price changed (never untouched or skipped ones), and is <span style={b}>skipped when there are more than 20 to score</span> — use Score all / per-card then, to avoid burning credits.</p>
         <p style={li}>Score (or Re-score) any single card with its ✨ button, or use <span style={b}>Score all</span> on the candidate queue. After you edit criteria, per-criterion guidance, or the scoring prompt, cards scored under the old settings show <span style={b}>⟳ Re-score (changed)</span>; <span style={b}>✨ Re-score filtered</span> (in the filter bar) re-applies to every candidate + watchlist listing matching the current filters at once.</p>
         <p style={li}><span style={b}>Filter bar</span> (Results): shows your <span style={b}>active profiles</span> by default — pick All profiles, or any single one (inactive ones included), plus category, dealer and tag. Everything follows it: candidates, the hidden-by-filters list, skipped cars, the watchlist, rejected and sold. <span style={b}>Approve All</span> approves just the candidates shown.</p>
-        <p style={note}>Scoring runs in batches and fills in results as each batch finishes, so partial progress is kept. If a large run is interrupted (e.g. the tab is backgrounded), the finished ones stay scored and the rest are picked up on the next sync/score. The key is validated, stored encrypted server-side, and never shown again (only its last 4 characters) — it's only used for your own AI requests (scoring, baselines, Price Check, profile suggestions) under your own account. Note: the API is pay-as-you-go and needs credits in the Anthropic Console; a Claude Pro/Max subscription does not include API access.</p>
+        <p style={note}>Scoring runs in batches and fills in results as each batch finishes, so partial progress is kept. If a large run is interrupted (e.g. the tab is backgrounded), the finished ones stay scored and the rest are picked up on the next sync/score. The key is validated, stored encrypted server-side, and never shown again — it's only used for your own AI requests (scoring, baselines, Price Check, profile suggestions) under your own account. Note: the API is pay-as-you-go and needs credits in the Anthropic Console; a Claude Pro/Max subscription does not include API access.</p>
       </div>
 
       <div style={S.card}>
@@ -3677,7 +3701,7 @@ function HelpTab() {
         <p style={li}><span style={b}>Setup wizard</span> (footer) re-runs the guided setup (budget, home base, profiles, rules). Listings are kept; finishing it replaces the budget, home base, tagline and rules (and the profiles, if you start blank). Budget, home base, salt-belt handling, and tagline also live on the <span style={b}>Settings</span> tab.</p>
         <p style={li}><span style={b}>Export Listings</span> (footer) dumps your listings as JSON to copy and back up. <span style={b}>Import</span> (Results) accepts the same shape.</p>
         <p style={li}><span style={b}>Export prices (CSV)</span> (footer) downloads every recorded price observation across <span style={b}>all</span> listings — watchlist, rejected, sold, skipped, and candidates — one row per price/date, with year/trim/mileage/dealer-type/CPO/status. Built for offline pricing analysis (e.g. uploading to Claude to reason about model/trim/mileage pricing, including private listings you're evaluating elsewhere).</p>
-        <p style={li}><span style={b}>Demo</span> — <span style={b}>/?demo</span> (or "Try the demo" on the sign-in screen) opens a public, read-only copy of the owner's data with no sign-in: edits stay in that tab, ↻ Sync is simulated, and no MarketCheck or AI call is made. Admins refresh it with <span style={b}>Publish demo</span> (footer), which removes keys and clears any notes and typed reject reasons left unchecked.</p>
+        <p style={li}><span style={b}>Demo</span> — <span style={b}>/?demo</span> (or "Try the demo" on the sign-in screen) opens a public demo with no sign-in, over a curated, anonymized slice of the owner's data (bundled with the app): edits stay in that tab, everything that would call MarketCheck or Claude is simulated and paced like the real call — ↻ Sync, ✨ Score (modeled on similar cars already scored), the wizard's Explore and suggestions, a profile's AI price baseline, and the Price tab's live market and AI verdict — while a pretend MarketCheck quota counts down. No real call is ever made; Reset in the banner starts over. Admins can also publish their current data with <span style={b}>Publish demo</span> (footer; keys removed, unchecked notes and typed reject reasons cleared) — that copy opens at <span style={b}>/?demo=live</span>.</p>
         <p style={li}><span style={b}>Backups</span> (footer) lists automatic server-side snapshots of your whole app state (up to 30, at most one per hour of activity) — restore any of them in two taps; the pre-restore state is snapshotted too, so a restore is undoable.</p>
         <p style={li}>Your data syncs to your account, so signing in elsewhere loads the same watchlist. <span style={b}>Reset All Data</span> (footer) replaces your data with the starter profiles and rules and restarts the wizard (your Anthropic key and the automatic backups are kept).</p>
       </div>
@@ -3797,7 +3821,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       <div style={S.secH}>
         <h2 style={S.secT}>Listings</h2>
         <div style={{ display: "flex", gap: 6 }}>
-          <button style={Object.assign({}, S.secBtn, syncing ? { opacity: 0.6 } : {})} disabled={syncing} onClick={function () { var w = DEMO ? null : syncWarning(data); if (!w || window.confirm(w)) doSync(); }}>{syncing ? "Syncing…" : "↻ Sync"}</button>
+          <button data-tour="sync" style={Object.assign({}, S.secBtn, syncing ? { opacity: 0.6 } : {})} disabled={syncing} onClick={function () { var w = DEMO ? null : syncWarning(data); if (!w || window.confirm(w)) doSync(); }}>{syncing ? "Syncing…" : "↻ Sync"}</button>
           <button style={S.secBtn} onClick={function () { setShowImport(!showImport); setShowAdd(false); }}>{showImport ? "Close" : "Import"}</button>
           <button style={S.priBtn} onClick={function () { setShowAdd(!showAdd); setShowImport(false); setEdListing(null); }}>{showAdd ? "Cancel" : "+ Add"}</button>
         </div>
@@ -3820,7 +3844,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
 
       {/* Filter & Sort bar — also when only candidates / skipped cars exist */}
       {(totalAll > 0 || candidates.length > 0 || (skipped || []).length > 0) && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12, alignItems: "center" }}>
+        <div data-tour="filters" style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12, alignItems: "center" }}>
           <select style={Object.assign({}, S.inp, { flex: "0 0 auto", padding: "5px 8px", fontSize: 12 })} value={filterProf} onChange={function (e) {
             var v = e.target.value;
             setFilterProf(v);
@@ -3875,7 +3899,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       {/* Candidates (trim-filtered per profile) */}
       {shownCands.length > 0 && (
         <div style={S.card}>
-          <div style={S.secH}>
+          <div style={S.secH} data-tour="candidates">
             <h3 style={S.cardH}>Candidates ({shownCands.length})</h3>
             <div style={{ display: "flex", gap: 6 }}>
               {keyStatus.valid && (
@@ -4152,16 +4176,11 @@ function AiPanel({ keyStatus, autoScore, setAutoScore, scoreBusy, scoreMsg, scor
   var configured = keyStatus.configured;
   var valid = keyStatus.valid;
 
-  var statusText = !configured ? "No Anthropic key set"
+  var statusText = keyStatus.demo ? "Demo — simulated from similar scored cars, no AI call"
+    : !configured ? "No Anthropic key set"
     : (valid ? "Key ••••" + (keyStatus.last4 || "") + " active"
              : "Key ••••" + (keyStatus.last4 || "") + " rejected — re-enter in Settings");
   var statusColor = !configured ? "#888" : (valid ? "#2d8659" : "#c44");
-
-  if (DEMO) return (
-    <div style={Object.assign({}, S.card, { padding: 12, marginBottom: 12, fontSize: 12, color: "#a8a8b3", lineHeight: 1.5 })}>
-      <span style={{ fontSize: 13, color: "#c8c8d0", fontWeight: 600 }}>✨ AI scoring</span> — off in the demo. The scores and assessments you see were made with Claude on the owner's own Anthropic key.
-    </div>
-  );
 
   return (
     <div style={Object.assign({}, S.card, { padding: 12, marginBottom: 12 })}>
@@ -4479,7 +4498,7 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
   var prof = data.profiles.find(function (p) { return p.id === cand.profileId; });
   var scoreColor = cand.compositeScore >= 7 ? "#2d8659" : cand.compositeScore >= 5 ? "#d4a017" : "#c44";
   return (
-    <div style={Object.assign({}, S.card, { borderLeft: "3px solid #2563eb", background: "#12141c" })}>
+    <div data-tour="cand-card" style={Object.assign({}, S.card, { borderLeft: "3px solid #2563eb", background: "#12141c" })}>
       <Thumb photo={cand.photo} link={cand.link} alt={cand.year + " " + cand.vehicle} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
         <div>
@@ -4529,7 +4548,7 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <button style={Object.assign({}, S.priBtn, { padding: "6px 14px", fontSize: 12 })} onClick={onApprove}>✓ Add to Watchlist</button>
         {keyOk && onScore && (
-          <button style={Object.assign({}, S.smBtn, { color: criteriaStale ? "#d4a017" : "#b89edd" }, scoreBusy ? { opacity: 0.6 } : {})} disabled={scoreBusy}
+          <button data-tour="score" style={Object.assign({}, S.smBtn, { color: criteriaStale ? "#d4a017" : "#b89edd" }, scoreBusy ? { opacity: 0.6 } : {})} disabled={scoreBusy}
             title={criteriaStale ? "Scored under criteria/prompt that have since changed — re-score to refresh" : ""}
             onClick={onScore}>{scoring ? "Scoring…" : (cand.scoredAt ? (criteriaStale ? "⟳ Re-score (changed)" : "✨ Re-score") : "✨ Score")}</button>
         )}
@@ -4698,7 +4717,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
   var bc = stale ? "#d4a017" : l.status === "watch" ? "#2d8659" : (l.status === "rejected" || l.status === "sold") ? "#888" : "#d4a017";
   var sc = l.compositeScore >= 7 ? "#2d8659" : l.compositeScore >= 5 ? "#d4a017" : "#c44";
   return (
-    <div style={Object.assign({}, S.card, { borderLeft: "3px solid " + bc })}>
+    <div data-tour={l.status === "watch" ? "watch-card" : undefined} style={Object.assign({}, S.card, { borderLeft: "3px solid " + bc })}>
       <Thumb photo={l.photo} link={l.link} alt={l.year + " " + l.vehicle} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
         <div>
@@ -4834,7 +4853,7 @@ var S = {
   role: { fontSize: 10, fontWeight: 600, color: "#fff", padding: "2px 8px", borderRadius: 4, textTransform: "uppercase", letterSpacing: "0.05em" },
   profH: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 },
   profHL: { display: "flex", alignItems: "center", gap: 8 },
-  profA: { display: "flex", gap: 4, flexWrap: "wrap" },
+  profA: { display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" },
   inlIn: { background: "#1a1c22", border: "1px solid #2a2d38", borderRadius: 4, color: "#e4e4e7", padding: "4px 8px", fontSize: 14, fontFamily: "inherit" },
   grid2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 8 },
   field: { display: "flex", flexDirection: "column", gap: 3 },
