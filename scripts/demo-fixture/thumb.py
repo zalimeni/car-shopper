@@ -38,6 +38,15 @@ def build(src, dst):
     # (No color reduction: the photo stays photographic; the softening is what
     # hides text.)
     rgb = rgb.resize(small, Image.LANCZOS).resize(size, Image.LANCZOS)
+    # Plates and dealer plate frames sit in the bumper band: soften that band
+    # further (feathered in), so frame lettering can't be read either.
+    band = rgb.resize((max(1, int(size[0] * 0.3)), max(1, int(size[1] * 0.3))), Image.LANCZOS).resize(size, Image.LANCZOS)
+    mask = Image.new("L", size, 0)
+    md = ImageDraw.Draw(mask)
+    top = int(size[1] * 0.55)
+    for yy in range(top, size[1]):
+        md.line([(0, yy), (size[0], yy)], fill=min(255, int(255 * (yy - top) / max(1, size[1] * 0.12))))
+    rgb = Image.composite(band, rgb, mask)
     alpha = alpha.resize(size, Image.LANCZOS)
     # studio backdrop: vertical gradient + soft floor shadow
     bg = Image.new("RGB", (W, H))
