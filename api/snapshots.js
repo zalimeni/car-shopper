@@ -15,9 +15,9 @@
 
 import { authorize, isAdmin } from "./_auth.js";
 import { scrubSettings, DEMO_VERSION } from "../src/demo.js";
+import { adminClient } from "./_supabaseAdmin.js";
 
 const DEMO_MAX_BYTES = 3 * 1024 * 1024;
-import { adminClient } from "./_supabaseAdmin.js";
 
 export default async function handler(req, res) {
   const auth = await authorize(req);

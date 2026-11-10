@@ -26,6 +26,15 @@ describe("notes", () => {
     var d = { listings: [car("a", { memo: "loved it" }), car("b", { notes: "↑ Price $1 → $2 (2026-10-01)" })], candidates: [car("c", { notes: "dealer is slow" })], skipped: [car("a")] };
     expect(reviewableNotes(d).map((x) => x.key)).toEqual(["a", "c"]);
   });
+  it("lists typed reject reasons, but not the app's own", () => {
+    var d = { listings: [car("r1", { status: "rejected", rejectReason: "dealer was rude" }), car("r2", { status: "rejected", rejectReason: "Reviewed update" }), car("r3", { status: "rejected", rejectReason: "No reason given" })] };
+    expect(reviewableNotes(d)).toEqual([{ key: "r1", name: expect.any(String), memo: "", notes: "", reason: "dealer was rude" }]);
+  });
+  it("clears an unkept typed reject reason, keeps a kept one", () => {
+    var d = { listings: [car("r1", { status: "rejected", rejectReason: "dealer was rude" }), car("r2", { status: "rejected", rejectReason: "too many miles" }), car("r3", { status: "rejected", rejectReason: "Reviewed update" })] };
+    var out = buildDemoSnapshot(d, { keep: { r2: true } }).data.listings;
+    expect(out.map((l) => l.rejectReason)).toEqual(["No reason given", "too many miles", "Reviewed update"]);
+  });
 });
 
 describe("buildDemoSnapshot", () => {

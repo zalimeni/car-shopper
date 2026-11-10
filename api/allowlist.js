@@ -89,10 +89,14 @@ function alreadyRegistered(err) {
   return code === "email_exists" || msg.indexOf("already been registered") > -1 || msg.indexOf("already registered") > -1;
 }
 
+// Invite redirect target: SITE_URL when set (as .env.example documents), else
+// the host this request came in on. Supabase only follows a redirect that is
+// in the project's Redirect URLs list either way.
 function siteUrl(req) {
+  if (process.env.SITE_URL) return process.env.SITE_URL;
   const h = req.headers || {};
   const host = h["x-forwarded-host"] || h.host;
   const proto = h["x-forwarded-proto"] || "https";
-  return host ? proto + "://" + host : (process.env.SITE_URL || "");
+  return host ? proto + "://" + host : "";
 }
 function safeParse(s) { try { return JSON.parse(s); } catch (e) { return {}; } }

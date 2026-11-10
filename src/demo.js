@@ -25,11 +25,15 @@ export function isLiveDemoUrl(search) { return /(^|[?&])demo=live(&|$)/.test(Str
 var SECRET_SETTINGS = ["marketcheckKeys", "mcQuota", "mcApi"];
 
 // Sync writes "↓ Price $X → $Y (date)" into `notes`; anything else there (an
-// import's notes, hand edits) and every `memo` is the owner's own writing.
+// import's notes, hand edits), every `memo` and every typed reject reason is the
+// owner's own writing. ("Reviewed update" is the app's own reason for a reject
+// from an Updated card, so it never needs review.)
 var AUTO_NOTE = /^[↓↑] Price /;
 function splitNotes(s) { return String(s || "").split(" · ").map(function (x) { return x.trim(); }).filter(Boolean); }
 export function autoNotes(notes) { return splitNotes(notes).filter(function (x) { return AUTO_NOTE.test(x); }).join(" · "); }
 export function userNotes(notes) { return splitNotes(notes).filter(function (x) { return !AUTO_NOTE.test(x); }).join(" · "); }
+var AUTO_REASONS = { "Reviewed update": true, "No reason given": true };
+export function userReason(r) { r = String(r || "").trim(); return r && !AUTO_REASONS[r] ? r : ""; }
 
 function carsOf(data) {
   return [].concat((data && data.listings) || [], (data && data.candidates) || [], (data && data.skipped) || []);
@@ -48,8 +52,8 @@ export function reviewableNotes(data) {
     var key = l.id || l.vin;
     if (!key || seen[key]) return null;
     seen[key] = true;
-    var memo = String(l.memo || "").trim(), notes = userNotes(l.notes);
-    return memo || notes ? { key: key, name: carName(l), memo: memo, notes: notes } : null;
+    var memo = String(l.memo || "").trim(), notes = userNotes(l.notes), reason = userReason(l.rejectReason);
+    return memo || notes || reason ? { key: key, name: carName(l), memo: memo, notes: notes, reason: reason } : null;
   }).filter(Boolean);
 }
 
@@ -59,6 +63,7 @@ function scrubCar(l, keep) {
   if (!keep[o.id || o.vin]) {
     if (o.memo) o.memo = "";
     if (o.notes) o.notes = autoNotes(o.notes);
+    if (userReason(o.rejectReason)) o.rejectReason = "No reason given";
   }
   return o;
 }

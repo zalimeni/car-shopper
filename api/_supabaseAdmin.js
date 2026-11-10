@@ -11,10 +11,17 @@
 
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL =
+// Project URL + publishable key: public values (RLS protects the data), the
+// same defaults as src/supabaseClient.js. SUPABASE_* (or the client's VITE_*)
+// env vars point the server at another project.
+export const SUPABASE_URL =
   process.env.SUPABASE_URL ||
   process.env.VITE_SUPABASE_URL ||
   "https://dispkandrvmycwccavvl.supabase.co";
+export const SUPABASE_ANON_KEY =
+  process.env.SUPABASE_ANON_KEY ||
+  process.env.VITE_SUPABASE_ANON_KEY ||
+  "sb_publishable_TlJnt8hWo6eeQ1yJV9r0KQ_IbZwbfDk";
 
 export function adminClient() {
   const key = process.env.SUPABASE_SECRET_KEY;
@@ -28,11 +35,7 @@ export function adminClient() {
 // sign-in email (signInWithOtp) — used to give an already-registered invitee a
 // fresh login link.
 export function anonClient() {
-  const key =
-    process.env.SUPABASE_ANON_KEY ||
-    process.env.VITE_SUPABASE_ANON_KEY ||
-    "sb_publishable_TlJnt8hWo6eeQ1yJV9r0KQ_IbZwbfDk";
-  return createClient(SUPABASE_URL, key, {
+  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }
