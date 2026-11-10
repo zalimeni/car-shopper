@@ -1,5 +1,5 @@
 # Demo thumbnails: cut the car out of a dealer photo (rembg / U²-Net) and place
-# it, lightly stylized, on a neutral studio gradient — no lot, banner or
+# it, softened, on a neutral studio gradient — no lot, banner or
 # signage, and plates too soft to read. Model, color and angle stay true.
 #
 #   pip install "rembg[cpu]" pillow        # the model (~170 MB) downloads on first run
@@ -35,8 +35,18 @@ def build(src, dst):
     # Soften fine detail (plate frames, window stickers) below legibility: render
     # at ~half size first, then scale up — cards show ~180 px tall anyway.
     small = (max(1, int(size[0] * 0.5)), max(1, int(size[1] * 0.5)))
-    rgb = rgb.resize(small, Image.LANCZOS).filter(ImageFilter.MedianFilter(3)).resize(size, Image.LANCZOS)
-    rgb = rgb.quantize(colors=48, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE).convert("RGB")
+    # (No color reduction: the photo stays photographic; the softening is what
+    # hides text.)
+    rgb = rgb.resize(small, Image.LANCZOS).resize(size, Image.LANCZOS)
+    # Plates and dealer plate frames sit in the bumper band: soften that band
+    # further (feathered in), so frame lettering can't be read either.
+    band = rgb.resize((max(1, int(size[0] * 0.3)), max(1, int(size[1] * 0.3))), Image.LANCZOS).resize(size, Image.LANCZOS)
+    mask = Image.new("L", size, 0)
+    md = ImageDraw.Draw(mask)
+    top = int(size[1] * 0.55)
+    for yy in range(top, size[1]):
+        md.line([(0, yy), (size[0], yy)], fill=min(255, int(255 * (yy - top) / max(1, size[1] * 0.12))))
+    rgb = Image.composite(band, rgb, mask)
     alpha = alpha.resize(size, Image.LANCZOS)
     # studio backdrop: vertical gradient + soft floor shadow
     bg = Image.new("RGB", (W, H))
@@ -52,7 +62,7 @@ def build(src, dst):
     sh = sh.filter(ImageFilter.GaussianBlur(9))
     bg.paste((8, 9, 12), (0, 0), sh)
     bg.paste(rgb, (x, y), alpha)
-    bg.save(dst, "WEBP", quality=72, method=6)
+    bg.save(dst, "WEBP", quality=80, method=6)
 
 if __name__ == "__main__":
     import json, os, tempfile, urllib.request, hashlib, shutil

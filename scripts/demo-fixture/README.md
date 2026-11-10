@@ -13,7 +13,7 @@ replaces everything that identifies a car, a dealer or the owner:
 | year, trim, color, price, mileage, days listed, city/state | VIN serial (valid check digit), dealer name (fictional), dealer link (none), dealer coordinates (city center) |
 | AI scores, summaries, rationales | the dealer's name inside them; the dealer rationale; any VIN |
 | sync-written price notes | memos, hand-written notes, reject reasons, profile must-haves (rewritten neutral) |
-| — | dealer photos → cut-out, softened illustrations (no lot, banner or readable plate) |
+| — | dealer photos → cut-out cars on a studio backdrop, softened (extra in the bumper band) so no plate or plate-frame text is readable; no lot, banner or signage |
 
 ## Rebuild
 

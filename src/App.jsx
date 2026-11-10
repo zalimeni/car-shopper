@@ -1674,6 +1674,7 @@ export function QuotaModal({ data, summary, onClose }) {
     <div onMouseDown={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.62)", zIndex: 200, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "6vh 12px 12px", overflowY: "auto" }}>
       <div role="dialog" aria-modal="true" aria-label="MarketCheck quota" onMouseDown={function (e) { e.stopPropagation(); }}
         style={Object.assign({}, S.card, { width: "100%", maxWidth: 600, margin: 0, background: "#161820", boxShadow: "0 16px 48px rgba(0,0,0,0.6)" })}>
+        <div data-tour="quota-head">
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <QuotaRing used={used} size={72} stroke={7}>
             <text x="36" y={used == null ? 41 : 38} textAnchor="middle" fontSize="16" fontWeight="600" fill="#e4e4e7">{used == null ? "?" : Math.round(used * 100) + "%"}</text>
@@ -1690,7 +1691,7 @@ export function QuotaModal({ data, summary, onClose }) {
               {keyCount} key{keyCount === 1 ? "" : "s"}, used in order — the next one takes over when one runs out.{summary.nextReset ? " Next reset " + fmtResetTs(new Date(summary.nextReset).toISOString()) + "." : ""}
             </div>
           </div>
-          <button style={S.smBtn} onClick={onClose}>Close</button>
+          <button style={S.smBtn} data-tour-close="quota" onClick={onClose}>Close</button>
         </div>
 
         <h4 style={{ fontSize: 12, color: "#8a8a96", margin: "16px 0 4px", textTransform: "uppercase", letterSpacing: "0.04em" }}>Keys</h4>
@@ -1719,11 +1720,13 @@ export function QuotaModal({ data, summary, onClose }) {
           </table>
         </div>
 
+        </div>{/* data-tour="quota-head": header + keys, one tutorial spotlight */}
+
         <h4 style={{ fontSize: 12, color: "#8a8a96", margin: "16px 0 4px", textTransform: "uppercase", letterSpacing: "0.04em" }}>Syncs left</h4>
         {!active ? (
           <p style={S.help}>Activate a profile to estimate sync cost.</p>
         ) : (
-          <div style={{ fontSize: 13, color: "#c8c8d0", lineHeight: 1.6 }}>
+          <div data-tour="quota-syncs" style={{ fontSize: 13, color: "#c8c8d0", lineHeight: 1.6 }}>
             <div>Each active profile is one nationwide search{po.excludeSalt ? " (salt-belt states left out)" : ""}. <strong>↻ Sync</strong> fully refreshes them all: one call per 50 matching cars, so <strong>{range(cost.min, cost.max)}</strong> calls{cost.vins.max ? ", including up to " + n(cost.vins.max) + " for watchlist cars the searches don't return" : ""}.</div>
             <div style={{ overflowX: "auto", margin: "6px 0" }}>
               <table style={{ borderCollapse: "collapse", width: "100%" }}>
@@ -1758,7 +1761,7 @@ export function QuotaModal({ data, summary, onClose }) {
         <ApiVersionLine api={s.mcApi} />
 
         <h4 style={{ fontSize: 12, color: "#8a8a96", margin: "16px 0 4px", textTransform: "uppercase", letterSpacing: "0.04em" }}>What each call costs</h4>
-        <div style={{ overflowX: "auto" }}>
+        <div data-tour="quota-costs" style={{ overflowX: "auto" }}>
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead><tr>{["Action", "Calls"].map(function (h) { return (<th key={h} style={th}>{h}</th>); })}</tr></thead>
             <tbody>
@@ -4498,7 +4501,7 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
   var prof = data.profiles.find(function (p) { return p.id === cand.profileId; });
   var scoreColor = cand.compositeScore >= 7 ? "#2d8659" : cand.compositeScore >= 5 ? "#d4a017" : "#c44";
   return (
-    <div data-tour="cand-card" style={Object.assign({}, S.card, { borderLeft: "3px solid #2563eb", background: "#12141c" })}>
+    <div data-tour="cand-card" data-car={cand.vin || undefined} style={Object.assign({}, S.card, { borderLeft: "3px solid #2563eb", background: "#12141c" })}>
       <Thumb photo={cand.photo} link={cand.link} alt={cand.year + " " + cand.vehicle} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
         <div>
