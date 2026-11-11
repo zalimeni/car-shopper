@@ -165,12 +165,9 @@ export function demoToast(msg) {
 // Answer every /api call locally. The app's own error paths then show what a
 // failed call shows; the toast says why.
 var BLOCKED = {
-  "/api/score": "Demo scores are simulated — no AI call.",
+  "/api/ai": "AI calls are simulated in the demo — no real request is made.",
   "/api/keys": "The demo's keys are simulated — they can't be changed.",
-  "/api/pricecheck": "Price Check's AI read is off in the demo.",
   "/api/pricecomps": "Live comparables are off in the demo.",
-  "/api/baseline": "AI baselines are off in the demo.",
-  "/api/profile-suggest": "AI suggestions are off in the demo.",
   "/api/marketcheck": "Live MarketCheck searches are off in the demo — ↻ Sync is simulated.",
 };
 var QUIET = { "/api/me": true }; // background checks, no toast
