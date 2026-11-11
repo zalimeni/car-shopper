@@ -1,4 +1,4 @@
-// Prompt + schema for the profile wizard's optional AI step (api/profile-suggest.js):
+// Prompt + schema for the profile wizard's optional AI step (task "suggest" of api/ai.js):
 // given a make / model / years / powertrain and what the live market looks like
 // (trims with counts, price + mileage spread), suggest the profile's scoring
 // fields and years worth skipping. The user edits everything; nothing is applied

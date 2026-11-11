@@ -73,12 +73,12 @@ over architecture.
 | `api/_supabaseAdmin.js` | Service-role (`SUPABASE_SECRET_KEY`) client for the key vault; also the server's one copy of the project URL + publishable key. |
 | `api/anthropic-key.js` | Validate / store (encrypted) / remove the per-user Anthropic key. |
 | `api/snapshots.js`, `src/snapshots.js` | List/restore the automatic app-state backups (`app_state_history`); admins also publish the demo snapshot here (`POST { demo }`). |
-| `api/pricecheck.js`, `api/pricecomps.js`, `api/baseline.js` | Price tab: AI fair-price verdict (user's key), live MarketCheck comps around the home base (a `local` step), and AI price baselines per profile. |
+| `api/ai.js`, `api/_ai.js` | **Every AI feature, one function.** `POST { task }`: `score` (batch listing scoring), `price` (Price Check's fair-price verdict), `baseline` (a profile's AI price baseline), `suggest` (the profile wizard's AI step); `GET ?task=prompt` returns the default scoring prompt. `_ai.js`: `loadAnthropicKey(userId)` (the only place the vaulted key is decrypted), the streamed call, refusal / token-limit / rejected-key handling. Prompts + schemas: `_scoring.js` (score, baseline), `_pricecheck.js`, `_suggest.js`. |
+| `api/pricecomps.js` | Price tab: live MarketCheck comps around the home base (a `local` step). |
 | `src/priceCheck.js`, `src/priceExport.js` | Price tab's local-comps math (pure, 0 API calls) and the price-history CSV export. Pure, tested. |
 | `src/geo.js`, `src/tableSort.js` | Straight-line distance to the home base; shared sortable-table helpers (Compare, Price comps). Pure, tested. |
 | `api/cron-sync.js` | Scheduled background sync (Vercel Cron; `CRON_SECRET`-gated, `CRON_SYNC_EMAILS` accounts). |
-| `api/score.js` | Batch listing scoring with the user's decrypted key. |
-| `api/profile-suggest.js`, `api/_suggest.js` | The wizard's optional AI step (user's key): must-haves / dealbreakers / years to avoid / trim notes from the vehicle + Explore's market snapshot. Prompt, schema, `coerceSuggestion` in `_suggest.js` (tested). Same model plumbing as `api/baseline.js`. |
+| `api/_suggest.js` | The wizard's optional AI step (`api/ai.js` task `suggest`): must-haves / dealbreakers / years to avoid / trim notes from the vehicle + Explore's market snapshot. Prompt, schema, `coerceSuggestion` (tested). |
 | `supabase/migrations/*.sql` | DB schema: `app_state` + RLS, allowlist, Anthropic-key vault, backup history + trigger, `rev`, demo snapshot, grant/RLS tightening. |
 | `supabase/ci/shim.sql`, `supabase/ci/rls_checks.sql`, `supabase/config.toml` | CI: Supabase `auth` stand-in, RLS/grant checks run as `anon`/`authenticated`, CLI config. |
 | `supabase/templates/magic_link.html` | Magic Link email body with the one-time code (paste into the Dashboard; needs custom SMTP). |
@@ -124,7 +124,7 @@ See `docs/listing-pipeline.md` for the full design. In short:
 - **Where preferences live:** anything the user sets (layouts, filters' defaults,
   the review queue) goes in the synced blob so every device agrees — the owner
   asked for this explicitly. `localStorage` is only for throwaway per-device state.
-- **AI scoring:** `src/score.js` → `POST /api/score` decrypts the user's vaulted
+- **AI scoring:** `src/score.js` → `POST /api/ai { task: "score" }` decrypts the user's vaulted
   Anthropic key (`_crypto` + `_supabaseAdmin`) and scores each listing against a
   JSON schema built from the user's criteria (`_scoring.js`, model allowlisted).
   Roles/categories are freeform; budget/home base live in `data.settings`.
@@ -302,7 +302,7 @@ owner before spending calls, keep probes to one or two, and never commit a key.
 `docs/listing-pipeline.md` §2–3 — check there before re-probing.
 
 ### Serverless function count
-Every non-underscore file in `api/` is its own Vercel function (11 today).
+Every non-underscore file in `api/` is its own Vercel function (8 today — the four AI endpoints were merged into `api/ai.js`).
 Vercel's Hobby plan has capped deployments at 12 functions — check the current
 limit before adding more. Put shared code in `api/_*.js`, and prefer a new mode
 on an existing endpoint over a new file once that's close. Functions
@@ -372,7 +372,9 @@ runs on some PRs, so others would wait on it forever.
 
 ## Deploy
 
-Vercel builds from `main` (`npm run build` → `dist/`). The SPA rewrite in
+Vercel builds from `main` (`npm run build` → `dist/`). Functions run in `cle1`
+(Cleveland, `regions` in `vercel.json`), next to the Supabase project in AWS
+us-east-2; keep the two in the same region. The SPA rewrite in
 `vercel.json` sends non-file routes to `index.html`, except `/api/*` (an
 unknown API path is a 404, not the app's HTML). Every response gets the
 headers in `vercel.json`: a Content-Security-Policy (scripts from this origin

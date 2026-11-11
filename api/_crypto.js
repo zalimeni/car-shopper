@@ -1,7 +1,7 @@
 // Symmetric encryption for the per-user Anthropic API key at rest.
 //
 // The user's key is stored encrypted in public.user_anthropic_keys and is only
-// ever decrypted server-side, in the /api/score request path, to call Anthropic
+// ever decrypted server-side, in the /api/ai request path, to call Anthropic
 // on the user's behalf. It is never returned to the client (write-only — the UI
 // shows status + last 4 only).
 //
