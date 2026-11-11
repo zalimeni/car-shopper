@@ -193,8 +193,8 @@ api/                Vercel serverless functions (server-side secrets)
   cron-sync.js      daily scheduled sync + Supabase keepalive (Vercel Cron)
   me.js             auth + key-status check for the client
   anthropic-key.js  set/validate/remove the per-user Anthropic key
-  score.js          batch listing scoring with the user's key
-  …                 allowlist, snapshots, pricecheck, pricecomps, baseline, profile-suggest
+  ai.js             every AI feature (score / price / baseline / suggest) with the user's key
+  …                 allowlist, snapshots, pricecomps
 supabase/
   migrations/       schema, RLS, grants, triggers (append-only, idempotent)
   tests/            pgTAP tests: RLS, grants, save_app_state (supabase test db)

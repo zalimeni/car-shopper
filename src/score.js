@@ -3,13 +3,13 @@
 // Runs in the browser under the user's Supabase session (same auth pattern as
 // sync.js). The key itself is only ever sent to /api/anthropic-key, which
 // validates and stores it encrypted server-side; the browser keeps no copy and
-// learns only status (configured / valid / last4). Scoring requests go to
-// /api/score, which decrypts the key server-side to call Anthropic.
+// learns only status (configured / valid / last4). Every AI request goes to
+// /api/ai (one task per request), which decrypts the key server-side.
 
 import { supabase } from "./supabaseClient";
 import { DEMO, demoScoreSet, demoPriceRead, demoBaselineFor, demoSuggest, demoScorePrompt } from "./demoRuntime";
 
-const CHUNK = 4; // listings per /api/score request; bounds request time/size
+const CHUNK = 4; // listings per scoring request (/api/ai task "score"); bounds request time/size
 const REQUEST_TIMEOUT_MS = 75000; // > server function budget, so a real hang surfaces
 
 // Scoring model choices shown in the UI. Must stay in sync with the server-side
@@ -30,9 +30,9 @@ async function authHeaders() {
 // AI fair-price verdict for the Price Check tool, grounded in the observed comps.
 export async function generatePriceAssessment(query, comps, stats, confidence) {
   if (DEMO) return demoPriceRead(query, comps, stats, confidence);
-  const res = await fetch("/api/pricecheck", {
+  const res = await fetch("/api/ai", {
     method: "POST", headers: await authHeaders(),
-    body: JSON.stringify({ query: query, comps: comps || [], stats: stats || null, confidence: confidence || null }),
+    body: JSON.stringify({ task: "price", query: query, comps: comps || [], stats: stats || null, confidence: confidence || null }),
   });
   const j = await res.json().catch(function () { return {}; });
   if (res.status === 401 || (j && (j.error === "key_rejected" || j.error === "no_key" || j.error === "key_unreadable"))) {
@@ -45,9 +45,9 @@ export async function generatePriceAssessment(query, comps, stats, confidence) {
 // AI-assisted price baseline for a profile, grounded in its real listings.
 export async function generateBaseline(profile, listings, model) {
   if (DEMO) return demoBaselineFor(profile, listings);
-  const res = await fetch("/api/baseline", {
+  const res = await fetch("/api/ai", {
     method: "POST", headers: await authHeaders(),
-    body: JSON.stringify({ profile: profile, listings: listings || [], model: model }),
+    body: JSON.stringify({ task: "baseline", profile: profile, listings: listings || [], model: model }),
   });
   const j = await res.json().catch(function () { return {}; });
   if (res.status === 401 || (j && (j.error === "key_rejected" || j.error === "no_key" || j.error === "key_unreadable"))) {
@@ -61,9 +61,9 @@ export async function generateBaseline(profile, listings, model) {
 // vehicle, given the explore call's market snapshot. Uses the user's own key.
 export async function suggestProfile(profile, market) {
   if (DEMO) return demoSuggest(profile, market);
-  const res = await fetch("/api/profile-suggest", {
+  const res = await fetch("/api/ai", {
     method: "POST", headers: await authHeaders(),
-    body: JSON.stringify({ profile: profile, market: market || {} }),
+    body: JSON.stringify({ task: "suggest", profile: profile, market: market || {} }),
   });
   const j = await res.json().catch(function () { return {}; });
   if (res.status === 401 || (j && (j.error === "key_rejected" || j.error === "no_key" || j.error === "key_unreadable"))) {
@@ -77,7 +77,7 @@ export async function suggestProfile(profile, market) {
 export async function getScorePrompt() {
   if (DEMO) return demoScorePrompt();
   try {
-    const res = await fetch("/api/score", { method: "GET", headers: await authHeaders() });
+    const res = await fetch("/api/ai?task=prompt", { method: "GET", headers: await authHeaders() });
     if (!res.ok) return { system: "", guidance: {} };
     return await res.json();
   } catch (e) { return { system: "", guidance: {} }; }
@@ -156,9 +156,9 @@ export async function scoreSet(items, ctx, opts) {
     const timer = setTimeout(function () { controller.abort(); }, REQUEST_TIMEOUT_MS);
     let pairs;
     try {
-      const res = await fetch("/api/score", {
+      const res = await fetch("/api/ai", {
         method: "POST", headers: headers, signal: controller.signal,
-        body: JSON.stringify({ listings: chunk.items, criteria: ctx.criteria, profile: chunk.profile, globalReqs: ctx.globalReqs, model: ctx.model, system: ctx.system, homeBase: ctx.homeBase }),
+        body: JSON.stringify({ task: "score", listings: chunk.items, criteria: ctx.criteria, profile: chunk.profile, globalReqs: ctx.globalReqs, model: ctx.model, system: ctx.system, homeBase: ctx.homeBase }),
       });
       const j = await res.json().catch(function () { return {}; });
       if (res.status === 401 || (j && (j.error === "key_rejected" || j.error === "no_key" || j.error === "key_unreadable"))) {
