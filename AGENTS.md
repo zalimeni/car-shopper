@@ -46,7 +46,7 @@ over architecture.
 | `src/reconcile.js` | `reconcile()` — pure, import-free (shared with server-side sync). |
 | `src/score.js` | Client side of AI scoring + Anthropic-key management; `scoreSet`, model list. |
 | `src/keys.js` | Client for the MarketCheck keys in the vault (list / add / rename / reorder / remove / the one-time import from an old blob). |
-| `src/storage.js` | Supabase-backed get/set/delete of the per-user JSONB blob. |
+| `src/storage.js` | Supabase-backed get/set of the per-user JSONB blob: `set()` is one `save_app_state()` RPC (compare-and-swap on `rev`, in the database); `watchState()` is the Realtime subscription to the user's own row. |
 | `src/supabaseClient.js` | Supabase client + default URL/anon key. |
 | `src/Auth.jsx` | Email auth gate: tap the magic link, **paste** it (`src/authLink.js` — how an iOS Home Screen web app signs in, since links open in Safari), or type the one-time code (needs custom SMTP + template) — plus the "not authorized" screen. |
 | `src/main.jsx`, `src/index.css` | Entry point + global styles. |
@@ -83,7 +83,7 @@ over architecture.
 | `api/cron-sync.js` | Scheduled background sync (Vercel Cron; `CRON_SECRET`-gated; accounts with `allowed_emails.scheduled_sync`), plus the vault's v1 → v2 re-encryption sweep. |
 | `api/_suggest.js` | The wizard's optional AI step (`api/ai.js` task `suggest`): must-haves / dealbreakers / years to avoid / trim notes from the vehicle + Explore's market snapshot. Prompt, schema, `coerceSuggestion` (tested). |
 | `supabase/migrations/*.sql` | DB schema: `app_state` + RLS, allowlist, Anthropic-key vault, backup history + trigger, `rev`, demo snapshot, grant/RLS tightening. |
-| `supabase/ci/shim.sql`, `supabase/ci/rls_checks.sql`, `supabase/config.toml` | CI: Supabase `auth` stand-in, RLS/grant checks run as `anon`/`authenticated`, CLI config. |
+| `supabase/tests/*.test.sql`, `supabase/config.toml` | pgTAP tests (`supabase test db`): RLS, grants and `save_app_state()` (`rls.test.sql`); allowlist flags, `my_access()`, the key vault, backup scrubbing (`access.test.sql`); run as `anon`/`authenticated`; CLI config (Postgres 17). |
 | `supabase/templates/magic_link.html` | Magic Link email body with the one-time code (paste into the Dashboard; needs custom SMTP). |
 | `.github/workflows/migrations.yml` | Validate + apply migrations. |
 | `docs/listing-pipeline.md` | **Design doc** for the sync pipeline. Read for the "why". |
@@ -113,6 +113,14 @@ See `docs/listing-pipeline.md` for the full design. In short:
   `scoreModel`, `autoScore`, `onboarded`, `version`, `lastSynced`) is one JSONB
   blob per user in `app_state.data`. `storage.js` reads/writes it; `App.jsx`
   holds it in `data` and saves via `save()` / `saveRecalc()` / `patchListings()`.
+  Writes go through a serialized queue (`persist`) to `save_app_state(data,
+  expected_rev)`, which writes only if the stored `rev` still matches; on a
+  conflict the session reloads the stored version (`applyRemote`) and says so.
+  **Realtime:** the session also subscribes to its own `app_state` row
+  (`watchState`); a newer `rev` from another device reloads the same way
+  (only `rev` is read from the payload, then `storage.get`). The scheduled
+  sync and Backups restore write with the service role and bump `rev`, so open
+  sessions pick those up too.
   There is no per-listing table. Bump `VERSION` + add a `migrate()` step when the
   blob shape changes (see the v6 `settings` migration).
   The candidate **review queue** is in the blob too (`data.candidates`, newest
@@ -342,10 +350,12 @@ user's `allowed_emails` row to revoke.
   return `null` — check the console.
 
 ### Migrations
-- Validate locally the same way CI does: run a throwaway Postgres, apply
-  `supabase/ci/shim.sql` (stubs the `auth` schema/roles), then each
-  `supabase/migrations/*.sql` in order (twice, to confirm idempotency), then
-  `supabase/ci/rls_checks.sql`. A new table or policy gets checks there.
+- Validate locally the same way CI does (needs Docker): `supabase db start`
+  (the CLI's Postgres 17 with the real `auth` schema; applies every
+  migration), re-apply each `supabase/migrations/*.sql` with `psql` against
+  `postgresql://postgres:postgres@127.0.0.1:54322/postgres` (idempotency),
+  then `supabase test db`. A new table, policy or database function gets
+  pgTAP checks in `supabase/tests/` (keep `plan(n)` in step).
 - New tables: Supabase grants every new `public` table to `anon` and
   `authenticated`. A server-only table also gets `revoke all … from anon,
   authenticated` (not just RLS with no policies). In policies, write

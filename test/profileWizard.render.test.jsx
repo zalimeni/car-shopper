@@ -20,7 +20,7 @@ const explore = { numFound: 1001, errors: [], keyQuotas: [],
            miles: { min: 12, max: 175137, median: 35832, percentiles: { "5.0": 10887, "25.0": 24603, "50.0": 35832, "75.0": 53986, "90.0": 76832, "99.0": 118956 } } } };
 const writes = [];
 const chain = () => { const c = {}; ["select","eq","maybeSingle","update","insert","order","limit","single","delete","upsert"].forEach(m => c[m] = () => c); c.then = (r) => r({ data: null, error: null }); return c; };
-vi.mock("../src/storage", () => ({ default: {
+vi.mock("../src/storage", () => ({ watchState: async () => () => {}, default: {
   get: async () => ({ key: "k", value: JSON.stringify(state), rev: 3 }),
   set: async (k, v) => { writes.push(JSON.parse(v)); return { rev: 4 + writes.length }; },
   delete: async () => ({}),

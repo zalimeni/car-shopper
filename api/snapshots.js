@@ -58,10 +58,7 @@ export default async function handler(req, res) {
 
   // Snapshot the CURRENT state before overwriting it, so the restore itself
   // can be undone from the same list.
-  let cur = await db.from("app_state").select("data,rev").eq("user_id", userId).maybeSingle();
-  if (cur.error && (cur.error.code === "42703" || cur.error.code === "PGRST204")) {
-    cur = await db.from("app_state").select("data").eq("user_id", userId).maybeSingle();
-  }
+  const cur = await db.from("app_state").select("data,rev").eq("user_id", userId).maybeSingle();
   if (!cur.error && cur.data && cur.data.data != null) {
     // MarketCheck keys left in an old blob move to the vault first; snapshots
     // never hold them (the trigger strips them the same way).
@@ -77,12 +74,7 @@ export default async function handler(req, res) {
     updated_at: new Date().toISOString(),
     rev: ((cur.data && cur.data.rev) || 0) + 1,
   };
-  let up = await db.from("app_state").upsert(payload, { onConflict: "user_id" });
-  if (up.error && (up.error.code === "PGRST204" || up.error.code === "42703")) {
-    // rev column not migrated yet — degrade to the plain write.
-    delete payload.rev;
-    up = await db.from("app_state").upsert(payload, { onConflict: "user_id" });
-  }
+  const up = await db.from("app_state").upsert(payload, { onConflict: "user_id" });
   if (up.error) { res.status(500).json({ error: up.error.message }); return; }
 
   res.status(200).json({ ok: true, restored: snap.data.saved_at });

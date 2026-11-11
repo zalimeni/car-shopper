@@ -1,7 +1,7 @@
 -- Migration: allowlist flags + one key vault for every provider
 --
 -- Apply with the Supabase CLI (`supabase db push`) or the Dashboard SQL editor.
--- Idempotent and safe to re-run. Checked in CI by supabase/ci/rls_checks.sql.
+-- Idempotent and safe to re-run. Checked in CI by supabase/tests/access.test.sql.
 --
 -- 1) allowed_emails is the only allowlist (the ALLOWED_EMAILS / ADMIN_EMAILS /
 --    CRON_SYNC_EMAILS env vars are gone). Two flags per row: is_admin (Admin

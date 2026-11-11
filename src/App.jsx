@@ -1,5 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, Fragment, cloneElement } from "react";
-import storage from "./storage";
+import storage, { watchState } from "./storage";
 import { signOut } from "./Auth";
 import { DEMO, demoFetchListings, registerDemoData } from "./demoRuntime";
 import { DemoPublishModal } from "./Demo";
@@ -553,31 +553,18 @@ function ssSet(key, val) {
 
 // The candidate review queue lives in the synced app state (data.candidates), like
 // everything else — so it survives closing the app and follows you across devices.
-// Bounded to the newest QUEUE_MAX. A queue the previous version kept per device
-// (localStorage / sessionStorage) is merged in once, then cleared.
-var QUEUE_KEY = "cs-candidates";
+// Bounded to the newest QUEUE_MAX.
 var QUEUE_MAX = 300;
 export function trimQueue(list) {
   var q = Array.isArray(list) ? list : [];
   return q.length > QUEUE_MAX ? q.slice(q.length - QUEUE_MAX) : q; // keep the newest
 }
-export function loadLegacyQueue() {
-  try {
-    var v = localStorage.getItem(QUEUE_KEY);
-    if (v != null) return JSON.parse(v) || [];
-  } catch (e) { /* unavailable */ }
-  return ssGet(QUEUE_KEY, []);
-}
-function clearLegacyQueue() {
-  try { localStorage.removeItem(QUEUE_KEY); } catch (e) { /* unavailable */ }
-  try { sessionStorage.removeItem(QUEUE_KEY); } catch (e) { /* unavailable */ }
-}
 // The queue to start from when the app state loads: the saved queue minus cars
-// since decided, plus a legacy per-device queue and any candidates the old
-// scheduled sync parked in pendingCandidates (both deduped). Cars the scheduled
+// since decided, plus any candidates the old scheduled sync parked in
+// pendingCandidates (deduped). Cars the scheduled
 // sync added (fromScheduled) are counted for a notice and unflagged.
 // -> { queue, data (with candidates set), changed, scheduled }
-export function restoreQueue(d, legacy) {
+export function restoreQueue(d) {
   var saved = Array.isArray(d.candidates) ? d.candidates : [];
   var base = pruneQueue(saved, d);
   var seen = {};
@@ -592,18 +579,17 @@ export function restoreQueue(d, legacy) {
     });
   };
   var crit = d.criteria || DEFAULT_CRITERIA;
-  var legacyAdd = fresh(legacy);
   var parked = fresh(Array.isArray(d.pendingCandidates) ? d.pendingCandidates : [])
     .map(function (c) { return Object.assign({}, c, { compositeScore: calcScore(c.scores, crit), _candidate: true, fromScheduled: true }); });
   var scheduled = 0;
-  var queue = trimQueue(base.concat(legacyAdd, parked).map(function (c) {
+  var queue = trimQueue(base.concat(parked).map(function (c) {
     if (!c || !c.fromScheduled) return c;
     scheduled++;
     var x = Object.assign({}, c, { compositeScore: calcScore(c.scores, crit), _candidate: true });
     delete x.fromScheduled;
     return x;
   }));
-  var changed = base.length !== saved.length || legacyAdd.length > 0 || parked.length > 0 || scheduled > 0 || d.pendingCandidates != null;
+  var changed = base.length !== saved.length || parked.length > 0 || scheduled > 0 || d.pendingCandidates != null;
   var data = Object.assign({}, d, { candidates: queue });
   delete data.pendingCandidates;
   return { queue: queue, data: data, changed: changed, scheduled: scheduled };
@@ -670,6 +656,21 @@ export default function App() {
   var writeQ = useRef(Promise.resolve());
   var genRef = useRef(0);
   var [conflictMsg, setConflictMsg] = useState("");
+  // Replace the session's state with the stored one (r = storage's { value, rev }).
+  // Bumping the generation drops writes still queued against the old state.
+  var applyRemote = useCallback(function (r, msg) {
+    genRef.current++;
+    try {
+      var d = migrate(JSON.parse(r.value));
+      d.listings = recalcAll(d.listings || [], d.criteria || DEFAULT_CRITERIA);
+      revRef.current = r.rev;
+      var cq = pruneQueue(Array.isArray(d.candidates) ? d.candidates : [], d);
+      queueSavedRef.current = cq;
+      setCandidates(cq);
+      setData(d);
+      setConflictMsg(msg);
+    } catch (e) { console.error("Reload:", e); }
+  }, []);
   var persist = useCallback(function (nd) {
     var gen = genRef.current;
     writeQ.current = writeQ.current.then(async function () {
@@ -677,23 +678,13 @@ export default function App() {
       var r = await storage.set(STORAGE_KEY, JSON.stringify(nd), revRef.current);
       if (!r) return; // storage error (already logged) — same as before
       if (r.conflict) {
-        genRef.current++;
-        try {
-          var d = migrate(JSON.parse(r.value));
-          d.listings = recalcAll(d.listings || [], d.criteria || DEFAULT_CRITERIA);
-          revRef.current = r.rev;
-          var cq = pruneQueue(Array.isArray(d.candidates) ? d.candidates : [], d);
-          queueSavedRef.current = cq;
-          setCandidates(cq);
-          setData(d);
-          setConflictMsg("Your data was updated on another device, so this session reloaded the latest version. Your most recent change here wasn't saved — please redo it.");
-        } catch (e) { console.error("Conflict reload:", e); }
+        applyRemote(r, "Your data was updated on another device, so this session reloaded the latest version. Your most recent change here wasn't saved — please redo it.");
         return;
       }
       if (r.rev != null) revRef.current = r.rev;
     });
     return writeQ.current;
-  }, []);
+  }, [applyRemote]);
 
   var [exportJson, setExportJson] = useState("");
   var [exportMsg, setExportMsg] = useState("");
@@ -772,13 +763,12 @@ export default function App() {
           var prevVersion = JSON.parse(r.value).version;
           d = migrate(JSON.parse(r.value));
           d.listings = recalcAll(d.listings || [], d.criteria || DEFAULT_CRITERIA);
-          // The review queue (data.candidates): drop cars since decided, merge a
-          // legacy per-device queue and anything the scheduled sync parked.
-          var rq = restoreQueue(d, loadLegacyQueue());
+          // The review queue (data.candidates): drop cars since decided, merge
+          // anything the scheduled sync parked.
+          var rq = restoreQueue(d);
           d = rq.data;
           queueSavedRef.current = rq.queue;
           setCandidates(rq.queue);
-          clearLegacyQueue();
           if (rq.changed) writeBack = true;
           if (rq.scheduled) setSyncMsg({ ok: true, text: "Background sync found " + rq.scheduled + " new candidate" + (rq.scheduled > 1 ? "s" : "") + " — review below." });
           if (d.version !== prevVersion) writeBack = true; // migration changed the shape
@@ -802,6 +792,24 @@ export default function App() {
       }
     })();
   }, []);
+
+  // Realtime: when another device saves, load its version (Supabase Realtime on
+  // this user's app_state row). The check waits behind this tab's queued
+  // writes, so an event for our own save (rev already ours) is ignored.
+  useEffect(function () {
+    if (DEMO || loading || loadError) return;
+    var stop = null, gone = false;
+    watchState(function (rev) {
+      writeQ.current = writeQ.current.then(async function () {
+        if (rev != null && revRef.current != null && rev <= revRef.current) return;
+        var r = await storage.get(STORAGE_KEY);
+        if (!r || r.rev == null || (revRef.current != null && r.rev <= revRef.current)) return;
+        applyRemote(r, "Your data was updated on another device, so this session loaded the latest version.");
+      }).catch(function (e) { console.error("Realtime reload:", e); });
+    }).then(function (unsub) { if (gone) unsub(); else stop = unsub; })
+      .catch(function (e) { console.error("Realtime:", e); });
+    return function () { gone = true; if (stop) stop(); };
+  }, [loading, loadError, applyRemote]);
 
   var save = useCallback(async function (nd) {
     setData(nd);
@@ -3784,7 +3792,7 @@ function HelpTab() {
         <p style={li}><span style={b}>Keys</span> — your Anthropic key and MarketCheck keys (Settings tab) are stored encrypted on the server and never sent back to the browser; only labels and the last 4 characters show. Keys saved by an older version (inside your synced settings) move there on their own the next time you open the app.</p>
         <p style={li}><span style={b}>Access</span> — the app is invite-only: there's no sign-up. Admins invite people from the <span style={b}>Admin</span> tab, and set there who else is an admin and whose account gets the daily background sync.</p>
         <p style={li}><span style={b}>Backups</span> (footer) lists automatic server-side snapshots of your whole app state (up to 30, at most one per hour of activity) — restore any of them in two taps; the pre-restore state is snapshotted too, so a restore is undoable.</p>
-        <p style={li}>Your data syncs to your account, so signing in elsewhere loads the same watchlist. <span style={b}>Reset All Data</span> (footer) replaces your data with the starter profiles and rules and restarts the wizard (your Anthropic key and the automatic backups are kept).</p>
+        <p style={li}>Your data syncs to your account, so signing in elsewhere loads the same watchlist. With the app open on two devices, a save on one shows up on the other within seconds (it reloads and says so). <span style={b}>Reset All Data</span> (footer) replaces your data with the starter profiles and rules and restarts the wizard (your Anthropic key and the automatic backups are kept).</p>
       </div>
     </div>
   );

@@ -282,9 +282,6 @@ function isStandalone() {
 }
 
 export async function signOut() {
-  // A review queue the previous version kept on the device (it's synced now) —
-  // don't leave it for whoever signs in next.
-  try { localStorage.removeItem("cs-candidates"); } catch (e) { /* unavailable */ }
   await supabase.auth.signOut();
 }
 

@@ -17,7 +17,7 @@ const state = {
 };
 const writes = [];
 const chain = () => { const c = {}; ["select","eq","maybeSingle","update","insert","order","limit","single","delete","upsert"].forEach(m => c[m] = () => c); c.then = (r) => r({ data: null, error: null }); return c; };
-vi.mock("../src/storage", () => ({ default: {
+vi.mock("../src/storage", () => ({ watchState: async () => () => {}, default: {
   get: async () => ({ key: "k", value: JSON.stringify(state), rev: 3 }),
   set: async (k, v) => { writes.push(JSON.parse(v)); return { rev: 4 + writes.length }; },
   delete: async () => ({}),

@@ -11,46 +11,31 @@ on:
       - ".github/workflows/migrations.yml"
 
 jobs:
-  # Apply all migrations to a throwaway Postgres to prove they run cleanly.
-  # No secrets, never touches the real database.
+  # Start a local Supabase database (the CLI's own Postgres image, with the
+  # real auth schema, roles and Realtime publication), apply every migration,
+  # re-apply them to prove they are idempotent, then run the pgTAP tests in
+  # supabase/tests/. No secrets, never touches the real database.
   validate:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     env:
-      PGURL: postgresql://postgres:postgres@localhost:5432/postgres
+      PGURL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
     steps:
       - uses: actions/checkout@v5
-      - name: Apply CI shim (Supabase auth schema/roles)
-        run: psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/ci/shim.sql
-      - name: Apply migrations in order
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          for f in supabase/migrations/*.sql; do
-            echo "── applying $f"
-            psql "$PGURL" -v ON_ERROR_STOP=1 -f "$f"
-          done
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.122.1
+      - name: Start the database and apply migrations
+        run: supabase db start
       - name: Re-apply migrations (idempotency check)
         run: |
           set -euo pipefail
           shopt -s nullglob
           for f in supabase/migrations/*.sql; do
             echo "── re-applying $f"
-            psql "$PGURL" -v ON_ERROR_STOP=1 -f "$f"
+            psql "$PGURL" -v ON_ERROR_STOP=1 -q -f "$f"
           done
-      - name: Check RLS policies and grants
-        run: psql "$PGURL" -v ON_ERROR_STOP=1 -f supabase/ci/rls_checks.sql
+      - name: pgTAP tests (RLS, grants, save_app_state)
+        run: supabase test db
 
   # Push pending migrations to the real Supabase project on merge to main, via
   # the IPv4 session-mode pooler (GitHub runners are IPv4-only; the direct DB
@@ -76,7 +61,7 @@ jobs:
       - uses: supabase/setup-cli@v1
         if: steps.gate.outputs.ready == 'true'
         with:
-          version: latest
+          version: 2.122.1
       - name: Push migrations
         if: steps.gate.outputs.ready == 'true'
         # --yes: newer CLIs ask before applying and refuse when there's no terminal.

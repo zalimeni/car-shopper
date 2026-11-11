@@ -1,39 +1,24 @@
 // Storage wrapper backed by Supabase.
 //
 // The whole app state is stored as a single JSONB blob in one row per user
-// (table `app_state`, keyed by user_id). The async get/set/delete API matches
-// the previous localStorage wrapper so the rest of the app is unchanged.
+// (table `app_state`, keyed by user_id), behind an async get/set API.
 //
 // Concurrency: the row carries a monotonic `rev` counter. get() returns it and
-// set() takes the expected rev, writing compare-and-swap style — the update
-// only applies if the stored rev still matches, otherwise the caller gets
-// { conflict } with the remote state so it can reload instead of clobbering
-// what another device wrote. Passing a null/undefined rev (or running before
-// the rev migration is applied) degrades to the old last-write-wins upsert.
-//
-// On first read for a user, any data left in localStorage from the old
-// localStorage-only version is migrated up to Supabase, then cleared.
+// set() takes the expected rev; the save_app_state() database function writes
+// only if the stored rev still matches, otherwise the caller gets { conflict }
+// with the stored state so it can reload instead of clobbering what another
+// device wrote. A null expected rev writes unconditionally.
 
 import { supabase } from "./supabaseClient";
 import { DEMO, loadDemo } from "./demoRuntime";
 
 const TABLE = "app_state";
-const LEGACY_KEY = "car-search-data";
 
 async function currentUserId() {
   // getSession() reads the local session (no network). RLS enforces access
   // regardless, so the session's user id is all we need here.
   const { data } = await supabase.auth.getSession();
   return data && data.session && data.session.user ? data.session.user.id : null;
-}
-
-// True when the error is "the rev column doesn't exist yet" — the brief window
-// where new client code runs against a database the migration hasn't reached.
-function missingRevColumn(error) {
-  if (!error) return false;
-  const code = error.code || "";
-  const msg = String(error.message || "");
-  return code === "42703" || code === "PGRST204" || /'rev' column/i.test(msg);
 }
 
 // Demo mode (/?demo): the published snapshot, edited in memory only — nothing
@@ -45,7 +30,6 @@ const demoStorage = {
     return { key, value: JSON.stringify(d.data), rev: 0 };
   },
   async set(key, value) { return { key, value, rev: 0 }; },
-  async delete() { return { deleted: true }; },
 };
 
 const storage = DEMO ? demoStorage : {
@@ -53,112 +37,58 @@ const storage = DEMO ? demoStorage : {
     try {
       const userId = await currentUserId();
       if (!userId) return null;
-
-      let { data, error } = await supabase
-        .from(TABLE)
-        .select("data,rev")
-        .eq("user_id", userId)
-        .maybeSingle();
-      if (error && missingRevColumn(error)) {
-        ({ data, error } = await supabase.from(TABLE).select("data").eq("user_id", userId).maybeSingle());
-      }
+      const { data, error } = await supabase.from(TABLE).select("data,rev").eq("user_id", userId).maybeSingle();
       if (error) throw error;
-
-      if (data && data.data != null) {
-        return { key, value: JSON.stringify(data.data), rev: data.rev == null ? 0 : data.rev };
-      }
-
-      // No remote row yet — migrate legacy localStorage data if present.
-      try {
-        const legacy = localStorage.getItem(LEGACY_KEY);
-        if (legacy && legacy !== "undefined") {
-          await this.set(key, legacy);
-          localStorage.removeItem(LEGACY_KEY);
-          return { key, value: legacy, rev: 0 };
-        }
-      } catch (e) {
-        // localStorage may be unavailable; ignore migration in that case.
-      }
-
-      return null;
+      if (!data || data.data == null) return null;
+      return { key, value: JSON.stringify(data.data), rev: data.rev == null ? 0 : data.rev };
     } catch (e) {
       console.error("storage.get error:", e);
       return null;
     }
   },
 
-  // Returns { key, value, rev } on success (rev null on the legacy path),
-  // { conflict: true, value, rev } when another device wrote first, or null on
-  // error (matching the old behavior).
+  // One save_app_state() call (supabase/migrations/*_save_app_state_and_realtime.sql):
+  // the compare-and-swap on rev happens in the database, atomically.
+  // Returns { key, value, rev } on success, { conflict: true, key, value, rev }
+  // when another device wrote first (value = the stored state), or null on error.
   async set(key, value, expectedRev) {
     try {
-      const userId = await currentUserId();
-      if (!userId) return null;
-
-      const payload = {
-        user_id: userId,
-        data: JSON.parse(value),
-        updated_at: new Date().toISOString(),
-      };
-
-      // Unknown rev (first-ever write, degraded init) — old last-write-wins path.
-      if (expectedRev == null) {
-        const { error } = await supabase.from(TABLE).upsert(payload, { onConflict: "user_id" });
-        if (error) throw error;
-        return { key, value, rev: null };
-      }
-
-      // Compare-and-swap: only applies if nobody else bumped rev since we read.
-      const { data, error } = await supabase
-        .from(TABLE)
-        .update(Object.assign({}, payload, { rev: expectedRev + 1 }))
-        .eq("user_id", userId)
-        .eq("rev", expectedRev)
-        .select("rev");
-      if (error) {
-        if (missingRevColumn(error)) {
-          const up = await supabase.from(TABLE).upsert(payload, { onConflict: "user_id" });
-          if (up.error) throw up.error;
-          return { key, value, rev: null };
-        }
-        throw error;
-      }
-      if (data && data.length) return { key, value, rev: data[0].rev };
-
-      // Zero rows updated: either no row exists yet (insert), or the stored rev
-      // moved on (another device wrote) — report the conflict with remote state.
-      const cur = await supabase.from(TABLE).select("data,rev").eq("user_id", userId).maybeSingle();
-      if (cur.error) throw cur.error;
-      if (!cur.data) {
-        const ins = await supabase.from(TABLE).insert(Object.assign({}, payload, { rev: expectedRev + 1 }));
-        if (ins.error) throw ins.error; // incl. a same-moment insert race — next save retries
-        return { key, value, rev: expectedRev + 1 };
-      }
+      const { data, error } = await supabase.rpc("save_app_state", {
+        p_data: JSON.parse(value),
+        p_expected_rev: expectedRev == null ? null : expectedRev,
+      });
+      if (error) throw error;
+      if (data && data.ok) return { key, value, rev: data.rev };
       return {
         conflict: true,
         key,
-        value: JSON.stringify(cur.data.data),
-        rev: cur.data.rev == null ? 0 : cur.data.rev,
+        value: JSON.stringify(data && data.data != null ? data.data : {}),
+        rev: data && data.rev != null ? data.rev : 0,
       };
     } catch (e) {
       console.error("storage.set error:", e);
       return null;
     }
   },
-
-  async delete() {
-    try {
-      const userId = await currentUserId();
-      if (!userId) return null;
-
-      const { error } = await supabase.from(TABLE).delete().eq("user_id", userId);
-      if (error) throw error;
-      return { deleted: true };
-    } catch (e) {
-      console.error("storage.delete error:", e);
-      return null;
-    }
-  },
 };
 
 export default storage;
+
+// Realtime: calls onChange(rev) when this user's app_state row is updated —
+// by another device, or by this tab's own save (the caller compares revs).
+// rev is null if the payload doesn't carry it (Realtime can trim a large
+// record). Resolves to an unsubscribe function. A no-op in demo mode or
+// when signed out.
+export async function watchState(onChange) {
+  if (DEMO) return function () {};
+  const userId = await currentUserId();
+  if (!userId) return function () {};
+  const channel = supabase
+    .channel("app_state:" + userId)
+    .on("postgres_changes", { event: "UPDATE", schema: "public", table: TABLE, filter: "user_id=eq." + userId }, function (payload) {
+      const rev = payload && payload.new ? payload.new.rev : null;
+      onChange(typeof rev === "number" ? rev : null);
+    })
+    .subscribe();
+  return function () { supabase.removeChannel(channel); };
+}
