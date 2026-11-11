@@ -80,7 +80,7 @@ over architecture.
 | `api/score.js` | Batch listing scoring with the user's decrypted key. |
 | `api/profile-suggest.js`, `api/_suggest.js` | The wizard's optional AI step (user's key): must-haves / dealbreakers / years to avoid / trim notes from the vehicle + Explore's market snapshot. Prompt, schema, `coerceSuggestion` in `_suggest.js` (tested). Same model plumbing as `api/baseline.js`. |
 | `supabase/migrations/*.sql` | DB schema: `app_state` + RLS, allowlist, Anthropic-key vault, backup history + trigger, `rev`, demo snapshot, grant/RLS tightening. |
-| `supabase/tests/*.test.sql`, `supabase/config.toml` | pgTAP tests (`supabase test db`): RLS, grants and `save_app_state()`, run as `anon`/`authenticated`; CLI config (Postgres 15). |
+| `supabase/tests/*.test.sql`, `supabase/config.toml` | pgTAP tests (`supabase test db`): RLS, grants and `save_app_state()`, run as `anon`/`authenticated`; CLI config (Postgres 17). |
 | `supabase/templates/magic_link.html` | Magic Link email body with the one-time code (paste into the Dashboard; needs custom SMTP). |
 | `.github/workflows/migrations.yml` | Validate + apply migrations. |
 | `docs/listing-pipeline.md` | **Design doc** for the sync pipeline. Read for the "why". |
@@ -348,7 +348,7 @@ Supabase-idiomatic route is a dedicated password user via
 
 ### Migrations
 - Validate locally the same way CI does (needs Docker): `supabase db start`
-  (the CLI's Postgres 15 with the real `auth` schema; applies every
+  (the CLI's Postgres 17 with the real `auth` schema; applies every
   migration), re-apply each `supabase/migrations/*.sql` with `psql` against
   `postgresql://postgres:postgres@127.0.0.1:54322/postgres` (idempotency),
   then `supabase test db`. A new table, policy or database function gets

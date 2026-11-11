@@ -204,7 +204,7 @@ test/               vitest unit + jsdom render tests, fixtures
 `AGENTS.md` has the full file map.
 
 CI (GitHub Actions): `test.yml` runs tests + build on every push/PR;
-`migrations.yml` starts the Supabase CLI's local database (Postgres 15),
+`migrations.yml` starts the Supabase CLI's local database (Postgres 17),
 applies the SQL twice, runs the pgTAP tests, and applies it to the project on
 `main` if `SUPABASE_DB_URL` is configured.
 

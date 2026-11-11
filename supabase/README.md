@@ -51,7 +51,7 @@ existing database is safe.
 `.github/workflows/migrations.yml` runs on changes under `supabase/`:
 
 - **validate** (every push / PR, no secrets): `supabase db start` runs the
-  Supabase CLI's local database (Postgres 15, with the real `auth` schema,
+  Supabase CLI's local database (Postgres 17, with the real `auth` schema,
   roles and Realtime publication) and applies every migration. Each migration
   is then applied a second time with `psql` to prove it is idempotent. Then
   `supabase test db` runs the pgTAP tests in `tests/`: acting as the `anon`
@@ -107,3 +107,14 @@ screen:
   [`templates/magic_link.html`](templates/magic_link.html) into Authentication →
   Emails → Magic Link. Code length follows Authentication → Providers → Email →
   Email OTP length (default 6; the app accepts 6–10 digits).
+
+## Postgres version
+
+CI and local development use Postgres 17 (`[db] major_version` in
+`config.toml`). The hosted project must run the same major version.
+
+- To see the hosted version, open Dashboard → Project Settings →
+  Infrastructure, or run `select version();` in the SQL editor.
+- To upgrade the hosted project, use **Upgrade project** on that
+  Infrastructure page. The upgrade is in place, and the database is
+  unavailable while it runs. Do it at a quiet time.
