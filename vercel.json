@@ -8,6 +8,7 @@
     "api/pricecomps.js": { "maxDuration": 60 },
     "api/cron-sync.js": { "maxDuration": 60 }
   },
+  "regions": ["cle1"],
   "crons": [{ "path": "/api/cron-sync", "schedule": "0 10 * * *" }],
   "headers": [
     {

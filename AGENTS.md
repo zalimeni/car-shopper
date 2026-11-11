@@ -372,7 +372,9 @@ runs on some PRs, so others would wait on it forever.
 
 ## Deploy
 
-Vercel builds from `main` (`npm run build` → `dist/`). The SPA rewrite in
+Vercel builds from `main` (`npm run build` → `dist/`). Functions run in `cle1`
+(Cleveland, `regions` in `vercel.json`), next to the Supabase project in AWS
+us-east-2; keep the two in the same region. The SPA rewrite in
 `vercel.json` sends non-file routes to `index.html`, except `/api/*` (an
 unknown API path is a 404, not the app's HTML). Every response gets the
 headers in `vercel.json`: a Content-Security-Policy (scripts from this origin
