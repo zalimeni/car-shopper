@@ -4,12 +4,17 @@
 // Optionally (when CRON_SECRET is set): runs the scheduled background sync.
 //
 // Runs the same search + reconcile pipeline as the in-app sync, server-side,
-// for the accounts in CRON_SYNC_EMAILS (default: the owner). Price changes and
+// for the accounts whose allowed_emails row has scheduled_sync on (Admin tab).
+// Price changes and
 // last-seen updates are written straight into the user's app_state blob
 // (flagged reviewPending, same as an in-app sync); brand-new VINs are parked
 // in the review queue (data.candidates, flagged fromScheduled), which every
 // device shows on next open. No AI scoring here — that stays a client-initiated
 // action against the user's own key/quota.
+//
+// Also, every run: re-encrypts any key-vault rows still in the legacy v1
+// format (api/_keys.js reencryptLegacy), and moves MarketCheck keys left in an
+// old app-state blob into the vault.
 //
 // Scheduled sync is OFF BY DEFAULT: the endpoint does nothing (a clean no-op)
 // unless CRON_SECRET (≥16 chars) is configured — so the daily Vercel cron can't
@@ -21,9 +26,10 @@
 // actively using the app when the cron fires, the cron loses and leaves their
 // state alone.
 
-import { safeEqual, DEFAULT_ALLOW } from "./_auth.js";
+import { safeEqual } from "./_auth.js";
 import { adminClient, anonClient } from "./_supabaseAdmin.js";
-import { createSession, runStep, resolveKeys, keyId } from "./marketcheck.js";
+import { createSession, runStep, resolveKeys, keyId, STEP_BUDGET_MS } from "./marketcheck.js";
+import { getMarketcheckKeys, importBlobKeys, reencryptLegacy } from "./_keys.js";
 import { reconcile } from "../src/reconcile.js";
 import { ingestSnaps, spentKeyIds } from "../src/quota.js";
 import { planSync, runSync, trackedVins, nextProfileMeta, mergeColorCache } from "../src/syncPlan.js";
@@ -63,8 +69,11 @@ export default async function handler(req, res) {
   // The shared key, used only for accounts with no MarketCheck keys of their own.
   const apiKey = process.env.MARKETCHECK_API_KEY || "";
 
-  const emails = (process.env.CRON_SYNC_EMAILS || DEFAULT_ALLOW)
-    .split(",").map(function (s) { return s.trim().toLowerCase(); }).filter(Boolean);
+  const vault = await reencryptLegacy(db).catch(function (e) { return { error: e.message }; });
+
+  const opted = await db.from("allowed_emails").select("email").eq("scheduled_sync", true);
+  if (opted.error) { res.status(500).json({ error: "allowed_emails: " + opted.error.message }); return; }
+  const emails = (opted.data || []).map(function (r) { return String(r.email || "").toLowerCase(); }).filter(Boolean);
 
   // Resolve the target emails to auth users (few users; paging is a formality).
   const users = [];
@@ -79,7 +88,7 @@ export default async function handler(req, res) {
   }
 
   // One shared time budget across users, under the function's maxDuration.
-  const deadline = Date.now() + (Number(process.env.MARKETCHECK_BUDGET_MS) || 50000);
+  const deadline = Date.now() + STEP_BUDGET_MS;
   const todayStr = new Date().toISOString().split("T")[0];
   const report = [];
 
@@ -97,9 +106,11 @@ export default async function handler(req, res) {
       const budgetMs = deadline - Date.now() - 2000;
       if (budgetMs < 5000) { out.skipped = "out of time this run"; continue; }
       const dealerType = state.settings && state.settings.franchiseOnly ? "franchise" : null;
+      // Keys still in an old blob move to the vault (and out of the blob below).
+      const movedKeys = await importBlobKeys(u.id, state.settings);
       // The user's own keys, in order — or the shared key only if they have none.
-      const resolved = resolveKeys(((state.settings && state.settings.marketcheckKeys) || [])
-        .map(function (k) { return (k && k.key ? k.key : k) || ""; }), apiKey);
+      const own = await getMarketcheckKeys(u.id);
+      const resolved = resolveKeys(own, apiKey);
       const keys = resolved.keys;
       if (!keys.length) { out.skipped = "no MarketCheck key (add one in Settings, or set MARKETCHECK_API_KEY)"; continue; }
       // The same plan as the in-app sync's automatic path: full refresh when due,
@@ -108,7 +119,7 @@ export default async function handler(req, res) {
       const planOpts = { franchiseOnly: !!settings.franchiseOnly, excludeSalt: settings.saltMode !== "flag" };
       const steps = planSync(profiles, settings.mcProfiles || {}, planOpts);
       const keyIds = keys.map(function (k) { return keyId(k, resolved.shared ? apiKey : null); });
-      const spent = spentKeyIds(settings.marketcheckKeys || [], settings.mcQuota);
+      const spent = spentKeyIds(own, settings.mcQuota);
       const r = await runSync(steps, trackedVins(state.listings), async function (step) {
         // A fresh session per step (so each report is that step's alone), carrying
         // forward the keys found spent and the shared time budget.
@@ -145,6 +156,7 @@ export default async function handler(req, res) {
           mcColors: mergeColorCache(settings.mcColors, r.decoded, nowIso),
           mcQuota: ingestSnaps(settings.mcQuota, r.keyQuotas, nowIso) },
         r.apiInfo ? { mcApi: Object.assign({}, r.apiInfo, { at: nowIso }) } : {});
+      if (movedKeys) delete nextData.settings.marketcheckKeys;
       // Don't advance lastSynced on an incomplete (rate-limited) run — leave it
       // at the last good sync so the "Last synced" display isn't misleading.
       if (!r.rateLimited) nextData.lastSynced = new Date().toISOString();
@@ -166,5 +178,5 @@ export default async function handler(req, res) {
     }
   }
 
-  res.status(200).json({ ok: true, matchedUsers: users.length, report: report });
+  res.status(200).json({ ok: true, matchedUsers: users.length, report: report, vault: vault });
 }

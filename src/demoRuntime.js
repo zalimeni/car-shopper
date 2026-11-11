@@ -166,7 +166,7 @@ export function demoToast(msg) {
 // failed call shows; the toast says why.
 var BLOCKED = {
   "/api/ai": "AI calls are simulated in the demo — no real request is made.",
-  "/api/anthropic-key": "The demo's AI key is simulated — keys can't be changed.",
+  "/api/keys": "The demo's keys are simulated — they can't be changed.",
   "/api/pricecomps": "Live comparables are off in the demo.",
   "/api/marketcheck": "Live MarketCheck searches are off in the demo — ↻ Sync is simulated.",
 };

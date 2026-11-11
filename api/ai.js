@@ -49,7 +49,6 @@ export default async function handler(req, res) {
   const run = Object.prototype.hasOwnProperty.call(TASKS, body.task) ? TASKS[body.task] : null;
   if (!run) { res.status(400).json({ error: "Unknown task" }); return; }
 
-  if (auth.user.debug) { res.status(400).json({ error: "Requires a real signed-in account" }); return; }
   if (!cryptoReady()) { res.status(500).json({ error: "Key encryption is not configured on the server" }); return; }
 
   await run(auth.user.id, body, res);

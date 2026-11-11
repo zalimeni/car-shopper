@@ -1,26 +1,20 @@
 // Shared plumbing for api/ai.js: the caller's Anthropic key and the one-shot
 // JSON / text calls every AI task makes.
 //
-// The key lives encrypted in the server-only vault (see api/_crypto.js and
-// api/_supabaseAdmin.js) and is decrypted only here, per request.
+// The key lives encrypted in the server-only vault (public.user_api_keys);
+// api/_keys.js is the only module that decrypts it.
 
 import Anthropic from "@anthropic-ai/sdk";
-import { decrypt } from "./_crypto.js";
-import { getKeyRow, setKeyValid } from "./_supabaseAdmin.js";
+import { getAnthropicKey, setAnthropicValid } from "./_keys.js";
 
 // The caller's decrypted Anthropic key, or the error response to send.
 // -> { apiKey } | { status, body }
-// A key that no longer decrypts (KEY_ENCRYPTION_SECRET rotated) is marked
-// invalid so the UI asks for a fresh one.
+// getAnthropicKey marks a key that no longer decrypts as invalid, so the UI
+// asks for a fresh one.
 export async function loadAnthropicKey(userId) {
-  const row = await getKeyRow(userId);
-  if (!row) return { status: 400, body: { error: "no_key", message: "No Anthropic key on file — add one to use AI features" } };
-  try {
-    return { apiKey: decrypt(row.ciphertext) };
-  } catch (e) {
-    await setKeyValid(userId, false);
-    return { status: 400, body: { error: "key_unreadable", message: "Stored key couldn't be decrypted — re-enter it" } };
-  }
+  const k = await getAnthropicKey(userId);
+  if (k.error) return { status: k.error === "not_configured" ? 500 : 400, body: { error: k.error, message: k.message } };
+  return { apiKey: k.key };
 }
 
 export function isAuthError(e) {
@@ -30,7 +24,7 @@ export function isAuthError(e) {
 // Anthropic rejected the key: mark it invalid and say so (the UI prompts for a
 // fresh key on this code).
 export async function rejectKey(userId, res) {
-  await setKeyValid(userId, false);
+  await setAnthropicValid(userId, false);
   res.status(401).json({ error: "key_rejected", message: "Anthropic rejected your key — re-enter it" });
 }
 

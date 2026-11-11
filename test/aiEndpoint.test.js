@@ -11,9 +11,9 @@ var keyRow = null;
 var markedInvalid = [];
 
 vi.mock("../api/_auth.js", () => ({ authorize: async () => ({ user: { id: "u1", email: "me@example.com" } }) }));
-vi.mock("../api/_supabaseAdmin.js", () => ({
-  getKeyRow: async () => keyRow,
-  setKeyValid: async (id, v) => { markedInvalid.push([id, v]); },
+vi.mock("../api/_keys.js", () => ({
+  getAnthropicKey: async () => (keyRow ? { key: keyRow.key } : { error: "no_key", message: "No Anthropic key on file" }),
+  setAnthropicValid: async (id, v) => { markedInvalid.push([id, v]); },
 }));
 vi.mock("@anthropic-ai/sdk", () => {
   class AuthenticationError extends Error { constructor() { super("bad key"); this.status = 401; } }
@@ -27,7 +27,6 @@ vi.mock("@anthropic-ai/sdk", () => {
 });
 
 process.env.KEY_ENCRYPTION_SECRET = "test-secret-0123456789";
-const { encrypt } = await import("../api/_crypto.js");
 const handler = (await import("../api/ai.js")).default;
 
 function call(method, body, query) {
@@ -36,7 +35,7 @@ function call(method, body, query) {
 }
 function reply(text, stop) { return { stop_reason: stop || "end_turn", content: [{ type: "text", text: text }] }; }
 
-beforeEach(() => { sent = []; nextReply = null; nextError = null; keyRow = { ciphertext: encrypt("sk-ant-test") }; markedInvalid = []; });
+beforeEach(() => { sent = []; nextReply = null; nextError = null; keyRow = { key: "sk-ant-test" }; markedInvalid = []; });
 
 describe("api/ai.js", () => {
   it("GET ?task=prompt returns the default scoring prompt", async () => {

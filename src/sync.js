@@ -17,7 +17,7 @@ export { reconcile } from "./reconcile.js";
 // Run a planned sync (src/syncPlan.js planSync) — one /api/marketcheck request per
 // step, so no single serverless invocation nears the timeout. Keys found spent are
 // carried forward so later steps start on a live key instead of each re-hitting it.
-// filters: { franchiseOnly, excludeSalt, marketcheckKeys, spentKeys, colorCache, alsoDecode }
+// filters: { franchiseOnly, excludeSalt, spentKeys, colorCache, alsoDecode }
 // -> runSync's result: { listings, results, goneVins, errors, notices, calls, ... }
 export async function fetchListings(steps, tracked, opts, filters, onProgress) {
   const f = filters || {};
@@ -47,7 +47,6 @@ export async function postStep(step, opts, filters) {
       vins: step.vins,
       excludeSalt: f.excludeSalt !== false,
       franchiseOnly: !!f.franchiseOnly,
-      marketcheckKeys: Array.isArray(f.marketcheckKeys) ? f.marketcheckKeys : [],
       spentKeys: Array.isArray(f.spentKeys) ? f.spentKeys : [],
     }),
   });
@@ -71,7 +70,7 @@ export async function postStep(step, opts, filters) {
 // MarketCheck search for a specific vehicle and return normalized listings to
 // fold into the local comp pool. Separate from fetchListings (which reconciles
 // against tracked inventory) — this is a read-only, on-demand widen.
-export async function fetchPriceComps(query, hubs, marketcheckKeys, spentKeys) {
+export async function fetchPriceComps(query, hubs, spentKeys) {
   if (DEMO) return demoPriceComps(query);
   const { data: sess } = await supabase.auth.getSession();
   const token = sess && sess.session ? sess.session.access_token : "";
@@ -84,7 +83,6 @@ export async function fetchPriceComps(query, hubs, marketcheckKeys, spentKeys) {
     body: JSON.stringify({
       query: query || {},
       hubs: Array.isArray(hubs) ? hubs : [],
-      marketcheckKeys: Array.isArray(marketcheckKeys) ? marketcheckKeys : [],
       spentKeys: Array.isArray(spentKeys) ? spentKeys : [],
     }),
   });
@@ -104,7 +102,7 @@ export async function fetchPriceComps(query, hubs, marketcheckKeys, spentKeys) {
 
 // Debug helper: POST /api/marketcheck?raw=1 and return the raw MarketCheck
 // response + normalized sample. Wired to window.__rawSync for console use.
-export async function fetchRawSample(profiles, hubs, vin, marketcheckKeys) { // hubs: [] = nationwide
+export async function fetchRawSample(profiles, hubs, vin) { // hubs: [] = nationwide
   const { data: sess } = await supabase.auth.getSession();
   const token = sess && sess.session ? sess.session.access_token : "";
   const res = await fetch("/api/marketcheck?raw=1", {
@@ -117,7 +115,6 @@ export async function fetchRawSample(profiles, hubs, vin, marketcheckKeys) { // 
       profiles: (profiles || []).map(function (p) { return { id: p.id, name: p.name, params: p.params }; }),
       hubs: hubs || [],
       vin: vin || undefined,
-      marketcheckKeys: Array.isArray(marketcheckKeys) ? marketcheckKeys : [],
     }),
   });
   return res.json();

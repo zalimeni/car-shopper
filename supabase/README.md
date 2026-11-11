@@ -37,6 +37,65 @@ Dashboard → SQL editor. The migrations are idempotent, so re-running is safe.
   `demo_snapshot`, and wraps the `app_state` policies' `auth.uid()` /
   `is_allowed()` calls in `(select …)` (the Performance Advisor's
   `auth_rls_initplan` lint). `is_allowed()` now ignores letter case.
+- `20261111120000_access_and_key_vault.sql` — `allowed_emails` gets `is_admin`
+  and `scheduled_sync` (owner seeded with both) and `my_access()` (allowed +
+  admin in one call); `user_api_keys`, the one server-only vault for every
+  user's Anthropic and MarketCheck keys (existing Anthropic keys copied in);
+  backups no longer keep `settings.marketcheckKeys` (the trigger strips it,
+  old snapshots are scrubbed); and deleting a user no longer fails on the
+  backup trigger.
+
+## Access: invite-only, allowlisted
+
+Nobody can create an account by signing in: the app calls `signInWithOtp`
+with `shouldCreateUser: false`, and the project has sign-ups turned off. An
+admin adds an email in the Admin tab and sends an invite
+(`auth.admin.inviteUserByEmail`, which works with sign-ups off). The
+`allowed_emails` table is the only allowlist: RLS on `app_state` and every
+`/api` function check it, and its `is_admin` / `scheduled_sync` flags decide
+who sees the Admin tab and who the daily sync runs for.
+
+One-time Dashboard settings (hosted project; `config.toml` covers the local
+CLI stack):
+
+1. **Authentication → Sign In / Providers → User Signups:** turn off **Allow new
+   users to sign up**. Leave the Email provider on.
+2. **Same page:** **Allow anonymous sign-ins** off (the default).
+3. **Authentication → URL Configuration:** the **Site URL** is the deployed app
+   (invite emails link there).
+
+Before deploying the version that dropped `ALLOWED_EMAILS`, make sure everyone
+who should keep access has a row in `allowed_emails` (env-only grants are gone).
+
+## Key encryption v2 (migration plan)
+
+Every key in `user_api_keys` is AES-256-GCM. **v2** (written by the current
+code) derives the key with HKDF-SHA256 from `KEY_ENCRYPTION_SECRET` and binds
+each ciphertext to its row's owner and provider as additional authenticated
+data, so a ciphertext copied into another user's row fails to decrypt. v2
+values start with `v2:`. **v1** (the old `user_anthropic_keys` format: SHA-256
+of the secret, no AAD) can still be read.
+
+1. **Deploy** this version. The migration copies the v1 Anthropic keys into
+   `user_api_keys` unchanged; MarketCheck keys move in from each user's app
+   state the next time they open the app (or at the next scheduled sync, or a
+   backup restore) and are written as v2.
+2. **Re-encrypt.** Each v1 key is rewritten as v2 the first time the server
+   reads it, and the daily cron (`/api/cron-sync`, needs `CRON_SECRET`)
+   rewrites every remaining v1 row. No user action is needed.
+3. **Verify** in the SQL editor:
+   ```sql
+   select count(*) from public.user_api_keys where ciphertext not like 'v2:%';
+   select count(*) from public.app_state where data #> '{settings,marketcheckKeys}' is not null;
+   ```
+   Both should reach 0 (the second once every user with MarketCheck keys has
+   opened the app or been synced).
+4. **Clean up** in a later change: delete the v1 branch of `decrypt()` in
+   `api/_crypto.js` (and `encryptV1ForTests`), and add a migration that drops
+   `public.user_anthropic_keys`.
+
+Rotating `KEY_ENCRYPTION_SECRET` still invalidates every stored key (users
+re-enter theirs).
 
 - `20261110120000_save_app_state_and_realtime.sql` — `save_app_state(data,
   expected_rev)`, the one call the browser saves with (compare-and-swap on

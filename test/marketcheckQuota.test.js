@@ -1,12 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-process.env.MARKETCHECK_THROTTLE_MS = "1"; // read at import; don't sit through the real 500ms spacing
+// The server reads the caller's MarketCheck keys from the vault (api/_keys.js);
+// each request below puts its `marketcheckKeys` there first.
+const vault = vi.hoisted(() => ({ keys: [] }));
+vi.mock("../api/_keys.js", () => ({ getMarketcheckKeys: async () => vault.keys }));
 vi.mock("../api/_auth.js", () => ({ authorize: async () => ({ user: { id: "u1" } }), safeEqual: () => true, DEFAULT_ALLOW: "" }));
-const { default: handler, readQuota, keyId } = await import("../api/marketcheck.js");
+const { default: handler, readQuota, keyId, setThrottleMs } = await import("../api/marketcheck.js");
+setThrottleMs(1); // don't sit through the real 500 ms spacing
 const { default: compsHandler } = await import("../api/pricecomps.js");
 
 const res = () => { const r = { code: 0, body: null, status(c) { r.code = c; return r; }, json(b) { r.body = b; return r; } }; return r; };
-const post = (h, body, query) => { const r = res(); return h({ method: "POST", headers: { authorization: "Bearer t" }, body, query: query || {} }, r).then(() => r); };
+const post = (h, body, query) => { const r = res(); vault.keys = (body && body.marketcheckKeys) || []; return h({ method: "POST", headers: { authorization: "Bearer t" }, body, query: query || {} }, r).then(() => r); };
 const keyOf = (url) => new URL(url).searchParams.get("api_key");
 
 let calls;

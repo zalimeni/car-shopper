@@ -1,10 +1,10 @@
 // Client side of AI scoring + Anthropic key management.
 //
 // Runs in the browser under the user's Supabase session (same auth pattern as
-// sync.js). The key itself is only ever sent to /api/anthropic-key, which
-// validates and stores it encrypted server-side; the browser keeps no copy and
-// learns only status (configured / valid / last4). Every AI request goes to
-// /api/ai (one task per request), which decrypts the key server-side.
+// sync.js). The key itself is only ever sent to /api/keys, which validates and
+// stores it encrypted server-side; the browser keeps no copy and learns only
+// status (configured / valid / last4). Every AI request goes to /api/ai (one
+// task per request), which decrypts the key server-side.
 
 import { supabase } from "./supabaseClient";
 import { DEMO, demoScoreSet, demoPriceRead, demoBaselineFor, demoSuggest, demoScorePrompt } from "./demoRuntime";
@@ -89,26 +89,27 @@ export async function getKeyStatus() {
   // Demo: a pretend key, so scoring (simulated — demoScoreSet) can be tried.
   if (DEMO) return { configured: true, valid: true, last4: "DEMO", demo: true };
   try {
-    const res = await fetch("/api/anthropic-key", { method: "GET", headers: await authHeaders() });
+    const res = await fetch("/api/keys", { method: "GET", headers: await authHeaders() });
     if (!res.ok) return { configured: false, valid: false, last4: "" };
-    return await res.json();
+    const j = await res.json();
+    return (j && j.anthropic) || { configured: false, valid: false, last4: "" };
   } catch (e) {
     return { configured: false, valid: false, last4: "" };
   }
 }
 
 export async function saveKey(key) {
-  const res = await fetch("/api/anthropic-key", { method: "POST", headers: await authHeaders(), body: JSON.stringify({ key: key }) });
+  const res = await fetch("/api/keys", { method: "POST", headers: await authHeaders(), body: JSON.stringify({ provider: "anthropic", key: key }) });
   const j = await res.json().catch(function () { return {}; });
   if (!res.ok) throw new Error(j.error || ("Couldn't save key (HTTP " + res.status + ")"));
-  return j; // { configured, valid, last4 }
+  return j.anthropic; // { configured, valid, last4 }
 }
 
 export async function removeKey() {
-  const res = await fetch("/api/anthropic-key", { method: "DELETE", headers: await authHeaders() });
+  const res = await fetch("/api/keys", { method: "DELETE", headers: await authHeaders(), body: JSON.stringify({ provider: "anthropic" }) });
   const j = await res.json().catch(function () { return {}; });
   if (!res.ok) throw new Error(j.error || ("Couldn't remove key (HTTP " + res.status + ")"));
-  return j; // { configured:false, valid:false, last4:"" }
+  return j.anthropic; // { configured:false, valid:false, last4:"" }
 }
 
 // ── Scoring ──
