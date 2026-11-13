@@ -67,7 +67,7 @@ over architecture.
 | `src/quota.js` | MarketCheck quota bookkeeping for the header gauge + modal: per-key snapshots (from syncs / live searches — never its own calls), capacity across keys (used in order), sync-cost estimates. Pure, tested. |
 | `public/locations.txt` | Flat file (`ST|City|ZIP|lat|lon`, ~41k rows) behind the location picker; lazy-loaded, not bundled. Built by `scripts/build-locations.mjs` from GeoNames (CC BY 4.0). |
 | `api/marketcheck.js` | Serverless proxy to MarketCheck (holds the API key). One sync step per request (`runStep`: full / new / count / vins / local) over a `createSession` (key failover, throttle, time budget). `buildUrl`/`normalize`. |
-| `api/_auth.js` | Server-side auth + allowlist: `authorize()` → `{ user, admin }` from one `my_access()` RPC. Shared module. |
+| `api/_auth.js` | Server-side auth + allowlist: `authorize()` verifies the access token locally (`getClaims()` against the project's ES256 signing keys, JWKS cached per warm instance — no Auth-server call), then `{ user: { id, email }, admin }` from one `my_access()` RPC. Shared module. |
 | `api/allowlist.js`, `src/admin.js` | Admin tab (admins only, `allowed_emails.is_admin`): list / add / remove emails, send an invite (the only way to get an account), toggle Admin / Daily sync per row. |
 | `api/me.js` | Allowlist + admin + key-status check for the UI (key metadata only). |
 | `api/_scoring.js` | Scoring prompt/schema/coercion + model allowlist (`resolveScoreModel`). |

@@ -22,22 +22,45 @@ export function safeEqual(a, b) {
   return crypto.timingSafeEqual(ab, bb);
 }
 
-// Returns { user, admin } when the caller is authenticated AND allowlisted,
-// otherwise { error, status } (401 unauthenticated, 403 not on the list).
+// Verifies access tokens. Kept across warm invocations so the project's
+// signing keys (JWKS) are fetched once, not on every request: the project
+// signs tokens with an asymmetric key, so getClaims() checks the signature
+// and expiry locally instead of asking the Auth server (getUser()). Trade-off:
+// a token signed out elsewhere still verifies until it expires (about an
+// hour); the allowlist check below runs on every request regardless.
+let verifier = null;
+function claimsClient() {
+  if (!verifier) {
+    verifier = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+  }
+  return verifier;
+}
+
+// Returns { user: { id, email }, admin } when the caller is authenticated AND
+// allowlisted, otherwise { error, status } (401 unauthenticated, 403 not on
+// the list).
 export async function authorize(req) {
   const header = req.headers.authorization || req.headers.Authorization || "";
   const token = header.indexOf("Bearer ") === 0 ? header.slice(7).trim() : "";
   if (!token) return { error: "Missing authentication token", status: 401 };
 
-  // Client carries the caller's token so getUser() and the my_access() RPC both
-  // run in that user's context.
+  let claims = null;
+  try {
+    const { data, error } = await claimsClient().auth.getClaims(token);
+    if (!error && data) claims = data.claims;
+  } catch (e) { /* malformed token */ }
+  if (!claims || !claims.sub || claims.role !== "authenticated" || claims.is_anonymous === true) {
+    return { error: "Invalid or expired session", status: 401 };
+  }
+
+  // The RPC runs as the caller: PostgREST checks the same token again and
+  // my_access() reads the email from it.
   const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { headers: { Authorization: "Bearer " + token } },
   });
-
-  const { data, error } = await supabase.auth.getUser(token);
-  if (error || !data || !data.user) return { error: "Invalid or expired session", status: 401 };
 
   // One call answers both questions: on the allowlist? an admin?
   let access = null;
@@ -47,5 +70,5 @@ export async function authorize(req) {
   } catch (e) { /* unreachable — treated as not allowed */ }
 
   if (!access || !access.allowed) return { error: "This account is not authorized to use this app", status: 403 };
-  return { user: data.user, admin: !!access.admin };
+  return { user: { id: claims.sub, email: claims.email || "" }, admin: !!access.admin };
 }
