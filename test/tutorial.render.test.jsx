@@ -40,7 +40,7 @@ describe("tutorial (signed in)", () => {
   it("starts from Help and explains costly steps without running them", async () => {
     render(React.createElement(App));
     fireEvent.click(await screen.findByRole("button", { name: "▶ Start the tutorial" }, { timeout: 8000 }));
-    await screen.findByRole("dialog", { name: "Tutorial: Quick tutorial" });
+    await screen.findByRole("dialog", { name: "Tutorial: Quick tutorial" }, { timeout: 8000 });
     const next = () => fireEvent.click(screen.getByRole("button", { name: /^(Next|Done)$/ }));
     next();
     await screen.findByRole("dialog", { name: "Tutorial: Profiles: the cars you're hunting" }, { timeout: 8000 });
