@@ -92,20 +92,17 @@ export function WelcomeModal({ onClose, first }) {
     <div onMouseDown={dismiss} style={D.backdrop}>
       <div role="dialog" aria-modal="true" aria-label="Welcome" onMouseDown={function (e) { e.stopPropagation(); }} style={D.dialog}>
         <h2 style={D.h1}>👋 Welcome</h2>
-        <p style={D.p}>Thanks for checking out my project! This is the tracker I built for my own used-car search: profiles for the cars I'm shopping, dealer inventory pulled from MarketCheck nationwide, AI scores against my own criteria, and a watchlist that follows prices until a car sells. I made an actual SUV purchase using this app in October 2026!</p>
-        <p style={D.p}>What you're seeing is a curated slice of my real search: real cars, prices and AI scores, with dealers and VINs swapped for made-up ones and the photos redrawn. Poke at anything — edits work, but they live only in this tab. <b>↻ Sync</b> on Results is simulated: it "finds" a few held-back listings, drops a couple of prices, and marks a car as no longer listed, counting against a pretend MarketCheck quota. <b>✨ Score</b> works too, but the scores are modeled on similar cars I already scored rather than asked of Claude. The Price tab, the new-profile wizard (+ Add on Profiles) and the AI price baseline are simulated the same way. No live MarketCheck or AI calls are made. (If you're interested in access and know me at work or personally, let me know and I can invite you to sign up, or you can self-host with your own accounts!)</p>
+        <p style={D.p}>Thanks for stopping by! This is the tracker I built for my own used-car search — and used to buy an SUV in October 2026. It pulls dealer inventory from MarketCheck, scores cars with AI against open-ended criteria, and tracks prices on a watchlist.</p>
+        <p style={D.p}>The data is a sampling of my real search, with dealers, VINs and photos anonymized. Edit freely as you explore — changes will stay in your browser. <b>↻ Sync</b>, <b>✨ Score</b> and the other MarketCheck and AI features are simulated, and nothing is sent anywhere until you log in for real.</p>
 
         <h3 style={D.h3}>How this app uses Supabase</h3>
         <ul style={{ margin: "0 0 12px", paddingLeft: 18, fontSize: 13, color: "#c8c8d0" }}>
-          <li style={li}><b>Sign-in:</b> invite-only — sign-ups are off, an admin invites people by email, and they sign in with a magic link or one-time code (Supabase Auth). An allowlist table decides who may use the app and who is an admin.</li>
-          <li style={li}><b>User data:</b> one JSON document per user in a Postgres table, guarded by row-level security, so a user can only ever read or write their own row. A simple revision counter stops two devices from overwriting each other.</li>
-          <li style={li}><b>Backups:</b> a database trigger keeps rolling snapshots of that document, restorable from the app.</li>
-          <li style={li}><b>Key vault:</b> each user's Anthropic and MarketCheck keys are encrypted (AES-256-GCM, bound to their owner) in a table only the server functions can read.</li>
-          <li style={li}><b>Schema changes:</b> SQL migrations, applied by GitHub Actions on merge.</li>
-          <li style={li}><b>This demo:</b> none of it. The data is a static file that ships with the app, and nothing you do here is sent anywhere.</li>
+          <li style={li}><b>Auth:</b> invite-only magic link or one-time code, plus an allowlist table.</li>
+          <li style={li}><b>Data:</b> one JSON document per user in Postgres, guarded by RLS, with trigger-based backups.</li>
+          <li style={li}><b>Key vault:</b> users' API keys, encrypted in a table only server functions can read.</li>
         </ul>
-        <p style={D.p}>A two-minute tutorial walks you through it next; Tutorial in the banner replays it any time.</p>
-        <p style={Object.assign({}, D.p, { marginBottom: 4 })}>Enjoy, and thanks again for stopping by!</p>
+        <p style={D.p}>Want access? If you know me, ask for an invite - or feel free to self-host your own deployment.</p>
+        <p style={Object.assign({}, D.p, { marginBottom: 4 })}>Enjoy!</p>
         <p style={Object.assign({}, D.p, { color: "#e4e4e7" })}>— Michael</p>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <button style={D.btn} onClick={function () { onClose(true); }}>Start the tutorial</button>
