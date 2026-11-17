@@ -92,16 +92,16 @@ export function WelcomeModal({ onClose, first }) {
     <div onMouseDown={dismiss} style={D.backdrop}>
       <div role="dialog" aria-modal="true" aria-label="Welcome" onMouseDown={function (e) { e.stopPropagation(); }} style={D.dialog}>
         <h2 style={D.h1}>👋 Welcome</h2>
-        <p style={D.p}>Thanks for stopping by! This is the tracker I built for my own used-car search — and used to buy an SUV in October 2026. It pulls dealer inventory from MarketCheck, scores cars with AI against my criteria, and tracks prices on a watchlist.</p>
-        <p style={D.p}>The data is a slice of my real search, with dealers, VINs and photos swapped out. Edit anything — changes stay in this tab. <b>↻ Sync</b>, <b>✨ Score</b> and the other MarketCheck and AI features are simulated; nothing is sent anywhere.</p>
+        <p style={D.p}>Thanks for stopping by! This is the tracker I built for my own used-car search — and used to buy an SUV in October 2026. It pulls dealer inventory from MarketCheck, scores cars with AI against open-ended criteria, and tracks prices on a watchlist.</p>
+        <p style={D.p}>The data is a sampling of my real search, with dealers, VINs and photos anonymized. Edit freely as you explore — changes will stay in your browser. <b>↻ Sync</b>, <b>✨ Score</b> and the other MarketCheck and AI features are simulated, and nothing is sent anywhere until you log in for real.</p>
 
         <h3 style={D.h3}>How this app uses Supabase</h3>
         <ul style={{ margin: "0 0 12px", paddingLeft: 18, fontSize: 13, color: "#c8c8d0" }}>
           <li style={li}><b>Auth:</b> invite-only magic link or one-time code, plus an allowlist table.</li>
-          <li style={li}><b>Data:</b> one JSON document per user in Postgres, guarded by row-level security, with trigger-based backups.</li>
+          <li style={li}><b>Data:</b> one JSON document per user in Postgres, guarded by RLS, with trigger-based backups.</li>
           <li style={li}><b>Key vault:</b> users' API keys, encrypted in a table only server functions can read.</li>
         </ul>
-        <p style={D.p}>Want access? If you know me, ask for an invite — or self-host it.</p>
+        <p style={D.p}>Want access? If you know me, ask for an invite - or feel free to self-host your own deployment.</p>
         <p style={Object.assign({}, D.p, { marginBottom: 4 })}>Enjoy!</p>
         <p style={Object.assign({}, D.p, { color: "#e4e4e7" })}>— Michael</p>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
