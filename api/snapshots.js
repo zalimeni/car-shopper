@@ -13,7 +13,7 @@
 // RLS-locked with no client policies, so this endpoint reaches it via the
 // service-role client — always scoped to the authenticated caller's user_id.
 
-import { authorize } from "./_auth.js";
+import { authorize, deny, requireAdmin } from "./_auth.js";
 import { scrubSettings, DEMO_VERSION } from "../src/demo.js";
 import { adminClient } from "./_supabaseAdmin.js";
 import { importBlobKeys } from "./_keys.js";
@@ -22,7 +22,7 @@ const DEMO_MAX_BYTES = 3 * 1024 * 1024;
 
 export default async function handler(req, res) {
   const auth = await authorize(req);
-  if (auth.error) { res.status(auth.status).json({ error: auth.error }); return; }
+  if (auth.error) { deny(res, auth); return; }
   const userId = auth.user.id;
 
   const db = adminClient();
@@ -81,7 +81,8 @@ export default async function handler(req, res) {
 }
 
 async function publishDemo(db, auth, demo, res) {
-  if (!auth.admin) { res.status(403).json({ error: "Admins only" }); return; }
+  const notAdmin = requireAdmin(auth);
+  if (notAdmin) { deny(res, notAdmin); return; }
   if (!demo || typeof demo !== "object" || !demo.data || typeof demo.data !== "object" || !Array.isArray(demo.data.listings)) {
     res.status(400).json({ error: "Not a demo snapshot" }); return;
   }

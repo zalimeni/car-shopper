@@ -22,7 +22,7 @@
 // run one real query and return the raw MarketCheck response + how normalize()
 // maps it, for confirming live field names (API key redacted from the echo).
 
-import { authorize } from "./_auth.js";
+import { authorize, deny } from "./_auth.js";
 import { getMarketcheckKeys } from "./_keys.js";
 import { mapPowertrain, parseYears } from "../src/queryPlan.js";
 import { searchStates } from "../src/regions.js";
@@ -200,7 +200,7 @@ export default async function handler(req, res) {
   // Server-side access control: authenticated AND allowlisted, or no inventory.
   const auth = await authorize(req);
   if (auth.error) {
-    res.status(auth.status).json({ error: auth.error });
+    deny(res, auth);
     return;
   }
 
