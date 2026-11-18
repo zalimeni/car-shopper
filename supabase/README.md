@@ -67,6 +67,38 @@ CLI stack):
 Before deploying the version that dropped `ALLOWED_EMAILS`, make sure everyone
 who should keep access has a row in `allowed_emails` (env-only grants are gone).
 
+## Two-factor authentication (TOTP)
+
+Email sign-in alone means anyone who gets into a user's inbox gets the
+account. Users can add an authenticator app in **Settings → Two-factor
+authentication** (Supabase Auth MFA, TOTP only; phone MFA is a paid add-on).
+After that, every email sign-in also asks for a 6-digit code, and an
+email-only (aal1) session is refused by the API (`api/_auth.js`, 401
+`mfa_required`) and by RLS (`20261118150000_mfa_aal2.sql`). It's opt-in for
+users and **required for admins**: the Admin tab and Publish demo need an
+aal2 session, so an admin sets up an app before using them.
+
+One-time Dashboard check: **Authentication → Multi-Factor (MFA)** — make sure
+**TOTP (App Authenticator)** is enabled (it is by default on hosted projects).
+Leave the limit on factors per user at 2 or more so people can add a backup app.
+
+**No recovery codes.** Supabase doesn't issue them, so the app nudges everyone to
+add a second app (another phone, or a password manager) as a backup. If someone
+loses every app:
+
+1. **Another admin** opens **Admin → 2FA · reset** on that person's row. That
+   deletes their factors (`auth.admin.mfa.deleteFactor`, service role); they
+   sign in by email alone and set up a new app in Settings.
+2. **The only admin locked out** (e.g. the owner lost their phone): in the
+   Dashboard, **Authentication → Users**, open the user, and delete their MFA
+   factors (or in the SQL editor:
+   `delete from auth.mfa_factors where user_id = (select id from auth.users where email = '…');`).
+   Then sign in by email, and set up an app again in Settings (needed for the
+   Admin tab). A safer setup is two admins, each with two-factor on.
+
+The scheduled sync and backup restore use the service role, which isn't
+subject to RLS, so two-factor doesn't affect them.
+
 ## Key encryption v2 (migration plan)
 
 Every key in `user_api_keys` is AES-256-GCM. **v2** (written by the current
@@ -101,6 +133,11 @@ re-enter theirs).
   expected_rev)`, the one call the browser saves with (compare-and-swap on
   `rev`, SECURITY INVOKER so RLS applies), and `app_state` added to the
   `supabase_realtime` publication.
+- `20261118150000_mfa_aal2.sql` — two-factor enforcement: `mfa_ok()` (aal2, or
+  no verified factor), a RESTRICTIVE policy with it on `app_state` and
+  `storage.objects` (every command, every bucket), and `my_access_mfa()`
+  (allowed + admin + has_mfa in one call, for `api/_auth.js`). See
+  "Two-factor authentication" below.
 
 All are idempotent and ordered by filename, so applying the full set against an
 existing database is safe.
