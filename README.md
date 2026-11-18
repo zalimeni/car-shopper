@@ -91,7 +91,7 @@ the client). See `.env.example`.
 | `SUPABASE_SECRET_KEY` | server | allowlist, key vault, backups | Supabase **Secret key** (`sb_secret_…`) — bypasses RLS to read/write the server-only tables. |
 | `KEY_ENCRYPTION_SECRET` | server | key vault | ≥16 chars; the secret each user's stored API keys are encrypted with (HKDF → AES-256-GCM). Rotating it invalidates stored keys (users re-enter). |
 | `MARKETCHECK_API_KEY` | server | — | Optional shared key, used only by accounts with no MarketCheck keys of their own (never a fallback for those that have some). From marketcheck.com/apis. |
-| `CRON_SECRET` | server | scheduled sync | ≥16 chars; authorizes the daily `/api/cron-sync` invocations (Vercel Cron sends it as the Bearer token). Unset = scheduled sync disabled. |
+| `CRON_SECRET` | server | scheduled sync | ≥16 chars; authorizes the `/api/cron-sync` invocations (Vercel Cron and the pg_cron dispatcher send it as the Bearer token; the dispatcher reads it from Supabase Vault — see `supabase/README.md`). Unset = scheduled sync disabled. |
 
 That's all. Who may use the app, who is an admin, and who gets the daily sync
 are rows in the `allowed_emails` table (the Admin tab), not env vars.
@@ -191,7 +191,7 @@ api/                Vercel serverless functions (server-side secrets)
   _supabaseAdmin.js service-role client for the server-only tables
   _scoring.js       scoring prompt/schema/coercion + model allowlist
   marketcheck.js    MarketCheck proxy (buildUrl/normalize, one sync step per request)
-  cron-sync.js      daily scheduled sync + Supabase keepalive (Vercel Cron)
+  cron-sync.js      scheduled sync, one account per call (pg_cron dispatcher) + daily keepalive (Vercel Cron)
   me.js             auth + key-status check for the client
   keys.js           set/validate/remove the user's Anthropic + MarketCheck keys
   ai.js             every AI feature (score / price / baseline / suggest) with the user's key
@@ -223,7 +223,7 @@ Shipped:
 
 - ✅ One-click archiving of listings unseen in sync for 14+ days (restorable)
 - ✅ Realtime sync across open devices (Supabase Realtime on the user's row)
-- ✅ Scheduled background sync (Vercel Cron, opt-in per account) — price
+- ✅ Scheduled background sync (pg_cron dispatcher, Vercel Cron fallback; opt-in per account) — price
   changes land as review flags and new finds land in the candidate queue on
   next open
 

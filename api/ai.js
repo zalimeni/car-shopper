@@ -14,7 +14,7 @@
 // schemas: api/_scoring.js (score, baseline), api/_pricecheck.js, api/_suggest.js.
 
 import Anthropic from "@anthropic-ai/sdk";
-import { authorize } from "./_auth.js";
+import { authorize, deny } from "./_auth.js";
 import { cryptoReady } from "./_crypto.js";
 import { loadAnthropicKey, isAuthError, rejectKey, callText, safeParse, errMsg } from "./_ai.js";
 import { resolveScoreModel, SCORE_SYSTEM, CRITERION_GUIDANCE, buildScoreSchema, buildUserPrompt, coerceResult, BASELINE_SYSTEM, buildBaselineSchema, buildBaselinePrompt } from "./_scoring.js";
@@ -35,7 +35,7 @@ const TASKS = { score: score, price: price, baseline: baseline, suggest: suggest
 
 export default async function handler(req, res) {
   const auth = await authorize(req);
-  if (auth.error) { res.status(auth.status).json({ error: auth.error }); return; }
+  if (auth.error) { deny(res, auth); return; }
 
   if (req.method === "GET") {
     const t = req.query && req.query.task;

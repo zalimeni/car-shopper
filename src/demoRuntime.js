@@ -169,6 +169,8 @@ var BLOCKED = {
   "/api/keys": "The demo's keys are simulated — they can't be changed.",
   "/api/pricecomps": "Live comparables are off in the demo.",
   "/api/marketcheck": "Live MarketCheck searches are off in the demo — ↻ Sync is simulated.",
+  // Backups, and the photo copies (src/photos.js — it skips the call in the demo anyway).
+  "/api/snapshots": "Backups and saved photo copies are off in the demo.",
 };
 var QUIET = { "/api/me": true }; // background checks, no toast
 export function installFetchGuard() {

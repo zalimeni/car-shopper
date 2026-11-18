@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
 import { parseSignInLink } from "./authLink";
 import { demoAvailable } from "./demoRuntime";
+import { needsStepUp, isAal2, verifyStepUp, friendlyMfaError, MFA_REQUIRED } from "./mfa";
 
 // Gates the app behind Supabase email auth (magic link or one-time code). Renders a sign-in
 // screen until there's a session, then renders children. Signing in with the
@@ -42,8 +43,20 @@ export default function AuthGate({ children }) {
   // the app. We only blank to "Checking access…" on the FIRST check; later
   // identity changes re-verify in the background without tearing down the app.
   const userId = session && session.user ? session.user.id : null;
+
+  // Two-factor step-up. After any email sign-in (tapped link, pasted link or
+  // typed code) the session is aal1; an account with an authenticator app
+  // needs aal2 before the app loads. Read from the session itself (no network).
+  // `mfaForced` covers a session whose user record predates an enrollment made
+  // on another device: the server answers /api/me with mfa_required.
+  const [mfaForced, setMfaForced] = useState(false);
+  const aal2 = isAal2(session);
+  useEffect(() => { if (aal2 || !userId) setMfaForced(false); }, [aal2, userId]);
+  const needMfa = !!session && (needsStepUp(session) || (mfaForced && !aal2));
+
   useEffect(() => {
     if (!userId) { setAuthorized(null); return; }
+    if (needMfa) return; // ask for the code first; re-checked once it's in
     let cancelled = false;
     // Fail open if the check stalls, so a hung request can't wedge the app on
     // "Checking access…" indefinitely.
@@ -57,6 +70,11 @@ export default function AuthGate({ children }) {
         const res = await fetch("/api/me", { headers: { Authorization: "Bearer " + token }, signal: ac.signal });
         if (cancelled) return;
         if (res.status === 403) { setAuthorized(false); return; }
+        if (res.status === 401) {
+          const j = await res.json().catch(() => null);
+          if (cancelled) return;
+          if (j && j.code === MFA_REQUIRED) { setMfaForced(true); return; }
+        }
         if (res.ok) {
           const j = await res.json().catch(() => null);
           setAuthorized(!(j && j.authorized === false));
@@ -70,13 +88,67 @@ export default function AuthGate({ children }) {
       }
     })();
     return () => { cancelled = true; clearTimeout(timer); ac.abort(); };
-  }, [userId]);
+  }, [userId, needMfa]);
 
   if (loading) return <div style={S.center}>Loading…</div>;
   if (!session) return <SignIn />;
+  if (needMfa) return <StepUp email={session.user && session.user.email} />;
   if (authorized === null) return <div style={S.center}>Checking access…</div>;
   if (authorized === false) return <NotAuthorized email={session.user && session.user.email} />;
   return children;
+}
+
+// The two-factor code prompt (signed in by email, account has an authenticator
+// app). On success supabase-js swaps in the aal2 session (MFA_CHALLENGE_VERIFIED
+// → onAuthStateChange) and AuthGate lets the app load. A full 6-digit code
+// submits itself (iOS fills it from "one-time-code" suggestions).
+export function StepUp({ email }) {
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(value) {
+    const c = String(value == null ? code : value).replace(/[^0-9]/g, "");
+    if (c.length !== 6 || busy) return;
+    setBusy(true);
+    setError("");
+    try { await verifyStepUp(c); }
+    catch (e) { setError(friendlyMfaError(e)); setCode(""); }
+    setBusy(false);
+  }
+
+  return (
+    <div style={S.center}>
+      <div style={S.card}>
+        <h1 style={S.title}>Two-factor code</h1>
+        <p style={S.sub}>
+          {email ? <span>Signed in as <strong>{email}</strong>. </span> : null}
+          Enter the 6-digit code from your authenticator app to finish signing in.
+        </p>
+        <form onSubmit={(e) => { e.preventDefault(); submit(); }}>
+          <input
+            style={Object.assign({}, S.input, S.code)}
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            pattern="[0-9]*"
+            autoFocus
+            placeholder="123456"
+            value={code}
+            onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, "").slice(0, 6); setCode(v); if (v.length === 6) submit(v); }}
+            aria-label="Two-factor code"
+          />
+          <button style={S.button} type="submit" disabled={busy || code.length !== 6}>
+            {busy ? "Checking…" : "Verify"}
+          </button>
+        </form>
+        {error && <p style={S.error}>{error}</p>}
+        <p style={Object.assign({}, S.sub, { marginTop: 14, marginBottom: 0 })}>
+          Lost your phone? Use a backup authenticator app if you set one up, or ask an admin to reset two-factor for your account.
+        </p>
+        <button type="button" style={S.link} onClick={() => signOut()}>Sign out</button>
+      </div>
+    </div>
+  );
 }
 
 function NotAuthorized({ email }) {
