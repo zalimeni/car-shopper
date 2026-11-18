@@ -55,7 +55,7 @@ describe("Settings: two-factor enroll", () => {
 
     const img = await screen.findByAltText("QR code for your authenticator app");
     expect(img.getAttribute("src")).toBe("data:image/svg+xml;charset=utf-8," + encodeURIComponent("<svg></svg>"));
-    expect(mfa.calls[0]).toEqual(["enroll", { factorType: "totp", friendlyName: "iPhone", issuer: "Car Shopper" }]);
+    expect(mfa.calls[0]).toEqual(["enroll", { factorType: "totp", friendlyName: "iPhone", issuer: "Tirekicker" }]);
     expect(screen.getByLabelText("Setup key").textContent).toBe("JBSW Y3DP EHPK 3PXP");
     expect(screen.getByText("Open in authenticator app").getAttribute("href")).toMatch(/^otpauth:\/\/totp\//);
 

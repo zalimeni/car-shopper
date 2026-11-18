@@ -51,7 +51,9 @@ export function Tutorial({ demo }) {
     });
   }, [steps.length]);
 
-  useEffect(function () {
+  // A layout effect, not useEffect: the listener must exist by the time the
+  // "Start the tutorial" button is in the DOM, or an immediate tap is lost.
+  useLayoutEffect(function () {
     function start() { memRef.current = {}; modalRef.current = null; setI(0); setDir(1); setBusy(false); setOn(true); }
     window.addEventListener(TUTORIAL_EVENT, start);
     return function () { window.removeEventListener(TUTORIAL_EVENT, start); };
