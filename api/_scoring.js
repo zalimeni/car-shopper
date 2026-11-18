@@ -6,18 +6,14 @@
 // from whatever criteria the client sends rather than hardcoded.
 
 import { travelFacts, DRIVE_MAX_MI, AIRPORT_NEAR_MI } from "../src/travel.js";
+import { SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "../src/scoreModels.js";
 
 // Models the user may pick for scoring (allowlisted so a request can't drive
-// arbitrary model strings). Default is Sonnet — strong judgment for this
-// structured task at a lower cost than Opus. The per-request model (from the
-// UI) wins when it's in this list.
-export const SCORE_MODELS = {
-  "claude-sonnet-5-5": "Sonnet 5.5 — balanced (recommended)",
-  "claude-opus-5-5": "Opus 5.5 — most nuanced",
-  "claude-haiku-5-5": "Haiku 5.5 — fastest / cheapest",
-};
+// arbitrary model strings). The list lives in src/scoreModels.js, shared with
+// the UI's picker. The per-request model (from the UI) wins when it's in it.
+export const SCORE_MODELS = Object.fromEntries(SCORE_MODEL_OPTIONS.map(function (m) { return [m.id, m.label]; }));
 
-export const DEFAULT_SCORE_MODEL = "claude-sonnet-5-5";
+export { DEFAULT_SCORE_MODEL };
 
 export function resolveScoreModel(requested) {
   if (requested && Object.prototype.hasOwnProperty.call(SCORE_MODELS, requested)) return requested;

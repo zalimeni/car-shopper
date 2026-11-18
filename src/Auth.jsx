@@ -4,9 +4,12 @@ import { parseSignInLink } from "./authLink";
 import { demoAvailable } from "./demoRuntime";
 import { needsStepUp, isAal2, verifyStepUp, friendlyMfaError, MFA_REQUIRED } from "./mfa";
 
-// Gates the app behind Supabase email auth (magic link or one-time code). Renders a sign-in
-// screen until there's a session, then renders children. Signing in with the
-// same email on any device gives you the same synced data.
+// Gates the app behind Supabase email auth (a magic link, tapped or pasted).
+// Renders a sign-in screen until there's a session, then renders children.
+// Signing in with the same email on any device gives you the same synced data.
+// `children` may be a function: it gets the /api/me answer (identity, admin
+// flag, key metadata — {} when the check failed open), so the app needn't ask
+// again on load.
 //
 // Invite-only: the app never creates accounts (shouldCreateUser: false, and the
 // project has sign-ups turned off). An admin invites people from the Admin tab.
@@ -14,6 +17,7 @@ export default function AuthGate({ children }) {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [authorized, setAuthorized] = useState(null); // null = checking | true | false
+  const [me, setMe] = useState(null); // the /api/me answer ({} when unknown)
 
   useEffect(() => {
     // Resolve the initial auth state from whichever of these fires first:
@@ -33,7 +37,7 @@ export default function AuthGate({ children }) {
     return () => { clearTimeout(timer); sub.subscription.unsubscribe(); };
   }, []);
 
-  // Ask the server whether this account is on the allowlist (env OR DB). This is
+  // Ask the server whether this account is on the allowlist (the allowed_emails table). This is
   // a UX gate only — the data layer (RLS) and the API enforce access regardless —
   // so on any error (offline, local dev without functions) we fail open and let
   // the app render; non-allowlisted users simply see empty data + 403 on sync.
@@ -44,8 +48,8 @@ export default function AuthGate({ children }) {
   // identity changes re-verify in the background without tearing down the app.
   const userId = session && session.user ? session.user.id : null;
 
-  // Two-factor step-up. After any email sign-in (tapped link, pasted link or
-  // typed code) the session is aal1; an account with an authenticator app
+  // Two-factor step-up. After any email sign-in (tapped or pasted link) the
+  // session is aal1; an account with an authenticator app
   // needs aal2 before the app loads. Read from the session itself (no network).
   // `mfaForced` covers a session whose user record predates an enrollment made
   // on another device: the server answers /api/me with mfa_required.
@@ -69,7 +73,7 @@ export default function AuthGate({ children }) {
         const token = session && session.access_token ? session.access_token : "";
         const res = await fetch("/api/me", { headers: { Authorization: "Bearer " + token }, signal: ac.signal });
         if (cancelled) return;
-        if (res.status === 403) { setAuthorized(false); return; }
+        if (res.status === 403) { setMe({}); setAuthorized(false); return; }
         if (res.status === 401) {
           const j = await res.json().catch(() => null);
           if (cancelled) return;
@@ -77,12 +81,15 @@ export default function AuthGate({ children }) {
         }
         if (res.ok) {
           const j = await res.json().catch(() => null);
+          if (cancelled) return;
+          setMe(j || {});
           setAuthorized(!(j && j.authorized === false));
           return;
         }
+        setMe({});
         setAuthorized(true); // 401/other -> fail open
       } catch (e) {
-        if (!cancelled) setAuthorized(true); // network / timeout / local dev -> fail open
+        if (!cancelled) { setMe({}); setAuthorized(true); } // network / timeout / local dev -> fail open
       } finally {
         clearTimeout(timer);
       }
@@ -95,7 +102,7 @@ export default function AuthGate({ children }) {
   if (needMfa) return <StepUp email={session.user && session.user.email} />;
   if (authorized === null) return <div style={S.center}>Checking access…</div>;
   if (authorized === false) return <NotAuthorized email={session.user && session.user.email} />;
-  return children;
+  return typeof children === "function" ? children(me || {}) : children;
 }
 
 // The two-factor code prompt (signed in by email, account has an authenticator
@@ -172,18 +179,14 @@ function NotAuthorized({ email }) {
 
 // Ways in from one sign-in email:
 //  - tap the link (signs in the browser it opens in), or
-//  - paste the link here (long-press → Copy Link in Mail), or
-//  - type the one-time code, if the email template includes it.
-// Pasting or typing matters on an iPhone Home Screen web app: it has its own
-// storage, separate from Safari, and email links always open in Safari, so
-// tapping would sign Safari in and leave the Home Screen app signed out.
-// (The code needs the Supabase "Magic Link" template to include {{ .Token }},
-// which needs custom SMTP — see supabase/README.md. Pasting the link doesn't.)
+//  - paste the link here (long-press → Copy Link in Mail).
+// Pasting matters on an iPhone Home Screen web app: it has its own storage,
+// separate from Safari, and email links always open in Safari, so tapping
+// would sign Safari in and leave the Home Screen app signed out.
 function SignIn() {
   const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
   const [link, setLink] = useState("");
-  const [sent, setSent] = useState(false); // email sent (or already in hand) -> show the paste/code step
+  const [sent, setSent] = useState(false); // email sent (or already in hand) -> show the paste step
   const [status, setStatus] = useState("idle"); // idle | sending | verifying | error
   const [error, setError] = useState("");
   const standalone = isStandalone();
@@ -214,16 +217,6 @@ function SignIn() {
   }
 
   // On success onAuthStateChange swaps this screen for the app.
-  async function verifyCode(e) {
-    e.preventDefault();
-    const token = code.replace(/\s+/g, "");
-    if (!token) return;
-    setStatus("verifying");
-    setError("");
-    const { error } = await supabase.auth.verifyOtp({ email: email.trim(), token: token, type: "email" });
-    if (error) fail(error, "code");
-  }
-
   async function signInWithLink(text) {
     const parsed = parseSignInLink(text);
     if (!parsed) { setError("That doesn't look like the sign-in link from the email. In Mail, long-press the link and choose Copy Link."); setStatus("error"); return; }
@@ -282,24 +275,7 @@ function SignIn() {
                 </button>
               </div>
             </form>
-            {email ? (
-              <form onSubmit={verifyCode} style={{ marginTop: 16 }}>
-                <p style={Object.assign({}, S.sub, { margin: "0 0 6px" })}>Or, if the email has a code, type it:</p>
-                <input
-                  style={Object.assign({}, S.input, S.code)}
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  placeholder="123456"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 10))}
-                  aria-label="Sign-in code"
-                />
-                <button style={S.button} type="submit" disabled={status === "verifying" || code.length < 6}>
-                  {status === "verifying" ? "Signing in…" : "Sign in with code"}
-                </button>
-              </form>
-            ) : null}
-            <button type="button" style={S.link} onClick={() => { setSent(false); setStatus("idle"); setCode(""); setLink(""); setError(""); }}>
+            <button type="button" style={S.link} onClick={() => { setSent(false); setStatus("idle"); setLink(""); setError(""); }}>
               Use a different email or send a new one
             </button>
           </div>

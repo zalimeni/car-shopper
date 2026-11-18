@@ -6,26 +6,15 @@
 // status (configured / valid / last4). Every AI request goes to /api/ai (one
 // task per request), which decrypts the key server-side.
 
-import { supabase } from "./supabaseClient";
+import { authHeaders } from "./apiAuth";
 import { DEMO, demoScoreSet, demoPriceRead, demoBaselineFor, demoSuggest, demoScorePrompt } from "./demoRuntime";
 
 const CHUNK = 4; // listings per scoring request (/api/ai task "score"); bounds request time/size
 const REQUEST_TIMEOUT_MS = 75000; // > server function budget, so a real hang surfaces
 
-// Scoring model choices shown in the UI. Must stay in sync with the server-side
-// allowlist (api/_scoring.js SCORE_MODELS); the server ignores anything else.
-export var SCORE_MODEL_OPTIONS = [
-  { id: "claude-sonnet-5-5", label: "Sonnet 5.5 — balanced (recommended)" },
-  { id: "claude-opus-5-5", label: "Opus 5.5 — most nuanced" },
-  { id: "claude-haiku-5-5", label: "Haiku 5.5 — fastest / cheapest" },
-];
-export var DEFAULT_SCORE_MODEL = "claude-sonnet-5-5";
-
-async function authHeaders() {
-  const { data } = await supabase.auth.getSession();
-  const token = data && data.session ? data.session.access_token : "";
-  return { "Content-Type": "application/json", Authorization: token ? "Bearer " + token : "" };
-}
+// Scoring model choices shown in the UI — one list, shared with the server's
+// allowlist (src/scoreModels.js).
+export { SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./scoreModels.js";
 
 // AI fair-price verdict for the Price Check tool, grounded in the observed comps.
 export async function generatePriceAssessment(query, comps, stats, confidence) {
