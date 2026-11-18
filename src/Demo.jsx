@@ -83,16 +83,17 @@ function useEscape(onClose) {
   }, [onClose]);
 }
 
-// first: the first visit — dismissing it any way but "Explore on my own" starts the tutorial.
+// first: the first visit — a backdrop tap starts the tutorial; Escape and "Explore on my own" just close it.
 export function WelcomeModal({ onClose, first }) {
   var dismiss = useCallback(function () { onClose(!!first); }, [onClose, first]);
-  useEscape(dismiss);
+  var close = useCallback(function () { onClose(false); }, [onClose]);
+  useEscape(close);
   var li = { margin: "0 0 6px", lineHeight: 1.55 };
   return (
     <div onMouseDown={dismiss} style={D.backdrop}>
       <div role="dialog" aria-modal="true" aria-label="Welcome" onMouseDown={function (e) { e.stopPropagation(); }} style={D.dialog}>
         <h2 style={D.h1}>👋 Welcome</h2>
-        <p style={D.p}>Thanks for stopping by! This is the tracker I built for my own used-car search — and used to buy an SUV in October 2026. It pulls dealer inventory from MarketCheck, scores cars with AI against open-ended criteria, and tracks prices on a watchlist.</p>
+        <p style={D.p}>Thanks for stopping by! This is the search tool I built for my own used-car hunt — and used to buy an SUV in October 2026. It pulls dealer inventory from MarketCheck, scores cars with AI against open-ended criteria, and tracks prices on a watchlist.</p>
         <p style={D.p}>The data is a sampling of my real search, with dealers, VINs and photos anonymized. Edit freely as you explore — changes will stay in your browser. <b>↻ Sync</b>, <b>✨ Score</b> and the other MarketCheck and AI features are simulated, and nothing is sent anywhere until you log in for real.</p>
 
         <h3 style={D.h3}>How this app uses Supabase</h3>
@@ -101,7 +102,7 @@ export function WelcomeModal({ onClose, first }) {
           <li style={li}><b>Data:</b> one JSON document per user in Postgres, guarded by RLS, with trigger-based backups.</li>
           <li style={li}><b>Key vault:</b> users' API keys, encrypted in a table only server functions can read.</li>
         </ul>
-        <p style={D.p}>Want access? If you know me, ask for an invite - or feel free to self-host your own deployment.</p>
+        <p style={D.p}>Want access? If you know me, ask for an invite — or feel free to self-host your own deployment.</p>
         <p style={Object.assign({}, D.p, { marginBottom: 4 })}>Enjoy!</p>
         <p style={Object.assign({}, D.p, { color: "#e4e4e7" })}>— Michael</p>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
