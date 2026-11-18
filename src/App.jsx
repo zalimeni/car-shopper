@@ -1262,7 +1262,7 @@ export default function App({ me }) {
     <div style={S.app}>
       <header style={S.header}>
         <div style={S.hRow}>
-          <h1 style={S.title}>Tirekicker</h1>
+          <h1 style={S.title}><img src="/favicon.svg" alt="" style={S.logo} />Tirekicker</h1>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <QuotaGauge summary={quotaSummary} onClick={function () { setQuotaOpen(true); }} />
             <span style={S.badge}>{DEMO ? "Demo · not saved" : saving ? "Saving..." : "Saved ✓"}</span>
@@ -4826,7 +4826,8 @@ var S = {
   loading: { padding: 40, textAlign: "center", color: "#888", fontFamily: "sans-serif" },
   header: { paddingTop: 20, paddingBottom: 8, borderBottom: "1px solid #23262d", marginBottom: 16 },
   hRow: { display: "flex", justifyContent: "space-between", alignItems: "center" },
-  title: { fontSize: 20, fontWeight: 600, margin: 0, color: "#f0f0f3", letterSpacing: "-0.02em" },
+  title: { fontSize: 20, fontWeight: 600, margin: 0, color: "#f0f0f3", letterSpacing: "-0.02em", display: "flex", alignItems: "center", gap: 8 },
+  logo: { width: 26, height: 26, flex: "none" }, // public/favicon.svg, the app icon
   badge: { fontSize: 11, color: "#6b6b76", background: "#1a1c22", padding: "3px 8px", borderRadius: 4 },
   sub: { fontSize: 13, color: "#6b6b76", margin: "4px 0 12px" },
   nav: { display: "flex", gap: 2, overflowX: "auto", paddingBottom: 4 },
