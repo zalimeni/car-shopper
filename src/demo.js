@@ -60,6 +60,8 @@ export function reviewableNotes(data) {
 function scrubCar(l, keep) {
   var o = Object.assign({}, l);
   delete o._candidate; delete o.fromScheduled;
+  // The stored photo copy is in the owner's private bucket — no visitor can read it.
+  delete o.photoKey; delete o.photoFailed;
   if (!keep[o.id || o.vin]) {
     if (o.memo) o.memo = "";
     if (o.notes) o.notes = autoNotes(o.notes);

@@ -75,15 +75,16 @@ over architecture.
 | `api/_keys.js` | The key vault (`user_api_keys`): the only module that decrypts. `getAnthropicKey`, `getMarketcheckKeys`, `keyMeta`, add/rename/reorder/remove, `importBlobKeys`, `reencryptLegacy` (cron). Tested. |
 | `api/_supabaseAdmin.js` | Service-role (`SUPABASE_SECRET_KEY`) client for the server-only tables; also the server's one copy of the project URL + publishable key. |
 | `api/keys.js` | `/api/keys`: validate / store (encrypted) / remove the Anthropic key; add / rename / reorder / remove MarketCheck keys. Answers with metadata only. |
-| `api/snapshots.js`, `src/snapshots.js` | List/restore the automatic app-state backups (`app_state_history`); admins also publish the demo snapshot here (`POST { demo }`). |
+| `api/snapshots.js`, `src/snapshots.js` | List/restore the automatic app-state backups (`app_state_history`); admins also publish the demo snapshot here (`POST { demo }`), and it copies listing photos (`POST { photos }` — see the next row). |
+| `src/photoKey.js`, `src/photos.js`, `api/_photos.js` | **Stored listing photos** (Supabase Storage, private bucket `listing-photos`, object `<user_id>/<VIN>.<ext>`, kept on the listing as `photoKey`; a dealer URL that can't be copied is remembered as `photoFailed`). `photoKey.js` (pure, tested): key build/validate (`isPhotoKey` — import keeps only the importer's own), `photoTodo`, `applyPhotoResults`, `referencedPhotoKeys`. `photos.js`: batched + cached signed URLs (`useStoredPhoto` in `Thumb`, which falls back to `listing.photo` either way), `copyPhotos` (on approve + a per-session backfill), `removePhotos` (delete, after Undo expires). `_photos.js` (tested): `storePhotos` behind an SSRF guard (http(s), default ports, public IPs checked at connect time, ≤3 checked redirects, 2 MB, 6 s, sniffed image types; stored as-is), and `sweepOrphanPhotos` — the daily cleanup in `cron-sync`: deletes objects no blob references (listings / queue / skipped) and whole folders of users with no `app_state` row, older than 24 h only, capped per run. Off in the demo. |
 | `api/ai.js`, `api/_ai.js` | **Every AI feature, one function.** `POST { task }`: `score` (batch listing scoring), `price` (Price Check's fair-price verdict), `baseline` (a profile's AI price baseline), `suggest` (the profile wizard's AI step); `GET ?task=prompt` returns the default scoring prompt. `_ai.js`: `loadAnthropicKey(userId)` (the only place the vaulted key is decrypted), the streamed call, refusal / token-limit / rejected-key handling. Prompts + schemas: `_scoring.js` (score, baseline), `_pricecheck.js`, `_suggest.js`. |
 | `api/pricecomps.js` | Price tab: live MarketCheck comps around the home base (a `local` step). |
 | `src/priceCheck.js`, `src/priceExport.js` | Price tab's local-comps math (pure, 0 API calls) and the price-history CSV export. Pure, tested. |
 | `src/geo.js`, `src/tableSort.js` | Straight-line distance to the home base; shared sortable-table helpers (Compare, Price comps). Pure, tested. |
-| `api/cron-sync.js` | Scheduled background sync (Vercel Cron; `CRON_SECRET`-gated; accounts with `allowed_emails.scheduled_sync`), plus the vault's v1 → v2 re-encryption sweep. |
+| `api/cron-sync.js` | Scheduled background sync (Vercel Cron; `CRON_SECRET`-gated; accounts with `allowed_emails.scheduled_sync`), plus the vault's v1 → v2 re-encryption sweep and the orphan-photo sweep (`sweepOrphanPhotos`, `api/_photos.js`). |
 | `api/_suggest.js` | The wizard's optional AI step (`api/ai.js` task `suggest`): must-haves / dealbreakers / years to avoid / trim notes from the vehicle + Explore's market snapshot. Prompt, schema, `coerceSuggestion` (tested). |
-| `supabase/migrations/*.sql` | DB schema: `app_state` + RLS, allowlist, Anthropic-key vault, backup history + trigger, `rev`, demo snapshot, grant/RLS tightening. |
-| `supabase/tests/*.test.sql`, `supabase/config.toml` | pgTAP tests (`supabase test db`): RLS, grants and `save_app_state()` (`rls.test.sql`); allowlist flags, `my_access()`, the key vault, backup scrubbing (`access.test.sql`); run as `anon`/`authenticated`; CLI config (Postgres 17). |
+| `supabase/migrations/*.sql` | DB schema: `app_state` + RLS, allowlist, Anthropic-key vault, backup history + trigger, `rev`, demo snapshot, grant/RLS tightening, the `listing-photos` bucket + its `storage.objects` policies. |
+| `supabase/tests/*.test.sql`, `supabase/config.toml` | pgTAP tests (`supabase test db`): RLS, grants and `save_app_state()` (`rls.test.sql`); allowlist flags, `my_access()`, the key vault, backup scrubbing (`access.test.sql`); the photo bucket's policies (`storage.test.sql`); run as `anon`/`authenticated`; CLI config (Postgres 17). |
 | `supabase/templates/magic_link.html` | Magic Link email body with the one-time code (paste into the Dashboard; needs custom SMTP). |
 | `.github/workflows/migrations.yml` | Validate + apply migrations. |
 | `docs/listing-pipeline.md` | **Design doc** for the sync pipeline. Read for the "why". |
@@ -123,6 +124,12 @@ See `docs/listing-pipeline.md` for the full design. In short:
   sessions pick those up too.
   There is no per-listing table. Bump `VERSION` + add a `migrate()` step when the
   blob shape changes (see the v6 `settings` migration).
+  **Photos** are the one thing outside the blob: a copy of each watchlist car's
+  dealer photo in Storage (`listing.photoKey`; the server writes with the
+  service role, users read/delete only their own folder via RLS). The blob is
+  the source of truth — the daily sweep deletes objects it no longer references,
+  so a Backups restore that drops listings is cleaned up, and one that brings
+  listings back re-copies photos already swept (the backfill re-checks keys).
   The candidate **review queue** is in the blob too (`data.candidates`, newest
   300): restored on load minus VINs since approved/skipped (`restoreQueue`), and
   saved ~1 s after it changes. The scheduled sync appends to it (flagged
@@ -311,7 +318,7 @@ owner before spending calls, keep probes to one or two, and never commit a key.
 `docs/listing-pipeline.md` §2–3 — check there before re-probing.
 
 ### Serverless function count
-Every non-underscore file in `api/` is its own Vercel function (8 today — the four AI endpoints were merged into `api/ai.js`).
+Every non-underscore file in `api/` is its own Vercel function (8 today — the four AI endpoints were merged into `api/ai.js`; photo copying is a mode of `api/snapshots.js`).
 Vercel's Hobby plan has capped deployments at 12 functions — check the current
 limit before adding more. Put shared code in `api/_*.js`, and prefer a new mode
 on an existing endpoint over a new file once that's close. Functions

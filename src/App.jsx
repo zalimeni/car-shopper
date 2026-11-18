@@ -25,6 +25,8 @@ import { addTag, removeTag, allTags, hasTag, TAG_MAX } from "./tags";
 import { baseColorOf, colorHideReason, colorChoices, COMMON_COLORS } from "./colors";
 import { summarize, ingestSnaps, recordSyncCalls, syncsLeft, gaugeTone, dedupeKeyEntries, spentKeyIds, FREE_PLAN_CALLS, parseMcTime } from "./quota";
 import { loadLocations, searchLocations, hubFromZip } from "./locations";
+import { useStoredPhoto, signPhotoKeys, copyPhotos, removePhotos, currentUid, missing as photoMissing } from "./photos";
+import { photoTodo, applyPhotoResults, isPhotoKey } from "./photoKey";
 
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
 
@@ -284,7 +286,9 @@ function validateListing(obj, index, profileIds) {
   return errors;
 }
 
-export function parseImport(text, profileIds) {
+// uid: the signed-in user's id — an imported photoKey is kept only when it's a
+// path in their own photo folder for that car's VIN (else the backfill re-copies).
+export function parseImport(text, profileIds, uid) {
   var result = { listings: [], errors: [], warnings: [] };
   var parsed;
   try {
@@ -341,6 +345,7 @@ export function parseImport(text, profileIds) {
         // Optional extras so an Export → Import backup round-trip is lossless:
         // photo/CPO/Carfax facts, AI results, and the sync bookkeeping dates.
         photo: safeHttpUrl(obj.photo),
+        photoKey: isPhotoKey(obj.photoKey, uid, obj.vin) ? String(obj.photoKey) : undefined,
         cpo: obj.cpo === true,
         carfax_1_owner: typeof obj.carfax_1_owner === "boolean" ? obj.carfax_1_owner : null,
         carfax_clean_title: typeof obj.carfax_clean_title === "boolean" ? obj.carfax_clean_title : null,
@@ -847,6 +852,39 @@ export default function App() {
     });
   }, [persist]);
 
+  // ── Stored listing photos (src/photos.js, api/_photos.js) ──
+  // Watchlist cars keep a copy of their dealer photo in Supabase Storage
+  // (listing.photoKey), so it outlives the dealer's link. Best-effort: a
+  // failure leaves the card on the dealer URL and never blocks anything.
+  var uidRef = useRef(null);
+  useEffect(function () { if (!DEMO) currentUid().then(function (u) { uidRef.current = u; }); }, []);
+  var copyListingPhotos = useCallback(async function (list, batches) {
+    if (DEMO) return;
+    var tried = {};
+    for (var n = 0; n < (batches || 1); n++) {
+      var todo = photoTodo((list || []).filter(function (l) { return !tried[l.vin]; }), photoMissing);
+      if (!todo.length) return;
+      todo.forEach(function (l) { tried[l.vin] = true; });
+      var r = await copyPhotos(todo.map(function (l) { return { vin: l.vin, url: l.photo }; }));
+      if (!r) return; // server unreachable — the next session's backfill retries
+      if ((r.stored || []).length || (r.failed || []).some(function (f) { return f.permanent; })) {
+        patchListings(function (ls) { return applyPhotoResults(ls, r, photoMissing); });
+      }
+    }
+  }, [patchListings]);
+  // Backfill once per session: check the stored copies (a restore can bring
+  // back a listing whose object the sweep already deleted), then copy a few
+  // batches of the ones missing.
+  var photoBackfill = useRef(false);
+  useEffect(function () {
+    if (DEMO || loading || loadError || !data || photoBackfill.current) return;
+    photoBackfill.current = true;
+    var keys = (data.listings || []).map(function (l) { return l.photoKey; }).filter(Boolean);
+    signPhotoKeys(keys).then(function () {
+      return copyListingPhotos(dataRef.current && dataRef.current.listings, 4);
+    }).catch(function (e) { console.warn("Photo backfill:", e); });
+  }, [loading, loadError, data, copyListingPhotos]);
+
   // ── AI scoring ──
   var [keyStatus, setKeyStatus] = useState({ configured: false, valid: false, last4: "" });
   var [keyLoaded, setKeyLoaded] = useState(false); // has the initial key-status fetch resolved?
@@ -1169,7 +1207,8 @@ export default function App() {
     var newList = dedupInsert(data.listings, nl);
     save(Object.assign({}, data, { listings: newList }));
     setCandidates(function (prev) { return prev.filter(function (c) { return c !== cand; }); });
-  }, [data, save]);
+    copyListingPhotos([nl]); // keep a copy of its photo (best-effort, in the background)
+  }, [data, save, copyListingPhotos]);
 
   // Approve the candidates the Results view shows (its filters applied), or the
   // whole queue when called without a list. Hidden (trim/color) ones stay.
@@ -1178,7 +1217,7 @@ export default function App() {
     var profById = {};
     data.profiles.forEach(function (p) { profById[p.id] = p; });
     var newList = data.listings.slice();
-    var approved = [];
+    var approved = [], added = [];
     (Array.isArray(only) ? only : candidates).forEach(function (cand) {
       var p = profById[cand.profileId];
       if (candHideReason(cand, p)) return; // leave trim/color-hidden candidates in the queue
@@ -1188,10 +1227,12 @@ export default function App() {
       });
       newList = dedupInsert(newList, nl);
       approved.push(cand);
+      added.push(nl);
     });
     save(Object.assign({}, data, { listings: newList }));
     setCandidates(function (prev) { return prev.filter(function (c) { return approved.indexOf(c) === -1; }); });
-  }, [data, candidates, save]);
+    copyListingPhotos(added, Math.ceil(added.length / 6)); // their photos, a batch at a time
+  }, [data, candidates, save, copyListingPhotos]);
 
   // Skip → move into the persisted skipped list (so it survives reload/sync and
   // can be restored), strip transient flags.
@@ -1295,7 +1336,7 @@ export default function App() {
   var doImport = useCallback(function () {
     if (!data || !importText.trim()) return;
     var profileIds = data.profiles.map(function (p) { return p.id; });
-    var result = parseImport(importText, profileIds);
+    var result = parseImport(importText, profileIds, uidRef.current);
     if (result.listings.length > 0) {
       var withScores = result.listings.map(function (l) {
         return Object.assign({}, l, { compositeScore: calcScore(l.scores, data.criteria), _candidate: true });
@@ -1336,20 +1377,32 @@ export default function App() {
   // confirm step, and safe — Undo restores the exact object).
   var [undoInfo, setUndoInfo] = useState(null); // { listing }
   var undoTimer = useRef(null);
+  // The stored photo copy goes once Undo is no longer possible (timer ran out,
+  // or another delete took the Undo slot) — unless the car is back by then.
+  var undoDoomed = useRef(null);
+  var dropPhoto = useCallback(function (l) {
+    if (!l || !l.photoKey) return;
+    var cur = dataRef.current;
+    if (cur && (cur.listings || []).some(function (x) { return x.photoKey === l.photoKey; })) return;
+    removePhotos([l.photoKey]);
+  }, []);
   var delListing = useCallback(function (id) {
     if (!data) return;
     var doomed = data.listings.find(function (l) { return l.id === id; });
     save(Object.assign({}, data, { listings: data.listings.filter(function (l) { return l.id !== id; }) }));
     if (doomed) {
+      dropPhoto(undoDoomed.current);
+      undoDoomed.current = doomed;
       setUndoInfo({ listing: doomed });
       clearTimeout(undoTimer.current);
-      undoTimer.current = setTimeout(function () { setUndoInfo(null); }, 8000);
+      undoTimer.current = setTimeout(function () { setUndoInfo(null); dropPhoto(undoDoomed.current); undoDoomed.current = null; }, 8000);
     }
-  }, [data, save]);
+  }, [data, save, dropPhoto]);
   var undoDelete = useCallback(function () {
     if (!undoInfo) return;
     var l = undoInfo.listing;
     clearTimeout(undoTimer.current);
+    undoDoomed.current = null;
     setUndoInfo(null);
     patchListings(function (list) { return list.some(function (x) { return x.id === l.id; }) ? list : list.concat([l]); });
   }, [undoInfo, patchListings]);
@@ -3747,6 +3800,7 @@ function HelpTab() {
         <h3 style={S.cardH}>Sync &amp; refresh</h3>
         <p style={li}><span style={b}>"↻ Sync"</span> (Results tab) is also your refresh. Each active profile is one <span style={b}>nationwide</span> search (salt-belt dealers left out, or flagged — Settings). It updates prices (with a note), routes new VINs to Candidates, and looks up any watchlist car the searches didn't return by its VIN — one that's no longer listed anywhere is marked gone.</p>
         <p style={note}>It only runs when you press it (plus a daily scheduled sync, if the server has one enabled — that one is cheaper: just new listings most days, a full refresh every {FULL_REFRESH_DAYS} days). Each profile card shows how many cars it matches — every 50 is a MarketCheck call on a full refresh. Manually-added listings aren't touched. Gone listings get a banner offering to archive them to <span style={b}>Sold</span> in one click (restorable).</p>
+        <p style={note}><span style={b}>Photos are kept:</span> when you approve a car, the app saves a private copy of its dealer photo, so a watchlist card still shows the car after the dealer's link dies (sold, gone, relisted). Older watchlist cars get theirs a few at a time each time you open the app. Deleting a listing deletes its copy; archived and gone cars keep theirs.</p>
         <p style={note}>Each card flags travel: miles from your home base ("ship or fly" past {DRIVE_MAX_MI}), the nearest major airport (green within {AIRPORT_NEAR_MI} mi — fly in, drive back), and 🧂 for a salt-belt dealer.</p>
       </div>
 
@@ -4498,15 +4552,21 @@ function TitleNote({ listing }) {
   return null;
 }
 
-function Thumb({ photo, link, alt }) {
-  if (!photo) return null;
-  var href = link || photo;
+// The listing's photo: our stored copy (photoKey → a signed URL, src/photos.js)
+// when there is one, else the dealer's URL; if one fails to load, the other is
+// tried, and the image hides when neither works. While the signed URL is on its
+// way the dealer image shows. (In the demo, photoKey is ignored.)
+function Thumb({ photo, photoKey, link, alt }) {
+  var stored = useStoredPhoto(photoKey); // undefined = asking, null = none
+  var [bad, setBad] = useState({});
+  var src = [stored, photo].filter(function (u) { return u && !bad[u]; })[0];
+  if (!src) return null;
+  var href = link || photo || src;
   return (
     <a href={href} target="_blank" rel="noopener noreferrer" style={{ display: "block", marginBottom: 8 }}>
-      {/* no-referrer defeats referer-based hotlink protection on many dealer CDNs;
-          onError hides the image if the host still blocks it or the link is dead. */}
-      <img src={photo} alt={alt || ""} loading="lazy" referrerPolicy="no-referrer"
-        onError={function (e) { e.target.style.display = "none"; }}
+      {/* no-referrer defeats referer-based hotlink protection on many dealer CDNs. */}
+      <img src={src} alt={alt || ""} loading="lazy" referrerPolicy="no-referrer"
+        onError={function () { setBad(function (b) { var o = Object.assign({}, b); o[src] = true; return o; }); }}
         style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 8, border: "1px solid #1e2028", display: "block" }} />
     </a>
   );
@@ -4807,7 +4867,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
   var sc = l.compositeScore >= 7 ? "#2d8659" : l.compositeScore >= 5 ? "#d4a017" : "#c44";
   return (
     <div data-tour={l.status === "watch" ? "watch-card" : undefined} style={Object.assign({}, S.card, { borderLeft: "3px solid " + bc })}>
-      <Thumb photo={l.photo} link={l.link} alt={l.year + " " + l.vehicle} />
+      <Thumb photo={l.photo} photoKey={l.photoKey} link={l.link} alt={l.year + " " + l.vehicle} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
         <div>
           <strong style={{ fontSize: 15, color: "#f0f0f3" }}>{l.year} {l.vehicle}</strong>
