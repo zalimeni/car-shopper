@@ -80,7 +80,7 @@ export async function demoFetchListings(listings, steps, onProgress, quota) {
   var calls = list.length + (s.goneVins.length ? 1 : 0);
   var snap = quota && quota.snaps && quota.snaps[DEMO_KEY_ID];
   var remaining = Math.max(0, (snap && snap.remaining != null ? snap.remaining : DEMO_QUOTA_LIMIT) - calls);
-  return { listings: s.listings, goneVins: s.goneVins, scores: scores, calls: calls, errors: [], notices: [], mock: false, demo: true, results: [], decoded: {},
+  return { listings: s.listings, goneVins: s.goneVins, scores: scores, calls: calls, errors: [], notices: [], demo: true, results: [], decoded: {},
     keyQuotas: [{ id: DEMO_KEY_ID, remaining: remaining, limit: (snap && snap.limit) || DEMO_QUOTA_LIMIT, reset: snap && snap.reset, exhausted: remaining <= 0 }] };
 }
 
@@ -131,7 +131,7 @@ export async function demoPostStep(step) {
 // Price Check's live-market button: a few simulated listings near the demo's own.
 export async function demoPriceComps(query) {
   await pause(900, 1600);
-  return { listings: demoMarketComps(query, await allCars(), 6), errors: [], rateLimited: false, rateLimitInfo: null, quota: null, keyQuotas: spendQuota(1), calls: 1, apiInfo: null, formatSuspect: false };
+  return { listings: demoMarketComps(query, await allCars(), 6), errors: [], rateLimited: false, rateLimitInfo: null, keyQuotas: spendQuota(1), calls: 1, apiInfo: null };
 }
 
 // The three one-shot AI answers, written locally.
@@ -167,7 +167,6 @@ export function demoToast(msg) {
 var BLOCKED = {
   "/api/ai": "AI calls are simulated in the demo — no real request is made.",
   "/api/keys": "The demo's keys are simulated — they can't be changed.",
-  "/api/pricecomps": "Live comparables are off in the demo.",
   "/api/marketcheck": "Live MarketCheck searches are off in the demo — ↻ Sync is simulated.",
   // Backups, and the photo copies (src/photos.js — it skips the call in the demo anyway).
   "/api/snapshots": "Backups and saved photo copies are off in the demo.",

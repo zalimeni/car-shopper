@@ -19,25 +19,24 @@ export { reconcile } from "./reconcile.js";
 // carried forward so later steps start on a live key instead of each re-hitting it.
 // filters: { franchiseOnly, excludeSalt, spentKeys, colorCache, alsoDecode }
 // -> runSync's result: { listings, results, goneVins, errors, notices, calls, ... }
-export async function fetchListings(steps, tracked, opts, filters, onProgress) {
+export async function fetchListings(steps, tracked, filters, onProgress) {
   const f = filters || {};
   const spent = (f.spentKeys || []).slice();
   return runSync(steps, tracked, async function (step) {
-    const r = await postStep(step, opts, Object.assign({}, f, { spentKeys: spent }));
+    const r = await postStep(step, Object.assign({}, f, { spentKeys: spent }));
     (r.keyQuotas || []).forEach(function (q) { if (q && q.exhausted && q.id && spent.indexOf(q.id) < 0) spent.push(q.id); });
     return r;
   }, onProgress, { colorCache: f.colorCache, alsoDecode: f.alsoDecode });
 }
 
 // One step -> the proxy's report. Throws on an HTTP failure (err.rateLimited for 429/503/402).
-export async function postStep(step, opts, filters) {
+export async function postStep(step, filters) {
   if (DEMO) return demoPostStep(step);
   const f = filters || {};
-  const qs = opts && opts.mock ? "?mock=1" : "";
   const { data: sess } = await supabase.auth.getSession();
   const token = sess && sess.session ? sess.session.access_token : "";
   const p = step.profile;
-  const res = await fetch("/api/marketcheck" + qs, {
+  const res = await fetch("/api/marketcheck", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: token ? "Bearer " + token : "" },
     body: JSON.stringify({
@@ -69,20 +68,22 @@ export async function postStep(step, opts, filters) {
 // Live-market comp broadening for the Price Check tool: fire a one-off
 // MarketCheck search for a specific vehicle and return normalized listings to
 // fold into the local comp pool. Separate from fetchListings (which reconciles
-// against tracked inventory) — this is a read-only, on-demand widen.
-export async function fetchPriceComps(query, hubs, spentKeys) {
+// against tracked inventory) — this is a read-only, on-demand widen: a `local`
+// step of /api/marketcheck (a radius search around one location, the home base).
+export async function fetchPriceComps(query, hub, spentKeys) {
   if (DEMO) return demoPriceComps(query);
   const { data: sess } = await supabase.auth.getSession();
   const token = sess && sess.session ? sess.session.access_token : "";
-  const res = await fetch("/api/pricecomps", {
+  const res = await fetch("/api/marketcheck", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: token ? "Bearer " + token : "",
     },
     body: JSON.stringify({
+      kind: "local",
       query: query || {},
-      hubs: Array.isArray(hubs) ? hubs : [],
+      hub: hub || undefined,
       spentKeys: Array.isArray(spentKeys) ? spentKeys : [],
     }),
   });
@@ -97,12 +98,16 @@ export async function fetchPriceComps(query, hubs, spentKeys) {
     if (j && j.error) err.code = j.error;
     throw err;
   }
-  return { listings: j.listings || [], errors: j.errors || [], rateLimited: !!j.rateLimited, rateLimitInfo: j.rateLimitInfo || null, quota: j.quota || null, keyQuotas: j.keyQuotas || [], calls: j.calls || 0, apiInfo: j.apiInfo || null, formatSuspect: !!j.formatSuspect };
+  return { listings: j.listings || [], errors: j.errors || [], rateLimited: !!j.rateLimited, rateLimitInfo: j.rateLimitInfo || null, keyQuotas: j.keyQuotas || [], calls: j.calls || 0, apiInfo: j.apiInfo || null };
 }
 
-// Debug helper: POST /api/marketcheck?raw=1 and return the raw MarketCheck
-// response + normalized sample. Wired to window.__rawSync for console use.
-export async function fetchRawSample(profiles, hubs, vin) { // hubs: [] = nationwide
+// Debug helper (the footer's Debug raw, window.__rawSync): POST
+// /api/marketcheck?raw=1 — ONE real call: a one-page sample of `profile`'s full
+// refresh (or, with a VIN, every active record MarketCheck has for it) -> the raw
+// rows beside how normalize() maps them, plus the step's report (keyQuotas,
+// apiInfo, calls) for the quota gauge. filters: { excludeSalt, franchiseOnly, spentKeys }
+export async function fetchRawSample(profile, vin, filters) {
+  const f = filters || {};
   const { data: sess } = await supabase.auth.getSession();
   const token = sess && sess.session ? sess.session.access_token : "";
   const res = await fetch("/api/marketcheck?raw=1", {
@@ -112,11 +117,12 @@ export async function fetchRawSample(profiles, hubs, vin) { // hubs: [] = nation
       Authorization: token ? "Bearer " + token : "",
     },
     body: JSON.stringify({
-      profiles: (profiles || []).map(function (p) { return { id: p.id, name: p.name, params: p.params }; }),
-      hubs: hubs || [],
+      profile: profile ? { id: profile.id, name: profile.name, params: profile.params } : undefined,
       vin: vin || undefined,
+      excludeSalt: f.excludeSalt !== false,
+      franchiseOnly: !!f.franchiseOnly,
+      spentKeys: Array.isArray(f.spentKeys) ? f.spentKeys : [],
     }),
   });
   return res.json();
 }
-

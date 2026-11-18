@@ -5,7 +5,6 @@
   "functions": {
     "api/marketcheck.js": { "maxDuration": 60 },
     "api/ai.js": { "maxDuration": 60 },
-    "api/pricecomps.js": { "maxDuration": 60 },
     "api/cron-sync.js": { "maxDuration": 60 },
     "api/snapshots.js": { "maxDuration": 30 }
   },

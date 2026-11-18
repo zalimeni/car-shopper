@@ -64,8 +64,8 @@ describe("demo mode", () => {
     expect(screen.getAllByText(/Clean one-owner car/).length).toBeGreaterThan(0);
 
     // A blocked live call explains itself.
-    await window.fetch("/api/pricecomps", { method: "POST" });
-    await screen.findByText(/Live comparables are off in the demo/);
+    await window.fetch("/api/marketcheck", { method: "POST" });
+    await screen.findByText(/Live MarketCheck searches are off in the demo/);
 
     // Settings has no two-factor section in the demo (no supabase.auth.mfa calls).
     fireEvent.click(screen.getAllByText("Settings")[0]);

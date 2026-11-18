@@ -5,10 +5,12 @@
 // translates the app's active vehicle profiles into MarketCheck queries,
 // returning listings normalized to the app's shape. The browser never sees a key.
 //
-// Request:  POST one sync step (see src/syncPlan.js):
-//           { kind: "full" | "new" | "count" | "vins", profile: { id, name, params },
+// Request:  POST one step (see runStep and src/syncPlan.js):
+//           { kind: "full" | "new" | "count" | "vins" | "decode", profile: { id, name, params },
 //             since, vins, excludeSalt, franchiseOnly, spentKeys }
-// Response: { listings: [<normalized>], numFound, errors, notices, calls, keyQuotas, ... }
+//           or Price Check's live comps: { kind: "local", query: { year, make, model, mileage },
+//             hub: { n, z, lat, lon, r }, spentKeys }
+// Response: { listings: [<normalized>], numFound, errors, notices, calls, keyQuotas, apiInfo, ... }
 //
 // Searches are nationwide, one profile at a time, with salt-belt states left out
 // via `state=` (src/regions.js). Verified live (Oct 2026, free plan): no-location
@@ -16,11 +18,13 @@
 //
 // Param/response field names follow the MarketCheck Cars API v2
 // (GET /v2/search/car/active) and are isolated in buildUrl()/normalize() so any
-// API drift is a one-file change. Pass ?mock=1 to get synthetic data for
-// exercising the full sync → candidate → approve flow without calling
-// MarketCheck (and before the live field mapping is confirmed). Pass ?raw=1 to
-// run one real query and return the raw MarketCheck response + how normalize()
-// maps it, for confirming live field names (API key redacted from the echo).
+// API drift is a one-file change. Pass ?mock=1 (curl only — the app never
+// sends it) for synthetic answers that cost nothing: listings for full / new /
+// local, every requested VIN "found" for vins (so nothing is ever marked gone),
+// a count, and decoded colors. Pass ?raw=1 (the footer's Debug raw) to run ONE
+// real call — a one-page sample of { profile } (or a lookup of { vin }) — and
+// return the raw MarketCheck rows beside how normalize() maps them, plus the
+// quota report a sync gets (API key redacted from the echo).
 
 import { authorize, deny } from "./_auth.js";
 import { getMarketcheckKeys } from "./_keys.js";
@@ -38,6 +42,11 @@ const RADIUS_MI = 100;
 const ROWS = 50; // page size per request
 // Rows Price Check's live comps search pages up to.
 const MAX_ROWS = 200;
+// Rows in Debug raw's one-page sample.
+const RAW_ROWS = 2;
+// How far above the subject's mileage Price Check's live comps reach (the client
+// bands around it after).
+const MILES_HEADROOM = 30000;
 // Only car_type=used is queried: it already includes certified pre-owned. Verified
 // against the live API (Oct 2026, 2021-22 RAV4 within 100 mi of Durham): used=167,
 // used+exclude_certified=156, certified=11 — so a separate certified query just
@@ -58,20 +67,15 @@ export const STEP_BUDGET_MS = 50000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// ── API version pinning ──
-// Without an x-version header MarketCheck serves its current default, and moves
-// unpinned clients to the next major version on its own schedule. Responses in
-// Oct 2026 said the default (v4.8.0) was deprecated 2026-08-07, sunset 2027-02-28.
-// Pinning keeps us on the version normalize()/buildUrl() were validated against
-// until we choose to move (change it here, with normalize()/buildUrl() and the
-// test fixture).
-export const API_VERSION = "v4.8.0";
-
-function withVersion(opts, pin) {
-  const headers = Object.assign({ Accept: "application/json" }, (opts && opts.headers) || {});
-  if (pin && API_VERSION) headers["x-version"] = API_VERSION;
-  return Object.assign({}, opts || {}, { headers: headers });
-}
+// ── API version ──
+// No x-version header is sent: MarketCheck serves its default, and doesn't move
+// v4 clients to v5 on its own. (A pin to v4.8.0 — deprecated 2026-08-07, sunset
+// 2027-02-28 — would only have cost a billed error per step after its sunset.)
+// Every response still says which version answered and when it sunsets
+// (readApiInfo -> apiInfo -> settings.mcApi); the app's banner warns near the
+// sunset, or when a different major version answers than the one normalize() /
+// buildUrl() and the test fixture were validated against:
+export const VALIDATED_VERSION = "v4.8.0";
 
 // Version + lifecycle headers on a response, or null when it carries none.
 export function readApiInfo(r) {
@@ -83,29 +87,18 @@ export function readApiInfo(r) {
   return info.served || info.requested || info.deprecation || info.sunset ? info : null;
 }
 
-// Fetch that retries on HTTP 429 with backoff (honoring Retry-After), sending the
-// pinned API version. If MarketCheck rejects the pin itself it retries once
-// unpinned, so a bad pin can't take sync down — and says so via meter.pinRejected,
-// which the UI surfaces. Verified live (Oct 2026): an unknown x-version answers
-// HTTP 404 {"message":"release not found"} — so a 400 or 404 whose body names the
-// release/version counts as a rejected pin.
+// Fetch that retries on HTTP 429 with backoff (honoring Retry-After).
 async function fetchWithRetry(url, opts, maxRetries, meter) {
   const limit = maxRetries != null ? maxRetries : MAX_RETRIES;
   let attempt = 0;
-  let pin = !!API_VERSION && !(meter && meter.pinRejected);
   while (true) {
     if (meter) meter.calls++; // every request actually sent, retries included
     let r;
     try {
-      r = await fetch(url, withVersion(Object.assign({ signal: AbortSignal.timeout(CALL_TIMEOUT_MS) }, opts || {}), pin));
+      r = await fetch(url, Object.assign({ signal: AbortSignal.timeout(CALL_TIMEOUT_MS) }, opts || {}, { headers: Object.assign({ Accept: "application/json" }, (opts && opts.headers) || {}) }));
     } catch (e) {
       if (e && (e.name === "TimeoutError" || e.name === "AbortError")) throw new Error("MarketCheck didn't answer within " + Math.round(CALL_TIMEOUT_MS / 1000) + " s");
       throw e;
-    }
-    if (pin && (r.status === 400 || r.status === 404)) {
-      let text = "";
-      try { text = r.clone ? await r.clone().text() : ""; } catch (e) { /* ignore */ }
-      if (/release|version/i.test(text)) { pin = false; if (meter) meter.pinRejected = true; continue; }
     }
     if (meter) { const a = readApiInfo(r); if (a) meter.api = a; }
     // A 429 that says the MONTH is spent won't clear by waiting — return at once.
@@ -166,31 +159,6 @@ export function resolveKeys(rawKeys, envKey) {
   return { keys: envKey ? [envKey] : [], shared: !!envKey };
 }
 
-// The ordered key list as a cursor, so a run that rolls over to key #2 keeps
-// using it for its remaining calls instead of re-hitting the spent one.
-function keyRing(keys) {
-  return {
-    i: 0,
-    keys: keys,
-    key: function () { return keys[this.i]; },
-    next: function () { if (this.i + 1 < keys.length) { this.i++; return true; } return false; },
-    used: function () { return { keyUsed: this.i + 1, keysAvailable: keys.length }; },
-  };
-}
-
-// fetchWithRetry, but on a quota/rate-limit response move to the next key in the
-// ring and repeat the same request — but only when the key's MONTHLY quota is
-// spent. A momentary throttle is retried on the same key (fetchWithRetry), since
-// the next key would just be spending someone else's quota to dodge a pause.
-async function fetchAcrossKeys(ring, makeUrl, opts, meter) {
-  while (true) {
-    const url = makeUrl(ring.key());
-    const r = await fetchWithRetry(url, opts, undefined, meter);
-    if ((await isSpent(r)) && ring.next()) continue;
-    return { r: r, url: url };
-  }
-}
-
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Use POST" });
@@ -205,16 +173,34 @@ export default async function handler(req, res) {
   }
 
   const body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
-  const profiles = Array.isArray(body.profiles) ? body.profiles : [];
-  const hubs = Array.isArray(body.hubs) ? body.hubs : [];
   // Optional dealer-type narrowing: franchiseOnly restricts the search to
   // franchise dealers (excludes independents).
   const dealerType = body.franchiseOnly ? "franchise" : null;
   const mock = req.query && (req.query.mock === "1" || req.query.mock === "true");
   const raw = req.query && (req.query.raw === "1" || req.query.raw === "true");
+  const vin = raw && typeof body.vin === "string" ? body.vin.trim().toUpperCase() : "";
+
+  // The step to run. Price Check's live comps (kind "local") arrive as a vehicle
+  // and one location, and become a radius search with a synthetic profile.
+  let step;
+  if (raw) {
+    // Debug raw: a VIN lookup (every active record MarketCheck has for one car —
+    // "why does the app show a different price than the dealer's site?"), or one
+    // small page of a profile's full refresh, for confirming live field names.
+    if (vin && !/^[A-HJ-NPR-Z0-9]{17}$/.test(vin)) { res.status(400).json({ error: "That doesn't look like a 17-character VIN" }); return; }
+    if (!vin && !(body.profile && body.profile.params)) { res.status(400).json({ error: "raw mode needs a profile" }); return; }
+    step = vin ? { kind: "vins", vins: [vin] } : { kind: "full", profile: body.profile, excludeSalt: body.excludeSalt !== false, sample: RAW_ROWS };
+  } else if (body.kind === "local") {
+    const q = body.query || {};
+    if (!String(q.make || "").trim() && !String(q.model || "").trim()) { res.status(400).json({ error: "Need at least a make and model" }); return; }
+    if (!body.hub || typeof body.hub !== "object") { res.status(400).json({ error: "no_location", message: "Set a home base in Settings to check the live market" }); return; }
+    step = { kind: "local", profile: compsProfile(q), hub: body.hub };
+  } else {
+    step = { kind: body.kind, profile: body.profile, since: body.since, vins: body.vins, excludeSalt: body.excludeSalt !== false };
+  }
 
   if (mock) {
-    res.status(200).json({ listings: body.kind === "vins" ? [] : mockListings(body.profile ? [body.profile] : profiles, hubs), errors: [], mock: true });
+    res.status(200).json(mockStep(step));
     return;
   }
 
@@ -228,130 +214,41 @@ export default async function handler(req, res) {
     res.status(500).json({ error: "No MarketCheck API key — add one in Settings, or set MARKETCHECK_API_KEY on the server" });
     return;
   }
-  const apiKey = keys[0];
 
-  // Debug: run one real query (first profile × first hub) and return the raw
-  // MarketCheck response alongside how normalize() maps it — for confirming the
-  // live field names. Key redacted from the echoed URL.
-  // VIN lookup (raw mode): fetch every active record MarketCheck has for one VIN
-  // and lay out all its price-related fields — for answering "why does the app
-  // show a different price than the dealer's site?" without guessing.
-  if (raw && typeof body.vin === "string" && body.vin.trim()) {
-    const vin = body.vin.trim().toUpperCase();
-    if (!/^[A-HJ-NPR-Z0-9]{17}$/.test(vin)) { res.status(400).json({ error: "That doesn't look like a 17-character VIN" }); return; }
-    const ring = keyRing(keys);
-    const out = { request: buildVinUrl("REDACTED", vin), vin: vin };
-    try {
-      const vm = { calls: 0 };
-      const f = await fetchAcrossKeys(ring, function (k) { return buildVinUrl(k, vin); }, {}, vm);
-      const r = f.r;
-      out.apiVersion = Object.assign({ pinned: API_VERSION || null, pinRejected: !!vm.pinRejected }, vm.api || {});
-      Object.assign(out, ring.used());
-      out.status = r.status;
-      const text = await r.text();
-      let json = null;
-      try { json = JSON.parse(text); } catch (e) { /* non-JSON body */ }
-      const rows = json && Array.isArray(json.listings) ? json.listings : [];
-      out.num_found = json && json.num_found != null ? json.num_found : rows.length;
-      out.records = rows.map(function (row) { return Object.assign(priceFacts(row), { appWouldStore: normalize(row, "debug").price }); });
-      out.rawRecords = rows.map(stripMedia);
-      if (!r.ok || !rows.length) out.body = text.slice(0, 600);
-    } catch (e) {
-      out.error = e && e.message ? e.message : "fetch failed";
-    }
-    res.status(200).json(JSON.parse(JSON.stringify(out).replace(/api_key=[^"&\\\s]+/g, "api_key=REDACTED")));
+  const session = createSession(keys, { dealerType: dealerType, spentKeys: body.spentKeys, keepRaw: raw, keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? envKey : null); }) });
+  const r = await runStep(session, step);
+  if (!raw) {
+    res.status(200).json(r);
     return;
   }
-
-  if (raw) {
-    const pr = profiles[0] || body.profile;
-    const hub = hubs[0] || { national: true }; // nationwide unless a hub is given
-    if (!pr) {
-      res.status(400).json({ error: "raw mode needs a profile" });
-      return;
-    }
-    const ring = keyRing(keys);
-    const url = buildUrl("REDACTED", pr, hub);
-    const debug = { request: url, profile: pr.id, hub: hub };
-    try {
-      const dm = { calls: 0 };
-      const f = await fetchAcrossKeys(ring, function (k) { return buildUrl(k, pr, hub); }, {}, dm);
-      const r = f.r;
-      debug.apiVersion = Object.assign({ pinned: API_VERSION || null, pinRejected: !!dm.pinRejected }, dm.api || {});
-      Object.assign(debug, ring.used());
-      debug.status = r.status;
-      const text = await r.text();
-      let json = null;
-      try { json = JSON.parse(text); } catch (e) { /* non-JSON body */ }
-      debug.topLevelKeys = json && typeof json === "object" ? Object.keys(json) : [];
-      debug.num_found = json && json.num_found != null ? json.num_found : undefined;
-      const rows = json && Array.isArray(json.listings) ? json.listings : [];
-      debug.rawSample = rows.slice(0, 2);
-      debug.normalizedSample = rows.slice(0, 2).map(function (row) { return normalize(row, pr.id); });
-      // Echo the response body on error/empty so 4xx reasons (e.g. HTTP 422) are
-      // visible in the app — key already redacted from `request` above.
-      if (!r.ok || rows.length === 0) debug.body = text.slice(0, 1000);
-
-      // Auto-diagnose a valid-but-empty result: re-run with progressively
-      // relaxed filters to isolate which one zeroes it (budget? year? model name?).
-      if (r.ok && rows.length === 0) {
-        const variants = [
-          { relaxed: "drop price+miles", drop: ["price_range", "miles_range"] },
-          { relaxed: "drop price+miles+powertrain (keep model)", drop: ["price_range", "miles_range", "powertrain_type"] },
-          { relaxed: "drop price+miles+year+powertrain", drop: ["price_range", "miles_range", "year", "powertrain_type"] },
-          { relaxed: "make only (drop model+powertrain)", drop: ["price_range", "miles_range", "year", "model", "powertrain_type"] },
-        ];
-        debug.diagnosis = [];
-        for (const v of variants) {
-          await sleep(THROTTLE_MS);
-          try {
-            const ff = await fetchAcrossKeys(ring, function (k) {
-              const u = new URL(buildUrl(k, pr, hub));
-              v.drop.forEach(function (d) { u.searchParams.delete(d); });
-              return u.toString();
-            }, {});
-            const rr = ff.r;
-            const jj = await rr.json().catch(function () { return null; });
-            const entry = { relaxed: v.relaxed, status: rr.status, num_found: jj && jj.num_found != null ? jj.num_found : null };
-            // Whenever the powertrain filter is dropped we get real listings —
-            // surface the actual model / powertrain_type / fuel_type strings so we
-            // can see the exact values to filter on (instead of guessing).
-            if (v.drop.indexOf("powertrain_type") > -1 && jj && Array.isArray(jj.listings)) {
-              const counts = {}, pt = {}, ft = {};
-              jj.listings.forEach(function (l) {
-                const b = l && l.build; if (!b) return;
-                if (b.model) counts[b.model] = (counts[b.model] || 0) + 1;
-                if (b.powertrain_type) pt[b.powertrain_type] = (pt[b.powertrain_type] || 0) + 1;
-                if (b.fuel_type) ft[b.fuel_type] = (ft[b.fuel_type] || 0) + 1;
-              });
-              entry.modelsSeen = counts;
-              entry.powertrainsSeen = pt;
-              entry.fuelTypesSeen = ft;
-              const target = jj.listings.find(function (l) { return l && l.build && /rav4/i.test(l.build.model || ""); });
-              entry.sampleBuild = (target || jj.listings[0] || {}).build;
-            }
-            debug.diagnosis.push(entry);
-          } catch (e) { debug.diagnosis.push({ relaxed: v.relaxed, error: e && e.message }); }
-        }
-      }
-    } catch (e) {
-      debug.error = e && e.message ? e.message : "fetch failed";
-    }
-    // MarketCheck embeds the API key in media.photo_links_cached URLs — strip
-    // media and redact any stray api_key so the debug output never leaks it.
-    if (Array.isArray(debug.rawSample)) debug.rawSample = debug.rawSample.map(stripMedia);
-    const safe = JSON.parse(JSON.stringify(debug).replace(/api_key=[^"&\\\s]+/g, "api_key=REDACTED"));
-    res.status(200).json(safe);
-    return;
+  // Raw: the rows as MarketCheck sent them beside what the app would store, plus
+  // the step's report (quota, API version, errors with the HTTP status + body).
+  // MarketCheck embeds the key in media.photo_links_cached URLs — media is
+  // stripped and any stray api_key redacted, so the echo never leaks it.
+  const out = Object.assign({ request: session.lastUrl || null }, r);
+  delete out.listings;
+  if (vin) {
+    out.vin = vin;
+    out.records = session.raw.map(function (row) { return Object.assign(priceFacts(row), { appWouldStore: (normalize(row, "debug") || {}).price }); });
+    out.rawRecords = session.raw.map(stripMedia);
+  } else {
+    out.profile = body.profile.id;
+    out.rawSample = session.raw.slice(0, RAW_ROWS).map(stripMedia);
+    out.normalizedSample = session.raw.slice(0, RAW_ROWS).map(function (row) { return normalize(row, body.profile.id); });
   }
+  res.status(200).json(JSON.parse(JSON.stringify(out).replace(/api_key=[^"&\\\s]+/g, "api_key=REDACTED")));
+}
 
-  // One sync step (src/syncPlan.js): a profile's full refresh / new-listings pass,
-  // a count, or a watchlist VIN lookup. The browser sends steps one per request.
-  const session = createSession(keys, { dealerType: dealerType, spentKeys: body.spentKeys, keyIds: keys.map(function (k) { return keyId(k, resolved.shared ? envKey : null); }) });
-  const r = await runStep(session, {
-    kind: body.kind, profile: body.profile, since: body.since, vins: body.vins, excludeSalt: body.excludeSalt !== false,
-  });
-  res.status(200).json(r);
+// Price Check's synthetic profile: same make/model, year widened ±1, mileage
+// capped a bit above the subject (no price cap — the whole comp distribution).
+export function compsProfile(q) {
+  q = q || {};
+  const year = parseInt(q.year, 10) || 0;
+  const mileage = parseInt(q.mileage, 10) || 0;
+  const params = { make: String(q.make || "").trim(), model: String(q.model || "").trim() };
+  if (year) params.years = (year - 1) + "-" + (year + 1);
+  if (mileage) params.maxMiles = mileage + MILES_HEADROOM;
+  return { id: "pricecheck", name: "price check", params: params };
 }
 
 // Index of the first key whose id isn't in `spent`. If every key is known spent we
@@ -367,7 +264,8 @@ export function firstLiveKey(ids, spent) {
 // Shared state for the calls one request (or one scheduled-sync account) makes:
 // the ordered keys (each its own account, moved past only when one's monthly
 // quota is spent), the call meter, quota snapshots, the time budget, errors.
-// opts: { keyIds, spentKeys, dealerType, budgetMs }
+// opts: { keyIds, spentKeys, dealerType, budgetMs, keepRaw }
+// keepRaw (Debug raw): every search page's rows are also kept, as sent, in s.raw.
 export function createSession(keys, opts) {
   opts = opts || {};
   const ids = Array.isArray(opts.keyIds) && opts.keyIds.length === keys.length ? opts.keyIds : keys.map(function (k) { return keyId(k, null); });
@@ -375,12 +273,13 @@ export function createSession(keys, opts) {
   // earlier requests of this sync), instead of paying a call to rediscover it.
   const idx = firstLiveKey(ids, opts.spentKeys);
   return {
-    keys: keys, ids: ids, keyIdx: idx, keysUsed: idx + 1, meter: { calls: 0 }, snaps: {},
-    errors: [], notices: [], rateLimited: false, rateLimitInfo: null, quota: null,
+    keys: keys, ids: ids, keyIdx: idx, meter: { calls: 0 }, snaps: {},
+    errors: [], notices: [], rateLimited: false, rateLimitInfo: null,
     dealerType: opts.dealerType || null, first: true, timeUp: false,
     // Stop issuing new calls before the 60 s function limit, returning what we have.
     deadline: Date.now() + (Number(opts.budgetMs) || STEP_BUDGET_MS),
     rowsSeen: 0, malformed: 0, shapeless: false,
+    raw: opts.keepRaw ? [] : null, lastUrl: null,
   };
 }
 
@@ -393,10 +292,9 @@ export function sessionReport(s) {
       + ", served by " + ((s.meter.api && s.meter.api.served) || "an unknown API version") + ") — listings may be missing or wrong. Check Debug raw.");
   }
   return {
-    errors: errors, notices: s.notices.slice(), rateLimited: s.rateLimited, rateLimitInfo: s.rateLimitInfo, quota: s.quota,
-    keysUsed: s.keysUsed, keyQuotas: Object.keys(s.snaps).map(function (i) { return s.snaps[i]; }), calls: s.meter.calls,
-    apiInfo: Object.assign({ pinned: API_VERSION || null, pinRejected: !!s.meter.pinRejected }, s.meter.api || {}),
-    formatSuspect: formatSuspect,
+    errors: errors, notices: s.notices.slice(), rateLimited: s.rateLimited, rateLimitInfo: s.rateLimitInfo,
+    keyQuotas: Object.keys(s.snaps).map(function (i) { return s.snaps[i]; }), calls: s.meter.calls,
+    apiInfo: Object.assign({ validated: VALIDATED_VERSION }, s.meter.api || {}),
   };
 }
 
@@ -415,6 +313,7 @@ async function getPage(s, makeUrl, label, opts) {
     if (!s.first) await sleep(THROTTLE_MS); // stay under the per-second rate limit
     s.first = false;
     const url = makeUrl(s.keys[s.keyIdx]);
+    s.lastUrl = url; // Debug raw echoes it (key redacted)
     let r;
     try {
       r = await fetchWithRetry(url, {}, undefined, s.meter);
@@ -434,7 +333,6 @@ async function getPage(s, makeUrl, label, opts) {
         if (monthlySpent && s.keyIdx + 1 < s.keys.length) {
           const spent = s.keyIdx + 1;
           s.keyIdx++;
-          s.keysUsed = Math.max(s.keysUsed, s.keyIdx + 1);
           s.notices.push("Key #" + spent + " is out of monthly quota; continuing on key #" + (s.keyIdx + 1) + ".");
           continue; // same page, next key
         }
@@ -458,13 +356,12 @@ async function getPage(s, makeUrl, label, opts) {
     }
     const q = readQuota(r, "");
     if (q) s.snaps[s.keyIdx] = Object.assign({ id: s.ids[s.keyIdx] }, q);
-    const qrem = num(r.headers.get("quota-remaining"));
-    if (qrem != null) s.quota = { remaining: qrem, limit: num(r.headers.get("quota-limit")), reset: isoMcTime(r.headers.get("quota-reset-time")) };
     let json;
     try { json = await r.json(); } catch (e) { s.errors.push(label + ": unreadable response"); return null; }
     if (opts && opts.decode) return { rows: [], numFound: null, facets: null, json: json };
     if (!Array.isArray(json.listings) && json.num_found == null) s.shapeless = true;
     const rows = Array.isArray(json.listings) ? json.listings : [];
+    if (s.raw) rows.forEach(function (row) { s.raw.push(row); });
     rows.forEach(function (row) { s.rowsSeen++; if (!row || !row.vin || !row.build || !row.build.make || !row.build.model) s.malformed++; });
     return { rows: rows, numFound: typeof json.num_found === "number" ? json.num_found : null, facets: json.facets || null, stats: json.stats || null };
   }
@@ -489,17 +386,18 @@ export function decodedColor(j) {
 }
 
 // One step -> the session report plus { listings, numFound }.
-// step: { kind: "full" | "new" | "count" | "vins" | "local", profile, since, vins, excludeSalt, hub }
+// step: { kind: "full" | "new" | "count" | "vins" | "local" | "decode", profile, since, vins, excludeSalt, hub, sample }
 //   full  — every car matching the profile nationwide, plus its color breakdown
 //           (a facet on page 1 — no extra call) (salt states excluded unless
 //           excludeSalt === false). Over the 500-row ceiling the state list is
 //           halved until each part fits; a single state still too big pages to the
-//           ceiling and says so.
+//           ceiling and says so. With `sample` (Debug raw): page 1 only, that
+//           many rows — one call.
 //   new   — newest at this dealer first (dos_active asc), stopping once a page
 //           reaches cars listed more than `since` days ago.
 //   count — num_found plus the color facet (rows=0): one call, no paging.
 //   vins  — the listed rows for up to 50 VINs (vin= takes a list), every page.
-//   local — the old radius search around one hub (Price Check's live comps).
+//   local — a radius search around one hub (Price Check's live comps).
 //   decode — NeoVIN for up to 10 VINs, one call each -> { decoded: { VIN: { color, baseColor } } }.
 // A page's facet for one field -> { counts: { Black: 261, … }, unlisted }
 // (unlisted = matching cars not in any bucket), or null without the facet.
@@ -546,6 +444,7 @@ export async function runStep(s, step) {
   };
   const label = (profile ? (profile.name || profile.id) : "watchlist") + " [" + (step.kind || "?") + "]";
   const states = searchStates(step.excludeSalt !== false);
+  const sample = Number(step.sample) > 0 ? Math.min(ROWS, Math.round(Number(step.sample))) : 0;
   const nat = function (extra) {
     return function (k, start) { return buildUrl(k, profile, { national: true }, start, "used", s.dealerType, extra); };
   };
@@ -565,7 +464,7 @@ export async function runStep(s, step) {
   }
   // Full refresh over a list of states, halving it while the result is too big.
   async function fullOver(list) {
-    const make = nat({ state: list.join(",") });
+    const make = nat(sample ? { state: list.join(","), rows: String(sample) } : { state: list.join(",") });
     // The top-level page 1 also asks for the color / trim / drivetrain breakdown of
     // the whole match set (facets: same call, nothing extra), so each full refresh
     // keeps the profile's chips current.
@@ -575,6 +474,7 @@ export async function runStep(s, step) {
     if (top) facets = profileFacetsOf(p1);
     p1.rows.forEach(keep);
     const n = p1.numFound;
+    if (sample) return n;
     if (n != null && n > PAGE_LIMIT && list.length > 1) {
       const half = Math.ceil(list.length / 2);
       const a = await fullOver(list.slice(0, half));
@@ -844,36 +744,56 @@ function stripMedia(row) {
   return c;
 }
 
-// ── Mock data (?mock=1): two synthetic listings per active profile ──
-function mockListings(profiles, hubs) {
-  const hub = (hubs && hubs[0]) || {};
-  const hubName = hub.n || hub.z || "Durham NC"; // a hub may carry only a ZIP
+// ── Mock data (?mock=1): a step's answer without calling MarketCheck ──
+// Same shape as runStep's, at no cost. vins "finds" every VIN asked about, so a
+// mock sync never marks a watchlist car gone; decode gives each VIN a color.
+export function mockStep(step) {
+  step = step || {};
+  const out = { listings: [], numFound: null, errors: [], notices: [], rateLimited: false, rateLimitInfo: null, keyQuotas: [], calls: 0, apiInfo: null, mock: true };
+  const vins = (Array.isArray(step.vins) ? step.vins : []).map(function (v) { return String(v || "").trim().toUpperCase(); }).filter(Boolean);
+  if (step.kind === "vins") {
+    out.listings = vins.slice(0, 50).map(function (v) { return { vin: v, profileId: null, source: "marketcheck" }; });
+  } else if (step.kind === "decode") {
+    out.decoded = {};
+    vins.slice(0, 10).forEach(function (v, i) { out.decoded[v] = { color: i % 2 ? "Blue" : "Silver", baseColor: i % 2 ? "Blue" : "Silver", confidence: 0.9 }; });
+  } else if (step.profile && step.profile.params) {
+    const listings = mockListings(step.profile);
+    out.numFound = listings.length;
+    out.colors = { counts: { Silver: 1, Blue: 1 }, unlisted: 0 };
+    if (step.kind !== "count") out.listings = listings;
+  } else {
+    out.errors.push("No profile to search");
+  }
+  return out;
+}
+
+// Two synthetic listings for a profile.
+function mockListings(pr) {
+  const p = pr.params || {};
+  const baseYear = parseInt(parseYears(p.years).split(",")[0], 10) || 2021;
+  const maxP = p.maxPrice || 20000;
   const out = [];
-  (profiles || []).forEach(function (pr, i) {
-    const p = pr.params || {};
-    const baseYear = parseInt(parseYears(p.years).split(",")[0], 10) || 2021;
-    const maxP = p.maxPrice || 20000;
-    for (let k = 0; k < 2; k++) {
-      const slug = String(pr.id || i).toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
-      out.push({
-        vin: "MOCK" + slug + k,
-        vehicle: ((p.make || "") + " " + (p.model || "")).trim(),
-        year: baseYear + k,
-        trim: (p.trims || "").split(",")[0].trim(),
-        price: Math.max(5000, maxP - 1500 - k * 1200),
-        mileage: 40000 + k * 9000,
-        dealer: "Mock Motors " + (k + 1),
-        dealerType: k === 0 ? "franchise" : "independent",
-        cpo: k === 0,
-        location: hubName.split(" ")[0],
-        state: hubName.slice(-2),
-        color: k === 0 ? "Silver" : "Blue",
-        link: "",
-        dom: 12 + k * 7,
-        profileId: pr.id,
-        source: "marketcheck",
-      });
-    }
-  });
+  for (let k = 0; k < 2; k++) {
+    const slug = String(pr.id || "P").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+    out.push({
+      vin: "MOCK" + slug + k,
+      vehicle: ((p.make || "") + " " + (p.model || "")).trim(),
+      year: baseYear + k,
+      trim: String(p.trims || "").split(",")[0].trim(),
+      price: Math.max(5000, maxP - 1500 - k * 1200),
+      mileage: 40000 + k * 9000,
+      dealer: "Mock Motors " + (k + 1),
+      dealerType: k === 0 ? "franchise" : "independent",
+      cpo: k === 0,
+      location: "Durham",
+      state: "NC",
+      color: k === 0 ? "Silver" : "Blue",
+      baseColor: k === 0 ? "Silver" : "Blue",
+      link: "",
+      dom: 12 + k * 7,
+      profileId: pr.id,
+      source: "marketcheck",
+    });
+  }
   return out;
 }

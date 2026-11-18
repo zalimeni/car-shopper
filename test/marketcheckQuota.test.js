@@ -7,7 +7,6 @@ vi.mock("../api/_keys.js", () => ({ getMarketcheckKeys: async () => vault.keys }
 vi.mock("../api/_auth.js", () => ({ authorize: async () => ({ user: { id: "u1" } }), safeEqual: () => true, DEFAULT_ALLOW: "" }));
 const { default: handler, readQuota, keyId, setThrottleMs } = await import("../api/marketcheck.js");
 setThrottleMs(1); // don't sit through the real 500 ms spacing
-const { default: compsHandler } = await import("../api/pricecomps.js");
 
 const res = () => { const r = { code: 0, body: null, status(c) { r.code = c; return r; }, json(b) { r.body = b; return r; } }; return r; };
 const post = (h, body, query) => { const r = res(); vault.keys = (body && body.marketcheckKeys) || []; return h({ method: "POST", headers: { authorization: "Bearer t" }, body, query: query || {} }, r).then(() => r); };
@@ -64,7 +63,7 @@ describe("sync reports per-key quota and the real call count", () => {
     const byId = Object.fromEntries(r.body.keyQuotas.map((q) => [q.id, q]));
     expect(byId["1111"]).toMatchObject({ exhausted: true, remaining: 0 });
     expect(byId["2222"]).toMatchObject({ exhausted: false, remaining: 300 });
-    expect(r.body.keysUsed).toBe(2);
+    expect(calls).toEqual(["AAAA1111", "BBBB2222"]);
   });
   it("tags the shared server key as 'shared'", async () => {
     process.env.MARKETCHECK_API_KEY = "ENVKEY99";
@@ -88,7 +87,6 @@ describe("sync: a throttle is not a spent key", () => {
     mockFetch({ AAAA1111: { status: 429, q: { remaining: 0, limit: 500, reset: "R" } }, BBBB2222: { status: 200, q: { remaining: 300, limit: 500, reset: "R" } } });
     const r = await post(handler, Object.assign({ marketcheckKeys: ["AAAA1111", "BBBB2222"] }, SYNC));
     expect(r.body.rateLimited).toBe(false);
-    expect(r.body.keysUsed).toBe(2);
     expect(r.body.notices.join(" ")).toMatch(/Key #1 is out of monthly quota; continuing on key #2/);
     expect(r.body.errors).toEqual([]); // a failover is not a query error
   });
@@ -97,7 +95,6 @@ describe("sync: a throttle is not a spent key", () => {
     const r = await post(handler, Object.assign({ marketcheckKeys: ["AAAA1111", "BBBB2222"], spentKeys: ["1111"] }, SYNC));
     expect(calls.every((k) => k === "BBBB2222")).toBe(true);
     expect(r.body.notices).toEqual([]);
-    expect(r.body.keysUsed).toBe(2);
   });
   it("if every key is known spent it still tries the last one (once), not none", async () => {
     mockFetch({ AAAA1111: { status: 429, q: { remaining: 0, limit: 500, reset: "R" } }, BBBB2222: { status: 429, q: { remaining: 0, limit: 500, reset: "R" } } });
@@ -122,19 +119,35 @@ describe("sync: a throttle is not a spent key", () => {
   });
 });
 
-describe("Price Check live search follows the same key policy", () => {
-  const body = { query: { make: "Kia", model: "Telluride", year: 2024 }, hubs: [{ n: "Durham, NC", z: "27701", lat: 36, lon: -78.9 }] };
+describe("Price Check live search (a local step) follows the same key policy", () => {
+  const body = { kind: "local", query: { make: "Kia", model: "Telluride", year: 2024, mileage: 20000 }, hub: { n: "Durham, NC", z: "27701", lat: 36, lon: -78.9 } };
+  it("is a radius search around the one hub, for the vehicle ±1 year, mileage capped above it", async () => {
+    mockFetch({ AAAA1111: { status: 200, q: { remaining: 90, limit: 100, reset: "R" } } });
+    let url;
+    const f = global.fetch;
+    global.fetch = vi.fn(async (u) => { url = new URL(u); return f(u); });
+    const r = await post(handler, Object.assign({ marketcheckKeys: ["AAAA1111"] }, body));
+    expect(r.code).toBe(200);
+    expect(["make", "model", "year", "miles_range", "latitude", "longitude", "radius"].map((k) => url.searchParams.get(k)))
+      .toEqual(["Kia", "Telluride", "2023,2024,2025", "0-50000", "36", "-78.9", "100"]);
+    expect(url.searchParams.get("state")).toBeNull();
+  });
+  it("needs a make/model and a location", async () => {
+    expect((await post(handler, { kind: "local", query: {}, hub: body.hub, marketcheckKeys: ["AAAA1111"] })).code).toBe(400);
+    const r = await post(handler, { kind: "local", query: body.query, marketcheckKeys: ["AAAA1111"] });
+    expect([r.code, r.body.error]).toEqual([400, "no_location"]);
+  });
   it("uses only the configured keys and ignores the shared one when they're spent", async () => {
     process.env.MARKETCHECK_API_KEY = "ENVKEY99";
     mockFetch({ AAAA1111: { status: 429, q: { remaining: 0, limit: 500, reset: "R" } }, ENVKEY99: { status: 200, q: { remaining: 90, limit: 100, reset: "R" } } });
-    const r = await post(compsHandler, Object.assign({ marketcheckKeys: ["AAAA1111"] }, body));
+    const r = await post(handler, Object.assign({ marketcheckKeys: ["AAAA1111"] }, body));
     expect(calls).not.toContain("ENVKEY99");
     expect(r.body.rateLimited).toBe(true);
   });
   it("falls to the shared key only with no configured keys", async () => {
     process.env.MARKETCHECK_API_KEY = "ENVKEY99";
     mockFetch({ ENVKEY99: { status: 200, q: { remaining: 90, limit: 100, reset: "R" } } });
-    const r = await post(compsHandler, Object.assign({ marketcheckKeys: [] }, body));
+    const r = await post(handler, Object.assign({ marketcheckKeys: [] }, body));
     expect(new Set(calls)).toEqual(new Set(["ENVKEY99"]));
     expect(r.body.keyQuotas[0].id).toBe("shared");
   });
@@ -144,5 +157,24 @@ describe("reset times are stored as ISO", () => {
   it("readQuota rewrites MarketCheck's 'YYYY-MM-DD HH:MM:SS UTC'", () => {
     const r = { status: 200, headers: { get: (k) => ({ "quota-remaining": "145", "quota-limit": "500", "quota-reset-time": "2026-11-01 00:00:00 UTC" })[k] ?? null } };
     expect(readQuota(r, "").reset).toBe("2026-11-01T00:00:00Z");
+  });
+});
+
+describe("?mock=1 answers every step without calling MarketCheck", () => {
+  const mock = (body) => post(handler, Object.assign({ marketcheckKeys: ["AAAA1111"] }, body), { mock: "1" });
+  it("finds every watchlist VIN it's asked about, so a mock sync never marks a car gone", async () => {
+    mockFetch({});
+    const r = await mock({ kind: "vins", vins: ["vin1", "VIN2"] });
+    expect(r.body.listings.map((l) => l.vin)).toEqual(["VIN1", "VIN2"]);
+    expect(r.body).toMatchObject({ mock: true, calls: 0, errors: [] });
+    expect(calls).toEqual([]);
+  });
+  it("gives a count, listings, local comps and decoded colors in the real shapes", async () => {
+    mockFetch({});
+    expect((await mock({ kind: "count", profile: SYNC.profile })).body).toMatchObject({ numFound: 2, listings: [] });
+    expect((await mock(SYNC)).body.listings.length).toBe(2);
+    expect((await mock({ kind: "local", query: { make: "Kia", model: "Telluride" }, hub: { lat: 36, lon: -78.9 } })).body.listings.length).toBe(2);
+    expect((await mock({ kind: "decode", vins: ["KM8JCCD10RU198791"] })).body.decoded.KM8JCCD10RU198791).toMatchObject({ baseColor: "Silver" });
+    expect(calls).toEqual([]);
   });
 });

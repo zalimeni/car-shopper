@@ -54,7 +54,7 @@ over architecture.
 | `src/mfa.js` | Two-factor (TOTP) client: pure `assurance(session)` / `needsStepUp` (aal from the session's own JWT + `user.factors` — no network), `qrSrc`; wrappers over `supabase.auth.mfa.*` (`listTotp`, `startEnroll`, `confirmEnroll`, `removeFactor`, `verifyStepUp` — tries each app). UI: `MfaCard` (Settings) in `App.jsx`. Pure parts tested. |
 | `src/main.jsx`, `src/index.css` | Entry point + global styles. |
 | `src/locations.js` | Home-base picker logic: parse/search `public/locations.txt` (city or ZIP suggestions with coordinates). Pure, tested. |
-| `src/syncPlan.js` | **What a sync does and costs.** Per active profile: a full refresh (due after 3 days, an edit, or a manual Sync) or a new-listings pass; then a VIN lookup of watchlist cars the searches didn't return (the only "gone" signal); then a NeoVIN VIN decode for cars with no color (≤10 a sync, each VIN once — `settings.mcColors`). `planSync`, `runSync` (orchestration with an injected step runner — shared by the browser and the scheduled sync), `estimateCost`, `nextProfileMeta` (`settings.mcProfiles`). Pure, tested. |
+| `src/syncPlan.js` | **What a sync does and costs.** Per active profile: a full refresh (due after 3 days, an edit, or a manual Sync) or a new-listings pass; then a VIN lookup of watchlist cars the searches didn't return (the only "gone" signal); then a NeoVIN VIN decode for cars with no color (≤10 a sync; answers remembered in `settings.mcColors` for 90 days, newest 1,000). `planSync`, `runSync` (orchestration with an injected step runner — shared by the browser and the scheduled sync), `estimateCost` (incl. the decodes: `colorDecodes`), `nextProfileMeta` (`settings.mcProfiles`). Pure, tested. |
 | `src/queryPlan.js` | Profile field → MarketCheck value helpers (`mapPowertrain`, `parseYears`). Profiles are no longer merged: nationwide, merging widens filters. |
 | `src/regions.js` | Salt-belt states and the `state=` list a search sends (salt belt excluded, or every state when flagging). Pure. |
 | `src/airports.js`, `src/travel.js` | Major-airport list + `travelFacts`: miles from the home base ("ship or fly" past 500), nearest airport ("fly-in friendly" within 50 mi), salt-belt flag. Flags only — never filters. Used by cards and AI scoring. Pure, tested. |
@@ -69,7 +69,7 @@ over architecture.
 | `src/markdown.js` | Safe Markdown parser for listing notes (text → typed tree, never HTML; http(s)-only links) + the `MEMO_MAX` (4,000-char) limit. Pure, tested. Rendered by `MarkdownView` / `ListingMemo` in `App.jsx`. |
 | `src/quota.js` | MarketCheck quota bookkeeping for the header gauge + modal: per-key snapshots (from syncs / live searches — never its own calls), capacity across keys (used in order), sync-cost estimates. Pure, tested. |
 | `public/locations.txt` | Flat file (`ST|City|ZIP|lat|lon`, ~41k rows) behind the location picker; lazy-loaded, not bundled. Built by `scripts/build-locations.mjs` from GeoNames (CC BY 4.0). |
-| `api/marketcheck.js` | Serverless proxy to MarketCheck (holds the API key). One sync step per request (`runStep`: full / new / count / vins / local) over a `createSession` (key failover, throttle, time budget). `buildUrl`/`normalize`. |
+| `api/marketcheck.js` | Serverless proxy to MarketCheck (holds the API key). One step per request (`runStep`: full / new / count / vins / decode, plus `local` — the Price tab's live comps around the home base, `{ kind: "local", query, hub }`) over a `createSession` (key failover, throttle, time budget). `?raw=1` = Debug raw (one billed call through the same session); `?mock=1` = synthetic answers (`mockStep`, curl only). `buildUrl`/`normalize`. |
 | `api/_auth.js` | Server-side auth + allowlist: `authorize()` verifies the access token locally (`getClaims()` against the project's ES256 signing keys, JWKS cached per warm instance — no Auth-server call), then `{ user: { id, email }, admin, mfa: { enrolled, aal } }` from one `my_access_mfa()` RPC; an enrolled user's aal1 token → 401 `mfa_required`. `requireAdmin()` (admin **and** aal2, else 403 `mfa_enroll_required`), `deny()` (sends `{ error, code }`). Shared module. |
 | `api/allowlist.js`, `src/admin.js` | Admin tab (admins only, `allowed_emails.is_admin`): list / add / remove emails, send an invite (the only way to get an account), toggle Admin / Daily sync per row. |
 | `api/me.js` | Allowlist + admin + key-status check for the UI (key metadata only). |
@@ -81,7 +81,6 @@ over architecture.
 | `api/snapshots.js`, `src/snapshots.js` | List/restore the automatic app-state backups (`app_state_history`); admins also publish the demo snapshot here (`POST { demo }`), and it copies listing photos (`POST { photos }` — see the next row). |
 | `src/photoKey.js`, `src/photos.js`, `api/_photos.js` | **Stored listing photos** (Supabase Storage, private bucket `listing-photos`, object `<user_id>/<VIN>.<ext>`, kept on the listing as `photoKey`; a dealer URL that can't be copied is remembered as `photoFailed`). `photoKey.js` (pure, tested): key build/validate (`isPhotoKey` — import keeps only the importer's own), `photoTodo`, `applyPhotoResults`, `referencedPhotoKeys`. `photos.js`: batched + cached signed URLs (`useStoredPhoto` in `Thumb`, which falls back to `listing.photo` either way), `copyPhotos` (on approve + a per-session backfill), `removePhotos` (delete, after Undo expires). `_photos.js` (tested): `storePhotos` behind an SSRF guard (http(s), default ports, public IPs checked at connect time, ≤3 checked redirects, 2 MB, 6 s, sniffed image types; stored as-is), and `sweepOrphanPhotos` — the daily cleanup in `cron-sync`: deletes objects no blob references (listings / queue / skipped) and whole folders of users with no `app_state` row, older than 24 h only, capped per run. Off in the demo. |
 | `api/ai.js`, `api/_ai.js` | **Every AI feature, one function.** `POST { task }`: `score` (batch listing scoring), `price` (Price Check's fair-price verdict), `baseline` (a profile's AI price baseline), `suggest` (the profile wizard's AI step); `GET ?task=prompt` returns the default scoring prompt. `_ai.js`: `loadAnthropicKey(userId)` (the only place the vaulted key is decrypted), the streamed call, refusal / token-limit / rejected-key handling. Prompts + schemas: `_scoring.js` (score, baseline), `_pricecheck.js`, `_suggest.js`. |
-| `api/pricecomps.js` | Price tab: live MarketCheck comps around the home base (a `local` step). |
 | `src/priceCheck.js`, `src/priceExport.js` | Price tab's local-comps math (pure, 0 API calls) and the price-history CSV export. Pure, tested. |
 | `src/geo.js`, `src/tableSort.js` | Straight-line distance to the home base; shared sortable-table helpers (Compare, Price comps). Pure, tested. |
 | `api/cron-sync.js` | Scheduled background sync (`CRON_SECRET`-gated; accounts with `allowed_emails.scheduled_sync`). `POST { email }` syncs one account — sent per account by the database dispatcher (pg_cron + pg_net, `dispatch_scheduled_sync()`, every 15 min, URL + secret in Supabase Vault). The daily Vercel Cron run (no target) does the keepalive + the vault's v1 → v2 re-encryption sweep + the orphan-photo sweep (`sweepOrphanPhotos`, `api/_photos.js`), and syncs due accounts itself only while the dispatcher isn't set up (`scheduled_sync_dispatcher_ready()`). Stamps `allowed_emails.last_scheduled_sync` on attempt + `last_scheduled_sync_result`. Tested. |
@@ -185,14 +184,15 @@ See `docs/listing-pipeline.md` for the full design. In short:
 - **All MarketCheck-specific field/param names live in `buildUrl()` and
   `normalize()` in `api/marketcheck.js`** — if the API shape is wrong, that's the
   only place to change.
-- **API version is pinned** (`x-version`, `API_VERSION` in `api/marketcheck.js`,
-  `v4.8.0`). Every response's
+- **API version is not pinned** (no `x-version` header — MarketCheck serves its
+  default and doesn't move v4 clients to v5 on its own). Every response's
   `served-by-version` / `deprecation` / `sunset` headers are stored in
-  `settings.mcApi`; the app shows a banner within 60 days of sunset, if a different
-  major version answers, or if the pin is rejected (sync then retries unpinned).
+  `settings.mcApi` (with `validated`: `VALIDATED_VERSION` in `api/marketcheck.js`,
+  `v4.8.0`, the version `normalize()` was checked against); the app shows a banner
+  within 60 days of sunset, or if a different major version answers.
   A sync where most rows lack VIN/make/model is flagged as a format change rather
   than silently dropping listings. To move versions: update `normalize()` /
-  `buildUrl()` + the fixture, then bump `API_VERSION`.
+  `buildUrl()` + the fixture, then bump `VALIDATED_VERSION`.
 
 `App.jsx` is large but navigable; in order: constants/defaults (incl.
 `DEFAULT_SETTINGS`, `roleColor`, `RoleBadge`) → utilities (`calcRem`, `applyScore`)
@@ -314,9 +314,11 @@ per environment (Preview vs Production) — set keys in the env you're testing.
    error message (e.g. `… MarketCheck HTTP 401`). Also check the browser console
    (`console.warn("Sync query errors", …)`).
 2. Tap the **Debug raw** button in the footer (works on mobile — no console
-   needed). It runs one live query and shows the raw MarketCheck response,
-   `topLevelKeys`, `num_found`, the request URL (key redacted), and
-   `normalizedSample` in a copyable box. Equivalent: `await window.__rawSync()`
+   needed). It makes one billed call — a two-row page of the first active
+   profile's full refresh (salt-belt filter included), or a VIN lookup if you
+   give one — and shows the raw rows, `numFound`, the request URL (key
+   redacted), errors (HTTP status + body) and `normalizedSample` in a copyable
+   box; its quota report feeds the gauge. Equivalent: `await window.__rawSync()`
    in a desktop console, or `POST /api/marketcheck?raw=1`. Compare `rawSample`
    vs `normalizedSample` to spot field-name mismatches — fix only
    `normalize()`/`buildUrl()`.
@@ -325,8 +327,9 @@ per environment (Preview vs Production) — set keys in the env you're testing.
    - HTTP 401/403 → bad key or the plan lacks the active-search endpoint.
    - HTTP 4xx on every query → wrong host/param (it's `api.marketcheck.com`,
      `year` as an exact-year CSV, `price_range`/`miles_range`, `state` CSV).
-4. To exercise the full candidate/approve flow **without** the API or key, the
-   proxy supports `?mock=1` (synthetic listings).
+4. To exercise the proxy **without** the API or key, call it with `?mock=1`
+   from curl (below): synthetic answers for every step — the VIN lookup "finds"
+   every VIN, so nothing is marked gone. The app itself never sends it.
 
 ### Probing MarketCheck live
 Every call is billed against the key's 500/month free quota — errors, 404s and
@@ -337,7 +340,7 @@ owner before spending calls, keep probes to one or two, and never commit a key.
 `docs/listing-pipeline.md` §2–3 — check there before re-probing.
 
 ### Serverless function count
-Every non-underscore file in `api/` is its own Vercel function (8 today — the four AI endpoints were merged into `api/ai.js`; photo copying is a mode of `api/snapshots.js`).
+Every non-underscore file in `api/` is its own Vercel function (7 today — the four AI endpoints were merged into `api/ai.js`; photo copying is a mode of `api/snapshots.js`; Price Check's live comps are a `local` step of `api/marketcheck.js`).
 Vercel's Hobby plan has capped deployments at 12 functions — check the current
 limit before adding more. Put shared code in `api/_*.js`, and prefer a new mode
 on an existing endpoint over a new file once that's close. Functions

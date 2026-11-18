@@ -9,7 +9,7 @@ vi.mock("../src/admin", () => ({ getMe: async () => ({}), listAllowed: async () 
 vi.mock("../src/snapshots", () => ({ listSnapshots: async () => [], restoreSnapshot: async () => {} }));
 const { apiDriftNotice } = await import("../src/App.jsx");
 
-const api = { served: "v4.8.0", pinned: "v4.8.0", deprecation: "Fri, 07 Aug 2026 00:00:00 GMT", sunset: "Sun, 28 Feb 2027 23:59:59 GMT", pinRejected: false };
+const api = { served: "v4.8.0", validated: "v4.8.0", deprecation: "Fri, 07 Aug 2026 00:00:00 GMT", sunset: "Sun, 28 Feb 2027 23:59:59 GMT" };
 const day = (iso) => Date.parse(iso);
 
 describe("apiDriftNotice", () => {
@@ -21,13 +21,15 @@ describe("apiDriftNotice", () => {
     expect(apiDriftNotice(api, day("2027-01-15T00:00:00Z"))).toMatch(/v4\.8\.0 sunsets .*2027.* \(45 days\)/);
     expect(apiDriftNotice(api, day("2027-03-02T00:00:00Z"))).toMatch(/reached its sunset/);
   });
-  it("warns at once if MarketCheck answers with a different major version than we pinned", () => {
+  it("warns at once if MarketCheck answers with a different major version than the app was validated against", () => {
     expect(apiDriftNotice(Object.assign({}, api, { served: "v5.0.1", sunset: null }), day("2026-10-14T00:00:00Z"))).toMatch(/answered with API v5\.0\.1, not the v4\.8\.0/);
   });
   it("a newer minor of the same major is fine", () => {
     expect(apiDriftNotice(Object.assign({}, api, { served: "v4.9.2", sunset: null }), day("2026-10-14T00:00:00Z"))).toBeNull();
   });
-  it("warns if the pin itself was rejected", () => {
-    expect(apiDriftNotice(Object.assign({}, api, { pinRejected: true }), day("2026-10-14T00:00:00Z"))).toMatch(/rejected the pinned API version \(v4\.8\.0\)/);
+  it("reads a version stored before the pin was dropped (`pinned`), and ignores an old pinRejected", () => {
+    const old = { served: "v5.0.1", pinned: "v4.8.0", pinRejected: true };
+    expect(apiDriftNotice(old, day("2026-10-14T00:00:00Z"))).toMatch(/answered with API v5\.0\.1, not the v4\.8\.0/);
+    expect(apiDriftNotice(Object.assign({}, old, { served: "v4.8.0" }), day("2026-10-14T00:00:00Z"))).toBeNull();
   });
 });

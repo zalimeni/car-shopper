@@ -190,12 +190,12 @@ api/                Vercel serverless functions (server-side secrets)
   _keys.js          the key vault (the only module that decrypts)
   _supabaseAdmin.js service-role client for the server-only tables
   _scoring.js       scoring prompt/schema/coercion + model allowlist
-  marketcheck.js    MarketCheck proxy (buildUrl/normalize, one sync step per request)
+  marketcheck.js    MarketCheck proxy (buildUrl/normalize, one sync step per request, Price Check live comps)
   cron-sync.js      scheduled sync, one account per call (pg_cron dispatcher) + daily keepalive (Vercel Cron)
   me.js             auth + key-status check for the client
   keys.js           set/validate/remove the user's Anthropic + MarketCheck keys
   ai.js             every AI feature (score / price / baseline / suggest) with the user's key
-  …                 allowlist, snapshots, pricecomps
+  …                 allowlist, snapshots
 supabase/
   migrations/       schema, RLS, grants, triggers (append-only, idempotent)
   tests/            pgTAP tests: RLS, grants, save_app_state, key vault (supabase test db)
