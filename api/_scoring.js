@@ -135,7 +135,6 @@ function listingFacts(l, homeBase) {
     });
     f.push("Asking-price history: " + pts.join(" → "));
   }
-  add("Deal rating", l.dealRating);
   // Only surface CONFIRMED Carfax positives. A false here just means "not stated
   // on the dealer site" (the common case), not a negative finding — feeding it to
   // the model only makes it harp on an unverified title. The UI shows an
