@@ -41,7 +41,7 @@ describe("new-profile wizard", () => {
   it("explores once, picks caps/years/trims, takes AI suggestions, creates the profile", async () => {
     localStorage.clear();
     render(React.createElement(App));
-    await screen.findByText("Car Shopper", {}, { timeout: 4000 });
+    await screen.findByText("Tirekicker", {}, { timeout: 4000 });
     fireEvent.click(screen.getAllByText("Profiles")[0]);
     fireEvent.click(within(screen.getByText("Vehicle Profiles").parentElement).getByText("+ Add"));
     const dlg = screen.getByRole("dialog", { name: "New profile" });

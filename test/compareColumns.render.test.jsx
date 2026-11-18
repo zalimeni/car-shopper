@@ -38,7 +38,7 @@ describe("Compare column layout", () => {
   it("renders the saved order + pins, pins via 📌, reorders by drag", async () => {
     localStorage.clear();
     render(React.createElement(App));
-    await screen.findByText("Car Shopper", {}, { timeout: 4000 });
+    await screen.findByText("Tirekicker", {}, { timeout: 4000 });
     fireEvent.click(screen.getAllByText("Compare")[0]);
     await screen.findByTitle("Open this listing");
     // pinned first, then the saved order; columns it doesn't list follow their default neighbour
@@ -89,7 +89,7 @@ describe("Compare column layout", () => {
       cleanup();
       state.settings.compareCols = { pinned: ["spec:price", "spec:year"] };
       render(React.createElement(App));
-      await screen.findByText("Car Shopper", {}, { timeout: 4000 });
+      await screen.findByText("Tirekicker", {}, { timeout: 4000 });
       fireEvent.click(screen.getAllByText("Compare")[0]);
       await screen.findByTitle("Open this listing");
       // 343 × 0.7 = 240: Listing (90) + Price (90) fit, + Year (90) doesn't

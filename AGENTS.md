@@ -4,7 +4,7 @@ Guidance for AI agents (and humans) working in this repo. Read this first.
 
 ## What this is
 
-A personal **car-shopping tracker**. It tracks vehicle *profiles* (make/model/
+**Tirekicker** (formerly Car Shopper) is a personal **car-shopping tracker**. It tracks vehicle *profiles* (make/model/
 years/price), pulls matching dealer inventory automatically from the MarketCheck
 aggregator, scores listings against weighted criteria (optionally with AI using
 the user's own Anthropic key), and keeps a watchlist with price/availability
@@ -71,7 +71,7 @@ over architecture.
 | `api/allowlist.js`, `src/admin.js` | Admin tab (admins only, `allowed_emails.is_admin`): list / add / remove emails, send an invite (the only way to get an account), toggle Admin / Daily sync per row. |
 | `api/me.js` | Allowlist + admin + key-status check for the UI (key metadata only). |
 | `api/_scoring.js` | Scoring prompt/schema/coercion + model allowlist (`resolveScoreModel`). |
-| `api/_crypto.js` | AES-256-GCM for the key vault: v2 = HKDF key + AAD `<user_id>:<provider>`, `v2:` prefix; reads legacy v1. Tested. |
+| `api/_crypto.js` | AES-256-GCM for the key vault: v2 = HKDF key + AAD `<user_id>:<provider>`, `v2:` prefix; reads legacy v1. The HKDF salt keeps the old name (`car-shopper/…`) — changing it orphans every stored key. Tested. |
 | `api/_keys.js` | The key vault (`user_api_keys`): the only module that decrypts. `getAnthropicKey`, `getMarketcheckKeys`, `keyMeta`, add/rename/reorder/remove, `importBlobKeys`, `reencryptLegacy` (cron). Tested. |
 | `api/_supabaseAdmin.js` | Service-role (`SUPABASE_SECRET_KEY`) client for the server-only tables; also the server's one copy of the project URL + publishable key. |
 | `api/keys.js` | `/api/keys`: validate / store (encrypted) / remove the Anthropic key; add / rename / reorder / remove MarketCheck keys. Answers with metadata only. |

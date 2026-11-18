@@ -178,7 +178,7 @@ function SignIn() {
   return (
     <div style={S.center}>
       <div style={S.card}>
-        <h1 style={S.title}>Car Shopper</h1>
+        <h1 style={S.title}>Tirekicker</h1>
         <p style={S.sub}>Sign in to load your synced data.</p>
         {sent ? (
           <div>

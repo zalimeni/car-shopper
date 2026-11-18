@@ -38,7 +38,7 @@ describe("Compare rows", () => {
   it("show tags, and open the listing card in a modal for tag edits", async () => {
     localStorage.clear();
     render(React.createElement(App));
-    await screen.findByText("Car Shopper", {}, { timeout: 4000 });
+    await screen.findByText("Tirekicker", {}, { timeout: 4000 });
     fireEvent.click(screen.getAllByText("Compare")[0]);
     const row = (await screen.findByTitle("Open this listing"));
     expect(within(row).getByText(/Called dealer/)).toBeTruthy();

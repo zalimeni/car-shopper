@@ -25,7 +25,7 @@ npx vitest run test/foo.test.js  # one file
     are the template: `storage.get` returns the state blob (`{ value:
     JSON.stringify(state), rev }`), `storage.set` pushes each saved blob onto
     `writes`, and `supabaseClient`, `Auth`, `sync`, `score`, `admin`,
-    `snapshots` are stubbed. `await screen.findByText("Car Shopper")` waits out
+    `snapshots` are stubbed. `await screen.findByText("Tirekicker")` waits out
     the load. Set `version` to the current `VERSION` in `App.jsx` so `migrate`
     leaves the state alone.
 
