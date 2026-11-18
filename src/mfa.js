@@ -81,7 +81,7 @@ export async function startEnroll(name) {
   var cur = await listTotp();
   for (var i = 0; i < cur.pending.length; i++) await supabase.auth.mfa.unenroll({ factorId: cur.pending[i].id });
   var label = String(name || "").trim() || "Authenticator " + (cur.verified.length + 1);
-  var r = await supabase.auth.mfa.enroll({ factorType: "totp", friendlyName: label, issuer: "Car Shopper" });
+  var r = await supabase.auth.mfa.enroll({ factorType: "totp", friendlyName: label, issuer: "Tirekicker" });
   if (r.error) throw r.error;
   var t = r.data.totp || {};
   return { id: r.data.id, name: label, qr: qrSrc(t.qr_code), secret: t.secret || "", uri: t.uri || "" };
