@@ -11,7 +11,7 @@
 // key only when they have none) — user-initiated, so quota burn stays in their
 // control.
 
-import { authorize } from "./_auth.js";
+import { authorize, deny } from "./_auth.js";
 import { getMarketcheckKeys } from "./_keys.js";
 import { createSession, runStep, keyId, resolveKeys } from "./marketcheck.js";
 
@@ -22,7 +22,7 @@ export default async function handler(req, res) {
   if (req.method !== "POST") { res.status(405).json({ error: "Use POST" }); return; }
 
   const auth = await authorize(req);
-  if (auth.error) { res.status(auth.status).json({ error: auth.error }); return; }
+  if (auth.error) { deny(res, auth); return; }
 
   const body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
   const q = body.query || {};

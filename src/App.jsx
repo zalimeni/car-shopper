@@ -13,7 +13,8 @@ import { layoutColumns, moveColumn, togglePin } from "./compareCols";
 import { trimHideReason, trimState, setTrimState, nextTrimState, facetChoices } from "./trims";
 import { shareUnder, capChoices, estimateMatches, rangeYears, yearOptions, yearChoices, defaultName } from "./profileWizard";
 import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBaseline, generatePriceAssessment, suggestProfile, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
-import { getMe, listAllowed, addAllowed, removeAllowed, setAllowedFlags } from "./admin";
+import { getMe, listAllowed, addAllowed, removeAllowed, setAllowedFlags, resetAllowedMfa } from "./admin";
+import { listTotp, startEnroll, confirmEnroll, cancelEnroll, removeFactor, groupSecret, friendlyMfaError, MFA_ENROLL_REQUIRED } from "./mfa";
 import { listMarketcheckKeys, addMarketcheckKey, importMarketcheckKeys, renameMarketcheckKey, reorderMarketcheckKeys, removeMarketcheckKey, legacyBlobKeys } from "./keys";
 import { listSnapshots, restoreSnapshot } from "./snapshots";
 import { buildPriceHistoryCsv } from "./priceExport";
@@ -1545,8 +1546,8 @@ export default function App() {
         {tab === "Compare" && <CompareTab data={data} saveCols={saveCompareCols} cardCtx={{ data: data, edListing: edListing, setEdListing: setEdListing, updListing: updListing, delListing: delListing,
           markChk: markChk, scoreItems: scoreItems, scoreBusy: scoreBusy, keyStatus: keyStatus, scoringActive: scoringActive }} />}
         {tab === "Price" && <PriceCheckTab data={data} candidates={candidates} keyStatus={keyStatus} mcKeys={mcKeyList(data, mcVault)} onQuota={noteQuota} goSettings={function () { setTab("Settings"); }} />}
-        {tab === "Settings" && <SettingsTab data={data} save={save} keyStatus={keyStatus} setKeyStatus={setKeyStatus} mcVault={mcVault} setMcVault={setMcVault} />}
-        {tab === "Admin" && isAdmin && <AdminTab />}
+        {tab === "Settings" && <SettingsTab data={data} save={save} keyStatus={keyStatus} setKeyStatus={setKeyStatus} mcVault={mcVault} setMcVault={setMcVault} isAdmin={isAdmin} />}
+        {tab === "Admin" && isAdmin && <AdminTab goSettings={function () { setTab("Settings"); }} />}
       </main>
       <footer style={S.footer}>
         <div style={{ display: "flex", justifyContent: "center", gap: 12, alignItems: "center" }}>
@@ -2125,12 +2126,101 @@ export function SettingsCard({ data, save }) {
 }
 
 // ── Settings tab: user-level config (was at the top of Profiles) ──
-function SettingsTab({ data, save, keyStatus, setKeyStatus, mcVault, setMcVault }) {
+function SettingsTab({ data, save, keyStatus, setKeyStatus, mcVault, setMcVault, isAdmin }) {
   return (
     <div>
       <SettingsCard data={data} save={save} />
       <KeyCard keyStatus={keyStatus} setKeyStatus={setKeyStatus} />
       {!DEMO && <McKeysCard keys={mcVault} setKeys={setMcVault} />}
+      {!DEMO && <MfaCard isAdmin={isAdmin} />}
+    </div>
+  );
+}
+
+// Two-factor (TOTP authenticator apps, Supabase Auth MFA — src/mfa.js). Enroll
+// (QR code, or the secret / an otpauth: link for an authenticator on this same
+// phone), verify the first code, list, remove. Once an app is verified, every
+// email sign-in asks for a code (AuthGate). Supabase has no recovery codes, so
+// a second app is the backup. Never shown in demo mode (no network calls).
+export function MfaCard({ isAdmin }) {
+  var [factors, setFactors] = useState(null); // verified TOTP factors; null = loading
+  var [enroll, setEnroll] = useState(null); // { id, name, qr, secret, uri } while setting one up
+  var [name, setName] = useState("");
+  var [code, setCode] = useState("");
+  var [busy, setBusy] = useState(false);
+  var [err, setErr] = useState("");
+  var [msg, setMsg] = useState("");
+  var [copied, setCopied] = useState(false);
+
+  function load() { return listTotp().then(function (l) { setFactors(l.verified); }).catch(function (e) { setFactors([]); setErr(friendlyMfaError(e)); }); }
+  useEffect(function () { load(); }, []);
+
+  async function run(fn) {
+    setBusy(true); setErr(""); setMsg("");
+    try { await fn(); } catch (e) { setErr(friendlyMfaError(e)); }
+    setBusy(false);
+  }
+  function begin() { run(async function () { setCode(""); setCopied(false); setEnroll(await startEnroll(name)); }); }
+  function verify() {
+    run(async function () {
+      await confirmEnroll(enroll.id, code);
+      setEnroll(null); setName(""); setCode("");
+      setMsg((factors && factors.length ? "Backup app added." : "Two-factor is on. Signing in by email now also asks for a code."));
+      await load();
+    });
+  }
+  function cancel() { var id = enroll && enroll.id; setEnroll(null); setCode(""); if (id) cancelEnroll(id); }
+  function remove(f) {
+    var last = factors && factors.length === 1;
+    if (!window.confirm("Remove “" + (f.friendly_name || "authenticator") + "”?" + (last ? " It's your only one: two-factor turns off" + (isAdmin ? ", and the Admin tab needs it." : ".") : ""))) return;
+    run(async function () { await removeFactor(f.id); setMsg("Removed."); await load(); });
+  }
+  function copySecret() {
+    try { navigator.clipboard.writeText(enroll.secret).then(function () { setCopied(true); }, function () {}); } catch (e) { /* select it by hand */ }
+  }
+
+  var n = factors ? factors.length : 0;
+  return (
+    <div style={S.card} id="mfa">
+      <div style={S.secH}>
+        <h3 style={S.cardH}>Two-factor authentication</h3>
+        <span style={{ fontSize: 11, color: n ? "#2d8659" : "#888" }}>{factors == null ? "Loading…" : n ? "On · " + n + " app" + (n === 1 ? "" : "s") : "Off"}</span>
+      </div>
+      <p style={S.help}>Anyone who can read your email can sign in with a link from it. With an authenticator app (iPhone Passwords, Google Authenticator, 1Password…) each sign-in also asks for a 6-digit code, and your data and keys stay locked without it.{isAdmin && !n ? " Admins must turn this on to use the Admin tab." : ""}</p>
+      {(factors || []).map(function (f) {
+        return (
+          <div key={f.id} style={{ display: "flex", gap: 6, marginTop: 6, alignItems: "center" }}>
+            <span style={{ flex: 1, fontSize: 13, color: "#c8c8d0" }}>{f.friendly_name || "Authenticator"} <span style={{ color: "#6b6b76" }}>· added {String(f.created_at || "").slice(0, 10)}</span></span>
+            <button style={Object.assign({}, S.smBtn, { color: "#888" })} disabled={busy} onClick={function () { remove(f); }}>Remove</button>
+          </div>
+        );
+      })}
+      {n === 1 && !enroll && <p style={Object.assign({}, S.help, { color: "#d4a017" })}>Add a second app as a backup (another phone, or a password manager). There are no recovery codes: lose your only app and an admin has to reset it for you.</p>}
+      {enroll ? (
+        <div style={{ marginTop: 10 }}>
+          <p style={S.help}>Scan this with your authenticator app{enroll.uri ? ", or on this phone tap “Open in authenticator app”" : ""}. Or type the key in by hand.</p>
+          {enroll.qr && <img src={enroll.qr} alt="QR code for your authenticator app" width={180} height={180} style={{ background: "#fff", padding: 8, borderRadius: 6, display: "block" }} />}
+          {enroll.uri && <a href={enroll.uri} style={Object.assign({}, S.smBtn, { display: "inline-block", marginTop: 8, textDecoration: "none" })}>Open in authenticator app</a>}
+          <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+            <code aria-label="Setup key" style={{ fontFamily: "monospace", fontSize: 13, color: "#c8c8d0", userSelect: "all", wordBreak: "break-all" }}>{groupSecret(enroll.secret)}</code>
+            <button style={S.smBtn} type="button" onClick={copySecret}><Check on={copied} />Copy key</button>
+          </div>
+          <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
+            <input style={Object.assign({}, S.inp, { width: 130, fontSize: 16, letterSpacing: "0.2em", fontFamily: "monospace" })} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]*"
+              placeholder="123456" aria-label="Code from the app" value={code} onChange={function (e) { setCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 6)); }}
+              onKeyDown={function (e) { if (e.key === "Enter" && code.length === 6) verify(); }} />
+            <button style={Object.assign({}, S.priBtn, { padding: "7px 14px", fontSize: 13 }, busy ? { opacity: 0.6 } : {})} disabled={busy || code.length !== 6} onClick={verify}>{busy ? "Checking…" : "Verify and turn on"}</button>
+            <button style={S.secBtn} disabled={busy} onClick={cancel}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+          <input style={Object.assign({}, S.inp, { width: 160 })} value={name} placeholder={n ? "name, e.g. iPad" : "name, e.g. iPhone"} aria-label="Authenticator name" onChange={function (e) { setName(e.target.value); }} />
+          <button style={Object.assign({}, S.priBtn, { padding: "7px 14px", fontSize: 13 }, busy ? { opacity: 0.6 } : {})} disabled={busy || factors == null} onClick={begin}>{n ? "Add a backup app" : "Set up an authenticator app"}</button>
+        </div>
+      )}
+      {msg && <div style={{ fontSize: 12, color: "#2d8659", marginTop: 6 }}>{msg}</div>}
+      {err && <div style={{ fontSize: 12, color: "#c44", marginTop: 6 }}>{err}</div>}
     </div>
   );
 }
@@ -3081,15 +3171,35 @@ function Wizard({ data, onComplete }) {
 }
 
 // ── Admin: allowlist management (admins only) ──
-function AdminTab() {
+export function AdminTab({ goSettings }) {
   var [emails, setEmails] = useState(null);
   var [input, setInput] = useState("");
   var [invite, setInvite] = useState(false);
   var [busy, setBusy] = useState(false);
   var [msg, setMsg] = useState(null);
+  var [needMfa, setNeedMfa] = useState(false); // admins must use two-factor (server: mfa_enroll_required)
 
-  function load() { listAllowed().then(setEmails).catch(function (e) { setMsg({ ok: false, text: e.message }); }); }
+  function load() { listAllowed().then(setEmails).catch(function (e) { if (e.code === MFA_ENROLL_REQUIRED) setNeedMfa(true); else setMsg({ ok: false, text: e.message }); }); }
   useEffect(function () { load(); }, []);
+  async function resetMfa(email) {
+    if (!window.confirm("Remove every two-factor app from " + email + "? Use this when they've lost their phone: they'll sign in by email alone and can set up a new app in Settings.")) return;
+    setBusy(true); setMsg(null);
+    try { var r = await resetAllowedMfa(email); setMsg({ ok: true, text: "Two-factor reset for " + email + " (" + r.removed + " removed)" }); load(); } catch (e) { setMsg({ ok: false, text: e.message }); }
+    setBusy(false);
+  }
+
+  if (needMfa) {
+    return (
+      <div>
+        <div style={S.secH}><h2 style={S.secT}>Allowlist</h2></div>
+        <div style={S.card}>
+          <h3 style={S.cardH}>Set up two-factor authentication</h3>
+          <p style={S.help}>Set up two-factor authentication in Settings to use the Admin tab. Admin access can invite people and change who may use the app, so it needs a code from an authenticator app, not just an email link.</p>
+          <button style={S.priBtn} onClick={function () { goSettings(); setTimeout(function () { var el = document.getElementById("mfa"); if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth" }); }, 50); }}>Set up two-factor</button>
+        </div>
+      </div>
+    );
+  }
 
   async function add() {
     if (!input.trim()) return;
@@ -3119,7 +3229,7 @@ function AdminTab() {
     <div>
       <div style={S.secH}><h2 style={S.secT}>Allowlist</h2></div>
       <div style={S.card}>
-        <p style={S.help}>The app is invite-only: sign-ups are off, so people get in by an invite from here, and only emails on this list can use the app. Changes write the <code>allowed_emails</code> table and take effect immediately. <b>Admin</b> = this tab and Publish demo; <b>Daily sync</b> = the scheduled background sync runs for that account about once a day (spends its MarketCheck quota); under the email, its last run and outcome.</p>
+        <p style={S.help}>The app is invite-only: sign-ups are off, so people get in by an invite from here, and only emails on this list can use the app. Changes write the <code>allowed_emails</code> table and take effect immediately. <b>Admin</b> = this tab and Publish demo; <b>Daily sync</b> = the scheduled background sync runs for that account about once a day (spends its MarketCheck quota); under the email, its last run and outcome. <b>2FA · reset</b> (shown when someone has two-factor on) removes their authenticator apps, for a lost phone.</p>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
           <input style={Object.assign({}, S.inp, { flex: 1, minWidth: 180 })} type="email" autoComplete="off" placeholder="person@example.com"
             value={input} onChange={function (e) { setInput(e.target.value); }} onKeyDown={function (e) { if (e.key === "Enter") add(); }} />
@@ -3149,6 +3259,7 @@ function AdminTab() {
                   <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#8a8a96", cursor: "pointer" }}>
                     <input type="checkbox" checked={!!row.scheduled_sync} disabled={busy} onChange={function (e) { flag(row.email, { scheduled_sync: e.target.checked }); }} />Daily sync
                   </label>
+                  {row.mfa > 0 && <button style={Object.assign({}, S.smBtn, { color: "#2d8659" })} disabled={busy} title={row.mfa + " two-factor app" + (row.mfa === 1 ? "" : "s") + " — click to reset (lost phone)"} onClick={function () { resetMfa(row.email); }}>2FA · reset</button>}
                   <button style={Object.assign({}, S.smBtn, { color: "#888" })} disabled={busy} onClick={function () { remove(row.email); }}>Remove</button>
                 </div>
               );
@@ -3821,6 +3932,7 @@ function HelpTab() {
         <p style={li}>Score (or Re-score) any single card with its ✨ button, or use <span style={b}>Score all</span> on the candidate queue. After you edit criteria, per-criterion guidance, or the scoring prompt, cards scored under the old settings show <span style={b}>⟳ Re-score (changed)</span>; <span style={b}>✨ Re-score filtered</span> (in the filter bar) re-applies to every candidate + watchlist listing matching the current filters at once.</p>
         <p style={li}><span style={b}>Filter bar</span> (Results): shows your <span style={b}>active profiles</span> by default — pick All profiles, or any single one (inactive ones included), plus category, dealer and tag. Everything follows it: candidates, the hidden-by-filters list, skipped cars, the watchlist, rejected and sold. <span style={b}>Approve All</span> approves just the candidates shown.</p>
         <p style={note}>Scoring runs in batches and fills in results as each batch finishes, so partial progress is kept. If a large run is interrupted (e.g. the tab is backgrounded), the finished ones stay scored and the rest are picked up on the next sync/score. The key is validated, stored encrypted server-side, and never shown again — it's only used for your own AI requests (scoring, baselines, Price Check, profile suggestions) under your own account. Note: the API is pay-as-you-go and needs credits in the Anthropic Console; a Claude Pro/Max subscription does not include API access.</p>
+        <p style={note}><span style={b}>Two-factor</span> (Settings): add an authenticator app and every email sign-in also asks for its 6-digit code, so someone in your inbox can't get to your data or keys. Add a second app as a backup — there are no recovery codes; if you lose every app, an admin can reset it (Admin tab → 2FA · reset). Admins must have it on to use the Admin tab.</p>
       </div>
 
       <div style={S.card}>

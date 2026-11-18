@@ -25,6 +25,8 @@ over architecture.
   one-time code — see `supabase/README.md`) + `app_state` (one JSONB blob per
   user) and a server-only `user_api_keys` vault (each user's encrypted
   Anthropic and MarketCheck keys). RLS + the `allowed_emails` allowlist.
+  Optional TOTP two-factor (Supabase Auth MFA; required for admins): once
+  enrolled, an aal1 (email-only) session is refused by the API and by RLS.
 - **External APIs:** MarketCheck (dealer inventory) and Anthropic (AI scoring),
   both called only from `api/`. Keys never reach the browser: the user's own
   keys live encrypted in `user_api_keys` (`api/_keys.js` is the only place that
@@ -48,7 +50,8 @@ over architecture.
 | `src/keys.js` | Client for the MarketCheck keys in the vault (list / add / rename / reorder / remove / the one-time import from an old blob). |
 | `src/storage.js` | Supabase-backed get/set of the per-user JSONB blob: `set()` is one `save_app_state()` RPC (compare-and-swap on `rev`, in the database); `watchState()` is the Realtime subscription to the user's own row. |
 | `src/supabaseClient.js` | Supabase client + default URL/anon key. |
-| `src/Auth.jsx` | Email auth gate: tap the magic link, **paste** it (`src/authLink.js` — how an iOS Home Screen web app signs in, since links open in Safari), or type the one-time code (needs custom SMTP + template) — plus the "not authorized" screen. |
+| `src/Auth.jsx` | Email auth gate: tap the magic link, **paste** it (`src/authLink.js` — how an iOS Home Screen web app signs in, since links open in Safari), or type the one-time code (needs custom SMTP + template) — plus the "not authorized" screen, and `StepUp`, the two-factor code prompt shown before the app loads when the account has an authenticator app (`src/mfa.js`). |
+| `src/mfa.js` | Two-factor (TOTP) client: pure `assurance(session)` / `needsStepUp` (aal from the session's own JWT + `user.factors` — no network), `qrSrc`; wrappers over `supabase.auth.mfa.*` (`listTotp`, `startEnroll`, `confirmEnroll`, `removeFactor`, `verifyStepUp` — tries each app). UI: `MfaCard` (Settings) in `App.jsx`. Pure parts tested. |
 | `src/main.jsx`, `src/index.css` | Entry point + global styles. |
 | `src/locations.js` | Home-base picker logic: parse/search `public/locations.txt` (city or ZIP suggestions with coordinates). Pure, tested. |
 | `src/syncPlan.js` | **What a sync does and costs.** Per active profile: a full refresh (due after 3 days, an edit, or a manual Sync) or a new-listings pass; then a VIN lookup of watchlist cars the searches didn't return (the only "gone" signal); then a NeoVIN VIN decode for cars with no color (≤10 a sync, each VIN once — `settings.mcColors`). `planSync`, `runSync` (orchestration with an injected step runner — shared by the browser and the scheduled sync), `estimateCost`, `nextProfileMeta` (`settings.mcProfiles`). Pure, tested. |
@@ -67,7 +70,7 @@ over architecture.
 | `src/quota.js` | MarketCheck quota bookkeeping for the header gauge + modal: per-key snapshots (from syncs / live searches — never its own calls), capacity across keys (used in order), sync-cost estimates. Pure, tested. |
 | `public/locations.txt` | Flat file (`ST|City|ZIP|lat|lon`, ~41k rows) behind the location picker; lazy-loaded, not bundled. Built by `scripts/build-locations.mjs` from GeoNames (CC BY 4.0). |
 | `api/marketcheck.js` | Serverless proxy to MarketCheck (holds the API key). One sync step per request (`runStep`: full / new / count / vins / local) over a `createSession` (key failover, throttle, time budget). `buildUrl`/`normalize`. |
-| `api/_auth.js` | Server-side auth + allowlist: `authorize()` verifies the access token locally (`getClaims()` against the project's ES256 signing keys, JWKS cached per warm instance — no Auth-server call), then `{ user: { id, email }, admin }` from one `my_access()` RPC. Shared module. |
+| `api/_auth.js` | Server-side auth + allowlist: `authorize()` verifies the access token locally (`getClaims()` against the project's ES256 signing keys, JWKS cached per warm instance — no Auth-server call), then `{ user: { id, email }, admin, mfa: { enrolled, aal } }` from one `my_access_mfa()` RPC; an enrolled user's aal1 token → 401 `mfa_required`. `requireAdmin()` (admin **and** aal2, else 403 `mfa_enroll_required`), `deny()` (sends `{ error, code }`). Shared module. |
 | `api/allowlist.js`, `src/admin.js` | Admin tab (admins only, `allowed_emails.is_admin`): list / add / remove emails, send an invite (the only way to get an account), toggle Admin / Daily sync per row. |
 | `api/me.js` | Allowlist + admin + key-status check for the UI (key metadata only). |
 | `api/_scoring.js` | Scoring prompt/schema/coercion + model allowlist (`resolveScoreModel`). |
@@ -83,8 +86,8 @@ over architecture.
 | `src/geo.js`, `src/tableSort.js` | Straight-line distance to the home base; shared sortable-table helpers (Compare, Price comps). Pure, tested. |
 | `api/cron-sync.js` | Scheduled background sync (`CRON_SECRET`-gated; accounts with `allowed_emails.scheduled_sync`). `POST { email }` syncs one account — sent per account by the database dispatcher (pg_cron + pg_net, `dispatch_scheduled_sync()`, every 15 min, URL + secret in Supabase Vault). The daily Vercel Cron run (no target) does the keepalive + the vault's v1 → v2 re-encryption sweep + the orphan-photo sweep (`sweepOrphanPhotos`, `api/_photos.js`), and syncs due accounts itself only while the dispatcher isn't set up (`scheduled_sync_dispatcher_ready()`). Stamps `allowed_emails.last_scheduled_sync` on attempt + `last_scheduled_sync_result`. Tested. |
 | `api/_suggest.js` | The wizard's optional AI step (`api/ai.js` task `suggest`): must-haves / dealbreakers / years to avoid / trim notes from the vehicle + Explore's market snapshot. Prompt, schema, `coerceSuggestion` (tested). |
-| `supabase/migrations/*.sql` | DB schema: `app_state` + RLS, allowlist, Anthropic-key vault, backup history + trigger, `rev`, demo snapshot, grant/RLS tightening, the `listing-photos` bucket + its `storage.objects` policies, the pg_cron/pg_net scheduled-sync dispatcher. |
-| `supabase/tests/*.test.sql`, `supabase/config.toml` | pgTAP tests (`supabase test db`): RLS, grants and `save_app_state()` (`rls.test.sql`); allowlist flags, `my_access()`, the key vault, backup scrubbing (`access.test.sql`); the scheduled-sync dispatcher (`scheduled_sync.test.sql`); the photo bucket's policies (`storage.test.sql`); run as `anon`/`authenticated`; CLI config (Postgres 17). |
+| `supabase/migrations/*.sql` | DB schema: `app_state` + RLS, allowlist, Anthropic-key vault, backup history + trigger, `rev`, demo snapshot, grant/RLS tightening, the `listing-photos` bucket + its `storage.objects` policies, the pg_cron/pg_net scheduled-sync dispatcher, two-factor enforcement (`mfa_ok()`, restrictive aal2 policies, `my_access_mfa()`). |
+| `supabase/tests/*.test.sql`, `supabase/config.toml` | pgTAP tests (`supabase test db`): RLS, grants and `save_app_state()` (`rls.test.sql`); allowlist flags, `my_access()`, the key vault, backup scrubbing (`access.test.sql`); the scheduled-sync dispatcher (`scheduled_sync.test.sql`); the photo bucket's policies (`storage.test.sql`); two-factor: `mfa_ok()`, the restrictive aal2 policies, `my_access_mfa()` (`mfa.test.sql`, claims carry `aal`); run as `anon`/`authenticated`; CLI config (Postgres 17). |
 | `supabase/templates/magic_link.html` | Magic Link email body with the one-time code (paste into the Dashboard; needs custom SMTP). |
 | `.github/workflows/migrations.yml` | Validate + apply migrations. |
 | `docs/listing-pipeline.md` | **Design doc** for the sync pipeline. Read for the "why". |
@@ -149,11 +152,23 @@ See `docs/listing-pipeline.md` for the full design. In short:
 - **Auth + allowlist (server-enforced):** sign-in is invite-only (the client
   never creates users — `shouldCreateUser: false` — and the project has
   sign-ups off; admins invite from the Admin tab). `api/_auth.js` also requires
-  the email be in the `allowed_emails` table (`my_access()` RPC, which also says
-  whether they're an admin) — there is no env-var allowlist. RLS on `app_state`
-  enforces the same at the data layer (`is_allowed()`). The UI calls `GET /api/me`
-  and shows a friendly screen for non-allowlisted users (fails open on error —
-  RLS/API are the real boundary).
+  the email be in the `allowed_emails` table (`my_access_mfa()` RPC, which also
+  says whether they're an admin and have two-factor) — there is no env-var
+  allowlist. RLS on `app_state` enforces the same at the data layer
+  (`is_allowed()`). The UI calls `GET /api/me` and shows a friendly screen for
+  non-allowlisted users (fails open on error — RLS/API are the real boundary).
+- **Two-factor (TOTP, Supabase Auth MFA):** opt-in for users, required for
+  admins. Enrolled in Settings (`MfaCard`); after any email sign-in an
+  enrolled account's session is aal1 and `AuthGate` shows `StepUp` until a
+  code makes it aal2. Enforced three ways: `authorize()` (aal1 + verified
+  factor → 401 `mfa_required`), admin endpoints via `requireAdmin()` (aal2 or
+  403 `mfa_enroll_required` — the Admin tab then shows a "set up two-factor"
+  prompt), and a RESTRICTIVE RLS policy on `app_state` and `storage.objects`
+  (`public.mfa_ok()`: aal2, or no verified factor), which also covers
+  `save_app_state()` and Realtime. Service-role paths (cron, backup restore)
+  are unaffected. No recovery codes: a second app is the backup, and an admin
+  can reset someone's factors (Admin → 2FA · reset); see `supabase/README.md`
+  for the owner's Dashboard fallback.
 - **Sync pipeline:** `src/syncPlan.js` plans it; `src/sync.js` → `POST
   /api/marketcheck` per step (proxy holding `MARKETCHECK_API_KEY`) → MarketCheck
   `/v2/search/car/active`, **nationwide, one search per active profile**, salt-belt
@@ -342,11 +357,21 @@ curl -X POST "$SITE/api/marketcheck?mock=1" \
   -d '{"kind":"full","profile":{"id":"rav4-hybrid","name":"RAV4 Hybrid","params":{"make":"Toyota","model":"RAV4","powertrain":"Hybrid","years":"2019-2022","maxPrice":25000,"maxMiles":90000}}}'
 ```
 `?mock=1` costs nothing; `?raw=1` makes one real (billed) call. Remove the
-user's `allowed_emails` row to revoke.
+user's `allowed_emails` row to revoke. The password user has no two-factor
+factor, so its aal1 token is accepted (don't enroll it, and don't make it an
+admin: admin endpoints need aal2).
 
 ### Auth / allowlist
-- `401` from `/api/*` = not signed in / missing-invalid token. `403` = signed in
-  but not allowlisted.
+- `401` from `/api/*` = not signed in / missing-invalid token. `401` with
+  `code: "mfa_required"` = the account has an authenticator app and the token
+  is aal1 (the client shows the code prompt). `403` = signed in but not
+  allowlisted; `403` with `code: "mfa_enroll_required"` = an admin endpoint and
+  the admin hasn't set up two-factor.
+- Lost authenticator: an admin uses Admin → **2FA · reset** for that email;
+  if it's the only admin, Dashboard → Authentication → Users → the user →
+  remove their MFA factors (`supabase/README.md`).
+- Empty data for an enrolled user = an aal1 token hitting the restrictive
+  `app_state_mfa` policy; sign out and back in with the code.
 - Allowed if the email is in the `allowed_emails` table (any letter case) —
   manage it from the Admin tab. Admin = `is_admin`.
 - Someone with no account who asks for a sign-in email gets "invite-only" back

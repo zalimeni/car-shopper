@@ -16,13 +16,13 @@
 // labels, the last 4 characters, and whether a key works.
 
 import Anthropic from "@anthropic-ai/sdk";
-import { authorize } from "./_auth.js";
+import { authorize, deny } from "./_auth.js";
 import { cryptoReady } from "./_crypto.js";
 import { keyMeta, setAnthropicKey, deleteAnthropicKey, addMarketcheckKeys, updateMarketcheckKeys, deleteMarketcheckKey, looksLikeMarketcheckKey } from "./_keys.js";
 
 export default async function handler(req, res) {
   const auth = await authorize(req);
-  if (auth.error) { res.status(auth.status).json({ error: auth.error }); return; }
+  if (auth.error) { deny(res, auth); return; }
   const userId = auth.user.id;
 
   if (req.method === "GET") { res.status(200).json(await keyMeta(userId)); return; }

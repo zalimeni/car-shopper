@@ -64,6 +64,11 @@ describe("demo mode", () => {
     await window.fetch("/api/pricecomps", { method: "POST" });
     await screen.findByText(/Live comparables are off in the demo/);
 
+    // Settings has no two-factor section in the demo (no supabase.auth.mfa calls).
+    fireEvent.click(screen.getAllByText("Settings")[0]);
+    await screen.findByText("✨ AI key (Anthropic)");
+    expect(screen.queryByText("Two-factor authentication")).toBeNull();
+
     await waitFor(() => expect(apiCalls).toEqual([]));
     expect(writes).toEqual([]); // nothing written to Supabase
   });
