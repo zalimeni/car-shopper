@@ -4,8 +4,6 @@
 //        { anthropic: { configured, valid, last4 }, marketcheck: [{ id, label, last4, position, valid }] }
 //   POST   { key }                         — Anthropic: validate against Anthropic, then store
 //   POST   { provider: "marketcheck", key, label? }   — add one MarketCheck key (appended)
-//   POST   { provider: "marketcheck", import: [{ key, label }] } — move keys from an
-//                                            old app-state blob into the vault (skips duplicates)
 //   PATCH  { provider: "marketcheck", id, label } and/or { order: [id, …] }
 //   DELETE { provider?: "anthropic" }      — remove the Anthropic key
 //   DELETE { provider: "marketcheck", id } — remove one MarketCheck key
@@ -39,14 +37,13 @@ export default async function handler(req, res) {
   if (provider === "marketcheck") {
     if (req.method === "DELETE") { await done(await deleteMarketcheckKey(userId, body.id)); return; }
     if (req.method === "PATCH") { await done(await updateMarketcheckKeys(userId, { id: body.id, label: body.label, order: body.order })); return; }
-    const list = Array.isArray(body.import) ? body.import : [{ key: body.key, label: body.label }];
-    const clean = list.map(function (e) { return { key: String((e && e.key) || "").trim(), label: (e && e.label) || "" }; }).filter(function (e) { return e.key; });
-    if (!clean.length) { res.status(400).json({ error: "Missing 'key'" }); return; }
-    if (!Array.isArray(body.import) && !looksLikeMarketcheckKey(clean[0].key)) {
+    const key = typeof body.key === "string" ? body.key.trim() : "";
+    if (!key) { res.status(400).json({ error: "Missing 'key'" }); return; }
+    if (!looksLikeMarketcheckKey(key)) {
       res.status(400).json({ error: "That doesn't look like a MarketCheck API key (letters and digits, 16+ characters)" });
       return;
     }
-    await done(await addMarketcheckKeys(userId, clean));
+    await done(await addMarketcheckKeys(userId, [{ key: key, label: body.label || "" }]));
     return;
   }
 

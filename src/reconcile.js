@@ -45,14 +45,12 @@ export function reconcile(existing, fetched, todayStr, opts) {
     if (next.goneAt) delete next.goneAt; // relisted
     // Keep the market facts that drift over time current on every sighting.
     if (f.dom != null) next.dom = f.dom;
-    if (f.distMi != null) next.distMi = f.distMi;
     if (f.fees != null) next.fees = f.fees;
     if (f.dLat != null && f.dLon != null) { next.dLat = f.dLat; next.dLon = f.dLon; }
     if (f.mcSeen) next.mcSeen = f.mcSeen;
     // Fill a color the listing never had (e.g. decoded from the VIN this sync).
     if (!l.color && f.color) next.color = f.color;
     if (!l.baseColor && f.baseColor) { next.baseColor = f.baseColor; if (f.colorSource) next.colorSource = f.colorSource; }
-    if (next.mcQ) delete next.mcQ; // per-search tags from the old unchanged-search shortcut
     // One-time basis correction: listings synced before we stored prices
     // pre-fee carry the fee inside `price`. When the new price differs by exactly
     // that fee it isn't a price move — fix the stored price (and its history)
@@ -85,7 +83,7 @@ export function reconcile(existing, fetched, todayStr, opts) {
   Object.keys(byVin).forEach(function (vin) {
     if (matched[vin]) return;
     const f = byVin[vin];
-    candidates.push(Object.assign({}, f, {
+    const c = Object.assign({}, f, {
       addedDate: todayStr,
       lastChecked: todayStr,
       lastSeen: todayStr,
@@ -94,7 +92,11 @@ export function reconcile(existing, fetched, todayStr, opts) {
       dealRating: "",
       notes: "",
       priceHistory: f.price ? [{ date: todayStr, price: f.price }] : [],
-    }));
+    });
+    // normalize()'s distMi is the radius from a located search (Price Check's live
+    // comps); nationwide syncs have none, and stored cars use dLat/dLon instead.
+    delete c.distMi;
+    candidates.push(c);
     summary.newCount++;
   });
 

@@ -17,14 +17,12 @@ describe("collectObserved", () => {
     const data = {
       listings: [{ vin: "A", status: "rejected" }, { vin: "B", status: "watch" }],
       skipped: [{ vin: "C" }, { vin: "A" }], // A already present -> ignored
-      pendingCandidates: [{ vin: "D" }],
     };
     const got = collectObserved(data, [{ vin: "E" }]);
-    // Order: listings, skipped, candidates, then cron-parked pendingCandidates.
-    expect(got.map((o) => o.l.vin)).toEqual(["A", "B", "C", "E", "D"]);
+    // Order: listings, skipped, then candidates.
+    expect(got.map((o) => o.l.vin)).toEqual(["A", "B", "C", "E"]);
     expect(got.find((o) => o.l.vin === "A").status).toBe("rejected");
     expect(got.find((o) => o.l.vin === "C").status).toBe("skipped");
-    expect(got.find((o) => o.l.vin === "D").status).toBe("candidate");
     expect(got.find((o) => o.l.vin === "E").status).toBe("candidate");
   });
 });

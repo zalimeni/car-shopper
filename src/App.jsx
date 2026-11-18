@@ -15,7 +15,7 @@ import { shareUnder, capChoices, estimateMatches, rangeYears, yearOptions, yearC
 import { getKeyStatus, saveKey, removeKey, scoreSet, getScorePrompt, generateBaseline, generatePriceAssessment, suggestProfile, SCORE_MODEL_OPTIONS, DEFAULT_SCORE_MODEL } from "./score";
 import { getMe, listAllowed, addAllowed, removeAllowed, setAllowedFlags, resetAllowedMfa } from "./admin";
 import { listTotp, startEnroll, confirmEnroll, cancelEnroll, removeFactor, groupSecret, friendlyMfaError, MFA_ENROLL_REQUIRED } from "./mfa";
-import { listMarketcheckKeys, addMarketcheckKey, importMarketcheckKeys, renameMarketcheckKey, reorderMarketcheckKeys, removeMarketcheckKey, legacyBlobKeys } from "./keys";
+import { listMarketcheckKeys, addMarketcheckKey, renameMarketcheckKey, reorderMarketcheckKeys, removeMarketcheckKey } from "./keys";
 import { listSnapshots, restoreSnapshot } from "./snapshots";
 import { buildPriceHistoryCsv } from "./priceExport";
 import { localPriceCheck } from "./priceCheck";
@@ -24,7 +24,7 @@ import { homeMiles } from "./geo";
 import { parseMarkdown, clampMemo, MEMO_MAX } from "./markdown";
 import { addTag, removeTag, allTags, hasTag, TAG_MAX } from "./tags";
 import { baseColorOf, colorHideReason, colorChoices, COMMON_COLORS } from "./colors";
-import { summarize, ingestSnaps, recordSyncCalls, syncsLeft, gaugeTone, dedupeKeyEntries, spentKeyIds, FREE_PLAN_CALLS, parseMcTime } from "./quota";
+import { summarize, ingestSnaps, recordSyncCalls, syncsLeft, gaugeTone, spentKeyIds, FREE_PLAN_CALLS, parseMcTime } from "./quota";
 import { loadLocations, searchLocations, hubFromZip } from "./locations";
 import { useStoredPhoto, signPhotoKeys, copyPhotos, removePhotos, currentUid, missing as photoMissing } from "./photos";
 import { photoTodo, applyPhotoResults, isPhotoKey } from "./photoKey";
@@ -32,7 +32,7 @@ import { photoTodo, applyPhotoResults, isPhotoKey } from "./photoKey";
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
 
 var STORAGE_KEY = "car-search-data";
-var VERSION = 10;
+var VERSION = 11;
 var STALE_DAYS = 5;
 var STALE_MC_DAYS = 3; // flag a listing MarketCheck itself last confirmed this many days ago
 // A synced listing unseen in results for this long is almost certainly sold —
@@ -243,12 +243,11 @@ function safeHttpUrl(u) {
 // ── Import Validation ──
 var REQUIRED_FIELDS = ["vehicle", "year", "price", "profileId"];
 var VALID_STATUSES = ["watch", "rejected", "sold"];
-var VALID_DEALER_TYPES = ["CPO", "franchise", "independent", "private"];
-// Display label for a dealer type ("CPO" stays initialism; others capitalized).
-function dealerLabel(d) { return d === "CPO" ? "CPO" : (d || "").charAt(0).toUpperCase() + (d || "").slice(1); }
-// Certified Pre-Owned: its own boolean now, but tolerate listings synced before
-// that field existed (they carry the legacy dealerType === "CPO").
-function isCpo(l) { return !!(l && (l.cpo === true || l.dealerType === "CPO")); }
+var VALID_DEALER_TYPES = ["franchise", "independent", "private"];
+// Display label for a dealer type (capitalized).
+function dealerLabel(d) { return (d || "").charAt(0).toUpperCase() + (d || "").slice(1); }
+// Certified Pre-Owned: its own boolean, separate from the dealer type.
+function isCpo(l) { return !!(l && l.cpo === true); }
 var DEALER_CPO = "__cpo__"; // synthetic dealer-filter value: certified only (cross-cuts dealer type)
 
 function validateListing(obj, index, profileIds) {
@@ -351,7 +350,6 @@ export function parseImport(text, profileIds, uid) {
         carfax_1_owner: typeof obj.carfax_1_owner === "boolean" ? obj.carfax_1_owner : null,
         carfax_clean_title: typeof obj.carfax_clean_title === "boolean" ? obj.carfax_clean_title : null,
         dom: obj.dom != null && !isNaN(Number(obj.dom)) ? Number(obj.dom) : null,
-        distMi: obj.distMi != null && !isNaN(Number(obj.distMi)) ? Number(obj.distMi) : null,
         fees: obj.fees > 0 ? Number(obj.fees) : null,
         dLat: obj.dLat != null && !isNaN(Number(obj.dLat)) ? Number(obj.dLat) : null,
         dLon: obj.dLon != null && !isNaN(Number(obj.dLon)) ? Number(obj.dLon) : null,
@@ -464,28 +462,10 @@ function dedupInsert(existing, newL) {
 
 export function migrate(data) {
   if (!data) return null;
+  // Steps before v8 were retired once every stored blob had passed them. An
+  // older blob still runs the steps below (each tolerates a missing piece) and
+  // the defaults-merging tail, so it loads with defaults filled in.
   var v = data.version || 1;
-  if (v < 2) {
-    data.listings = (data.listings || []).map(function (l) {
-      return Object.assign({}, l, { lastChecked: l.lastChecked || l.addedDate || today(), vin: l.vin || "" });
-    });
-  }
-  if (v < 3) { data.globalReqs = data.globalReqs || DEFAULT_REQS; }
-  if (v < 5) {
-    // MarketCheck's model is "RAV4"; hybrids/PHEVs are filtered by powertrain_type.
-    data.profiles = (data.profiles || []).map(function (p) {
-      if (!p.params) return p;
-      if (p.params.model === "RAV4 Hybrid") return Object.assign({}, p, { params: Object.assign({}, p.params, { model: "RAV4", powertrain: "Hybrid" }) });
-      if (p.params.model === "RAV4 Prime") return Object.assign({}, p, { params: Object.assign({}, p.params, { model: "RAV4", powertrain: "PHEV" }) });
-      return p;
-    });
-  }
-  if (v < 7) {
-    // The "purchased" (Bought) status is retired; fold it into "sold".
-    data.listings = (data.listings || []).map(function (l) {
-      return l.status === "purchased" ? Object.assign({}, l, { status: "sold" }) : l;
-    });
-  }
   if (v < 8 && data.settings) {
     // Searches went nationwide: the search-location list is gone. Its first located
     // entry becomes the home base if none was set; the old search fingerprints go.
@@ -521,7 +501,23 @@ export function migrate(data) {
     };
     ["listings", "candidates", "skipped"].forEach(function (k) { if (Array.isArray(data[k])) data[k] = data[k].map(noDom); });
   }
-  // v6: budget/tax/tagline moved into data.settings (was hardcoded).
+  if (v < 11) {
+    // Listing-shape leftovers: certification is its own `cpo` flag (an old
+    // dealerType "CPO" hid the real dealer type, so that becomes unknown); the
+    // search-radius `distMi` (cards and scoring use the dealer's coordinates)
+    // and the old per-search `mcQ` tags are gone.
+    var tidy = function (l) {
+      if (!l || (l.dealerType !== "CPO" && !("distMi" in l) && !("mcQ" in l))) return l;
+      var x = Object.assign({}, l);
+      if (x.dealerType === "CPO") { x.cpo = true; x.dealerType = ""; }
+      delete x.distMi;
+      delete x.mcQ;
+      return x;
+    };
+    ["listings", "candidates", "skipped"].forEach(function (k) { if (Array.isArray(data[k])) data[k] = data[k].map(tidy); });
+  }
+  if (!Array.isArray(data.profiles)) data.profiles = [];
+  if (!Array.isArray(data.listings)) data.listings = [];
   data.settings = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
   // Existing users are already set up — don't pop the wizard at them.
   if (data.onboarded == null) data.onboarded = true;
@@ -566,38 +562,23 @@ export function trimQueue(list) {
   return q.length > QUEUE_MAX ? q.slice(q.length - QUEUE_MAX) : q; // keep the newest
 }
 // The queue to start from when the app state loads: the saved queue minus cars
-// since decided, plus any candidates the old scheduled sync parked in
-// pendingCandidates (deduped). Cars the scheduled
-// sync added (fromScheduled) are counted for a notice and unflagged.
+// since decided. Cars the scheduled sync added (fromScheduled) are counted for a
+// notice and unflagged.
 // -> { queue, data (with candidates set), changed, scheduled }
 export function restoreQueue(d) {
   var saved = Array.isArray(d.candidates) ? d.candidates : [];
   var base = pruneQueue(saved, d);
-  var seen = {};
-  base.forEach(function (c) { if (c && c.vin) seen[String(c.vin).toUpperCase()] = true; });
-  var fresh = function (list) {
-    return pruneQueue(list || [], d).filter(function (c) {
-      var k = c && c.vin ? String(c.vin).toUpperCase() : null;
-      if (!k) return true;
-      if (seen[k]) return false;
-      seen[k] = true;
-      return true;
-    });
-  };
   var crit = d.criteria || DEFAULT_CRITERIA;
-  var parked = fresh(Array.isArray(d.pendingCandidates) ? d.pendingCandidates : [])
-    .map(function (c) { return Object.assign({}, c, { compositeScore: calcScore(c.scores, crit), _candidate: true, fromScheduled: true }); });
   var scheduled = 0;
-  var queue = trimQueue(base.concat(parked).map(function (c) {
+  var queue = trimQueue(base.map(function (c) {
     if (!c || !c.fromScheduled) return c;
     scheduled++;
     var x = Object.assign({}, c, { compositeScore: calcScore(c.scores, crit), _candidate: true });
     delete x.fromScheduled;
     return x;
   }));
-  var changed = base.length !== saved.length || parked.length > 0 || scheduled > 0 || d.pendingCandidates != null;
+  var changed = base.length !== saved.length || scheduled > 0;
   var data = Object.assign({}, d, { candidates: queue });
-  delete data.pendingCandidates;
   return { queue: queue, data: data, changed: changed, scheduled: scheduled };
 }
 // Queue entries already decided: on the watchlist (or rejected/sold) or skipped.
@@ -769,8 +750,8 @@ export default function App() {
           var prevVersion = JSON.parse(r.value).version;
           d = migrate(JSON.parse(r.value));
           d.listings = recalcAll(d.listings || [], d.criteria || DEFAULT_CRITERIA);
-          // The review queue (data.candidates): drop cars since decided, merge
-          // anything the scheduled sync parked.
+          // The review queue (data.candidates): drop cars since decided, count
+          // what the scheduled sync added.
           var rq = restoreQueue(d);
           d = rq.data;
           queueSavedRef.current = rq.queue;
@@ -905,28 +886,6 @@ export default function App() {
     if (!DEMO) listMarketcheckKeys().then(function (l) { if (!cancelled && l) setMcVault(l); });
     return function () { cancelled = true; };
   }, []);
-
-  // One-time move: MarketCheck keys saved before the vault sit in the synced
-  // settings. Hand them to the server, and drop the blob's copy only once the
-  // server has them. (The scheduled sync and a backup restore move them too.)
-  var movingKeys = useRef(false);
-  useEffect(function () {
-    if (DEMO || !data || movingKeys.current) return;
-    var old = dedupeKeyEntries(legacyBlobKeys(data.settings));
-    if (!old.length) return;
-    movingKeys.current = true; // once per load; a failure retries on the next one
-    importMarketcheckKeys(old).then(function (list) {
-      setMcVault(list);
-      setData(function (prev) {
-        if (!prev || !prev.settings || !prev.settings.marketcheckKeys) return prev;
-        var st = Object.assign({}, prev.settings);
-        delete st.marketcheckKeys;
-        var nd = Object.assign({}, prev, { settings: st });
-        persist(nd);
-        return nd;
-      });
-    }).catch(function (e) { console.warn("Couldn't move MarketCheck keys to the vault:", e && e.message); });
-  }, [data, persist]);
 
   var autoScore = data ? data.autoScore !== false : true;
   var setAutoScore = useCallback(function (v) {
@@ -1513,7 +1472,7 @@ export default function App() {
         </div>
       )}
 
-      {!DEMO && mcVault && mcVault.length === 0 && !legacyBlobKeys(data.settings).length && tab !== "Settings" && (
+      {!DEMO && mcVault && mcVault.length === 0 && tab !== "Settings" && (
         <div style={S.conflictBar}>
           <span style={{ flex: 1 }}>No MarketCheck API key set — syncs use the app's shared key and may hit its monthly quota. Add your own for reliable results (once you do, the shared key is no longer used).</span>
           <button style={S.smBtn} onClick={function () { setTab("Settings"); }}>Open Settings</button>
@@ -3548,9 +3507,9 @@ function CompareTab({ data, cardCtx, saveCols }) {
 
   var base = data.listings.filter(function (l) { return l.status === "watch" && sel.indexOf(l.profileId) > -1; });
   // Dealer-type filter options (Results-style), from the types actually present;
-  // CPO is the separate cross-cutting option (legacy "CPO" dealerType excluded).
+  // CPO is the separate cross-cutting option.
   var dealerOpts = [];
-  base.forEach(function (l) { if (l.dealerType && l.dealerType !== "CPO" && dealerOpts.indexOf(l.dealerType) === -1) dealerOpts.push(l.dealerType); });
+  base.forEach(function (l) { if (l.dealerType && dealerOpts.indexOf(l.dealerType) === -1) dealerOpts.push(l.dealerType); });
   dealerOpts.sort();
   var anyCpo = base.some(isCpo);
   var cmpTagOpts = allTags(base);
@@ -3569,7 +3528,7 @@ function CompareTab({ data, cardCtx, saveCols }) {
     { id: "year", label: "Year", get: function (l) { return l.year; }, fmt: function (v) { return String(v); }, best: "max" },
     { id: "dealer", wrap: true, label: "Dealer", get: function (l) { return l.dealer ? l.dealer + " (" + (l.dealerType || "?") + ")" : ""; }, fmt: function (v) { return v; } },
     { id: "location", wrap: true, label: "Location", get: function (l) { return [l.location, l.state].filter(Boolean).join(", ") + (isSalt(l.state) ? " 🧂" : ""); }, fmt: function (v) { return v; } },
-    { id: "distance", label: homeBase ? "Miles from home" : "Distance", get: function (l) { var m = homeMiles(l, homeBase); return m != null ? m : l.distMi; }, fmt: function (v) { return v + " mi"; }, best: "min" },
+    { id: "distance", label: homeBase ? "Miles from home" : "Distance", get: function (l) { return homeMiles(l, homeBase); }, fmt: function (v) { return v + " mi"; }, best: "min" },
     { id: "color", wrap: true, label: "Color", get: function (l) { return l.color; }, fmt: function (v) { return v; } },
     { id: "dom", label: "Days listed (this dealer)", get: function (l) { return l.dom; }, fmt: function (v) { return String(v); }, best: "min" },
   ];
@@ -4031,10 +3990,10 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   var activeProfiles = data.profiles.filter(function (p) { return p.active; });
   var roleOpts = [];
   data.profiles.forEach(function (p) { if (p.role && roleOpts.indexOf(p.role) === -1) roleOpts.push(p.role); });
-  // Dealer-type filter options, drawn from the types actually present (legacy
-  // "CPO" excluded — certification is now the separate cross-cutting option below).
+  // Dealer-type filter options, drawn from the types actually present
+  // (certification is the separate cross-cutting option below).
   var dealerOpts = [];
-  data.listings.forEach(function (l) { if (l.dealerType && l.dealerType !== "CPO" && dealerOpts.indexOf(l.dealerType) === -1) dealerOpts.push(l.dealerType); });
+  data.listings.forEach(function (l) { if (l.dealerType && dealerOpts.indexOf(l.dealerType) === -1) dealerOpts.push(l.dealerType); });
   dealerOpts.sort();
   var anyCpo = data.listings.some(isCpo);
 
@@ -4740,8 +4699,6 @@ function DistBadge({ l, data }) {
     out.push(<span key="home" style={t.farFromHome ? { color: "#e8c96a" } : null}
       title={"Straight-line miles from your home base (driving is typically 20–30% longer)" + (t.farFromHome ? " — over " + DRIVE_MAX_MI + " mi, so shipping or flying in is likelier than driving" : "")}>
       📍 {t.homeMi} mi from home{t.farFromHome ? " · ship or fly" : ""}</span>);
-  } else if (l.distMi != null) {
-    out.push(<span key="home" title="Distance from the search location this turned up in — not from your home base">📍 ~{l.distMi} mi from search area</span>);
   }
   if (t.airport) {
     out.push(<span key="ap" style={t.airport.near ? { color: "#3fae74" } : { color: "#6b6b76" }}
@@ -4854,8 +4811,11 @@ function LForm({ profiles, criteria, onSave, initial }) {
         <div style={Object.assign({}, S.field, { gridColumn: "1/-1" })}><label style={S.lbl}>URL</label><input style={S.inp} value={f.link || ""} onChange={function (e) { set("link", e.target.value); }} /></div>
         <div style={S.field}><label style={S.lbl}>Dealer type</label>
           <select style={S.inp} value={f.dealerType} onChange={function (e) { set("dealerType", e.target.value); }}>
-            {["CPO", "franchise", "independent", "private"].map(function (t) { return (<option key={t} value={t}>{t}</option>); })}
+            {f.dealerType ? null : <option value="">unknown</option>}
+            {VALID_DEALER_TYPES.map(function (t) { return (<option key={t} value={t}>{t}</option>); })}
           </select></div>
+        <div style={S.field}><label style={S.lbl}>Certified Pre-Owned</label>
+          <label style={{ fontSize: 13, color: "#c8c8d0", display: "flex", alignItems: "center", gap: 6, minHeight: 34 }}><input type="checkbox" checked={f.cpo === true} onChange={function (e) { set("cpo", e.target.checked); }} /> CPO</label></div>
         <div style={Object.assign({}, S.field, { gridColumn: "1/-1" })}><label style={S.lbl}>Quick note <span style={{ color: "#555", fontWeight: 400 }}>(sync appends price changes here — use "Add notes" on the card for longer, markdown notes)</span></label><textarea style={S.ta} value={f.notes || ""} onChange={function (e) { set("notes", e.target.value); }} rows={2} /></div>
         {f.state && isSalt(f.state) && <div style={Object.assign({}, S.saltW, { gridColumn: "1/-1" })}>⚠ Salt-belt ({f.state})</div>}
       </div>
@@ -5002,7 +4962,7 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
         <span>${(l.price || 0).toLocaleString()}{l.fees > 0 && <span style={{ color: "#6b6b76", fontSize: 11 }}> +${l.fees.toLocaleString()} fees</span>}</span>
         <span>{(l.mileage || 0).toLocaleString()} mi</span>
         {l.color ? <span title={l.colorSource === "neovin" ? "From the car's factory build data (decoded from its VIN) — the listing itself has no color" : undefined}>{l.color}{l.colorSource === "neovin" ? " ⓥ" : ""}</span> : l.source === "marketcheck" ? <span style={{ color: "#6b6b76" }} title="MarketCheck has no color for this listing (common for marketplace-relayed ones) — check the photos">Color not listed</span> : null}
-        <span>{l.dealer} ({l.dealerType})</span>
+        <span>{l.dealer} ({l.dealerType || "?"})</span>
         <span>{l.location}, {l.state} {salt ? "🧂" : ""}</span>
         <DistBadge l={l} data={data} />
         <FreshBadge l={l} />

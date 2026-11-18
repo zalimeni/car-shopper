@@ -13,7 +13,7 @@ describe("v8 migration: searches went nationwide", () => {
     expect(d.settings.mcSearches).toBeUndefined();
     expect(d.settings.homeBase).toMatchObject({ z: "27701", lat: 35.99 });
     expect(d.settings.saltMode).toBe("exclude");
-    expect(d.version).toBe(10);
+    expect(d.version).toBe(11);
   });
   it("keeps a chosen home base, borrowing coordinates from its matching location", () => {
     const d = migrate({ version: 7, settings: { homeBase: { n: "Durham NC", z: "27701" }, hubs: [{ n: "Boston MA", z: "02101", lat: 42.36, lon: -71.06 }, { n: "Durham NC", z: "27701", lat: 35.99, lon: -78.9 }] } });
@@ -42,6 +42,34 @@ describe("v10 migration: frozen days-on-market notes are gone", () => {
     expect(d.listings.map((l) => l.notes)).toEqual(["↓ Price $21,000 → $20,000 (2026-10-02)", "", "30 days on market, priced high"]);
     expect(d.candidates[0].notes).toBe("");
     expect(d.skipped[0].notes).toBe("call Tues");
-    expect(d.version).toBe(10);
+    expect(d.version).toBe(11);
+  });
+});
+
+describe("v11 migration: listing-shape leftovers", () => {
+  it("turns a CPO dealer type into the cpo flag and drops distMi / mcQ, in every list", () => {
+    const d = migrate({ version: 10, settings: {},
+      listings: [{ id: "a", dealerType: "CPO", distMi: 12, mcQ: ["q1"] }, { id: "b", dealerType: "franchise", cpo: true }],
+      candidates: [{ vin: "V1", dealerType: "independent", distMi: null }], skipped: [{ vin: "V2", dealerType: "CPO" }] });
+    expect(d.listings[0]).toEqual({ id: "a", dealerType: "", cpo: true });
+    expect(d.listings[1]).toEqual({ id: "b", dealerType: "franchise", cpo: true });
+    expect(d.candidates[0]).toEqual({ vin: "V1", dealerType: "independent" });
+    expect(d.skipped[0]).toEqual({ vin: "V2", dealerType: "", cpo: true });
+    expect(d.version).toBe(11);
+  });
+  it("leaves a current listing untouched (same object)", () => {
+    const l = { id: "c", dealerType: "private", cpo: false };
+    expect(migrate({ version: 10, settings: {}, listings: [l] }).listings[0]).toBe(l);
+  });
+});
+
+describe("blobs older than the oldest kept step", () => {
+  it("still load, with defaults filled in", () => {
+    const d = migrate({ version: 1, listings: [{ id: "a", status: "watch", dealerType: "CPO" }] });
+    expect(d.version).toBe(11);
+    expect(d.profiles).toEqual([]);
+    expect(d.listings[0]).toMatchObject({ dealerType: "", cpo: true });
+    expect(d.settings.saltMode).toBe("exclude");
+    expect(d.onboarded).toBe(true);
   });
 });
