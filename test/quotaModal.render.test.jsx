@@ -67,12 +67,12 @@ describe("QuotaModal", () => {
     const { container } = open(data(store));
     const text = container.textContent;
     expect(text).toMatch(/Each active profile is one nationwide search \(salt-belt states left out\)/);
-    expect(text).toMatch(/fully refreshes them all: one call per 50 matching cars, so 5–14 calls/); // 3 + 1 + (1–10)
+    expect(text).toMatch(/fully refreshes them all: one call per 50 matching cars, so 5–24 calls, including 0–10 to decode the color of cars that list none/); // 3 + 1 + (1–10) + (0–10): c has no color breakdown yet
     expect(text).toMatch(/Car a120\D*3 calls/);
     expect(text).toMatch(/Car c—1–10 calls\s*never/);
     expect(text).not.toMatch(/Car d/); // inactive
     expect(text).toMatch(/last sync used 14 calls/);
-    expect(text).toMatch(/≈ 25–70 full syncs left/); // 350 / 14 .. 350 / 5
+    expect(text).toMatch(/≈ 14–70 full syncs left/); // 350 / 24 .. 350 / 5
     cleanup();
   });
   it("flags a profile whose count is high", () => {
@@ -85,7 +85,8 @@ describe("QuotaModal", () => {
   it("lists what each kind of call costs", () => {
     const { container } = open(data(store));
     const t = container.textContent;
-    expect(t).toMatch(/↻ Sync \(full refresh of every active profile\)5–14/);
+    expect(t).toMatch(/↻ Sync \(full refresh of every active profile\)5–24/);
+    expect(t).toMatch(/Debug raw \(a one-page sample, or a VIN lookup\)1/);
     expect(t).toMatch(/Check a profile's match count1/);
     expect(t).toMatch(/Price Check → live market1–4/);
     expect(t).toMatch(/Daily scheduled sync.*full refresh every 3 days/);

@@ -30,10 +30,16 @@ otherwise have to spend calls rediscovering:
   (VIN decoder: factory exterior color with a confidence; no build date). No
   CARFAX / history access.
 - **Auth:** `api_key` query param. The proxy redacts it from every debug output.
-- **Version pin:** an `x-version` request header (`v4.8.0`); responses carry
+- **API version:** not pinned — no `x-version` header, so MarketCheck serves its
+  default (it doesn't move v4 clients to v5 on its own). Responses carry
   `served-by-version` / `requested-from-version` / `auto-upgraded-version` and
-  `deprecation` / `sunset`. An unknown version is rejected (the proxy retries
-  unpinned and the app shows a banner).
+  `deprecation` / `sunset` (Oct 2026: v4.8.0, deprecated 2026-08-07, sunset
+  2027-02-28); they're kept in `settings.mcApi`, and the app shows a banner
+  within 60 days of a sunset or when a major version other than the one
+  `normalize()` was validated against (`VALIDATED_VERSION`, v4.8.0) answers.
+  (A pin was dropped: after the sunset it would have cost a billed error per
+  step before retrying unpinned. An unknown `x-version` answers HTTP 404
+  "release not found".)
 - **Params we rely on:** `make`, `model`, `year` (exact-year CSV), `price_range`,
   `miles_range`, `car_type=used`, `state` (CSV), `vin` (CSV, ≤50), `sort_by` +
   `sort_order` (`dos_active` = days at this dealer), `start`/`rows` (≤50 per
@@ -100,8 +106,10 @@ sync) does as little as it can:
    3. Cars with no color in their listing (often marketplace-relayed) → NeoVIN, the
       VIN decoder (/v2/decode/car/neovin/{vin}/specs; free plan, one call per VIN,
       no batch form): its factory exterior color fills color/baseColor (marked
-      colorSource "neovin"). At most 10 a sync; each VIN decoded once ever —
-      settings.mcColors remembers the answer, "none" included (90 days, ≤1,000).
+      colorSource "neovin"). At most 10 a sync. settings.mcColors remembers each
+      answer, "none" included, so a VIN isn't decoded again — for 90 days, newest
+      1,000 kept; past that it may be decoded once more. The cost estimate counts
+      these calls (known colorless cars, plus up to each profile's no-color count).
       Verified live: KM8JCCD10RU198791 → "Shimmering Silver Metallic" (Silver, 0.8).
       NeoVIN has no build date.
    One /api/marketcheck request per step (POST { kind, profile, since, vins, … }),
@@ -150,7 +158,9 @@ sync (§4a), which runs the same plan server-side.
 
 ## 4. Runtime & secrets
 
-- **Where:** `api/marketcheck.js` (the proxy, one sync step per request) and
+- **Where:** `api/marketcheck.js` (the proxy: one step per request — the sync's
+  full / new / count / vins / decode, plus Price Check's live comps as a `local`
+  step around the home base, and Debug raw's one billed call with `?raw=1`) and
   `api/cron-sync.js` (the optional daily scheduled sync, §4a).
 - **Secrets (Vercel env vars only — never committed, never shipped to client):**
   - `MARKETCHECK_API_KEY` (optional) — the shared aggregator key, used only for
@@ -309,7 +319,11 @@ item, justified only if the blob gets large or we want real query history.
 ## 10. Rollout / testing
 
 Shipped. Tests: `test/README.md`. To exercise the flow without spending quota,
-use the proxy's `?mock=1`; for one live response, the footer's **Debug raw**.
+use the proxy's `?mock=1` from curl (every step answered with synthetic data;
+the VIN lookup "finds" every VIN, so nothing is marked gone); for one live
+response, the footer's **Debug raw** (one billed call: a two-row page of the
+first active profile's full refresh, or a VIN lookup — raw rows beside
+`normalize()`'s output, and its quota report feeds the gauge).
 
 ## 11. Out of scope / deferred
 

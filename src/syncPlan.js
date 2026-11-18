@@ -16,7 +16,8 @@
 //      the only way a car is marked gone, so it's never a guess.
 //   3. Cars whose listing has no color get it from MarketCheck's VIN decoder
 //      (NeoVIN: the factory build data) — one call per car, at most DECODE_MAX a
-//      sync, each VIN only ever once (remembered in settings.mcColors).
+//      sync. Each answer is remembered in settings.mcColors so the VIN isn't
+//      decoded again — for 90 days, newest 1,000 kept (mergeColorCache).
 
 import { parseYears, mapPowertrain } from "./queryPlan.js";
 import { mergeReports } from "./quota.js";
@@ -102,10 +103,13 @@ export function nextProfileMeta(meta, results, opts, nowIso) {
   return out;
 }
 
-// Calls one sync should take. -> { min, max, profiles: [{ id, kind, min, max }], vins: { min, max } }
+// Calls one sync should take.
+// -> { min, max, profiles: [{ id, kind, min, max }], vins: { min, max }, decode: { min, max } }
 // A full refresh pages every matching car (count known from earlier searches),
 // plus a page-1 per extra state group when it's over the 500-row ceiling; unknown
 // counts give the 1–10 page range. A new-listings pass is a page, rarely two.
+// opts.colorCache (settings.mcColors) + opts.candidates (the review queue) size
+// step 3, the VIN decodes (see colorDecodes).
 export function estimateCost(profiles, meta, listings, opts, nowMs) {
   const o = opts || {};
   const plan = planSync(profiles, meta || {}, o, nowMs);
@@ -129,7 +133,29 @@ export function estimateCost(profiles, meta, listings, opts, nowMs) {
   const n = trackedVins(listings).length;
   const allFull = plan.length && plan.every(function (s) { return s.kind === "full"; });
   const vins = { min: allFull ? 0 : Math.min(1, n), max: Math.ceil(n / VIN_BATCH) };
-  return { min: min + vins.min, max: max + vins.max, profiles: per, vins: vins };
+  const decode = colorDecodes(plan, meta || {}, listings, o);
+  return { min: min + vins.min + decode.min, max: max + vins.max + decode.max, profiles: per, vins: vins, decode: decode };
+}
+
+// Step 3's VIN decodes (1 call each, at most DECODE_MAX). Certain: watchlist cars
+// and queued candidates with no color and no remembered decode. Possible on top:
+// cars the searches turn up with no color — at most each searched profile's
+// "lists no color" count (its color facet); a profile without one could be up to the cap.
+export function colorDecodes(plan, meta, listings, opts) {
+  const o = opts || {};
+  const cache = o.colorCache || {};
+  const known = {};
+  (listings || []).filter(function (l) { return l && l.source === "marketcheck" && l.status === "watch"; }).concat(o.candidates || []).forEach(function (l) {
+    const v = String((l && l.vin) || "").trim().toUpperCase();
+    if (v && !l.color && !l.baseColor && !(v in cache)) known[v] = true;
+  });
+  const k = Math.min(DECODE_MAX, Object.keys(known).length);
+  let more = 0;
+  (plan || []).forEach(function (s) {
+    const c = meta[s.profile.id] && meta[s.profile.id].colors;
+    more += c && c.unlisted != null ? c.unlisted : DECODE_MAX;
+  });
+  return { min: k, max: Math.min(DECODE_MAX, k + more) };
 }
 
 // Run a planned sync. exec(step) performs one step — { kind: "full" | "new",
@@ -146,7 +172,7 @@ export async function runSync(steps, tracked, exec, onProgress, opts) {
   const report = typeof onProgress === "function" ? onProgress : function () {};
   const out = {
     listings: [], results: [], goneVins: [], errors: [], notices: [], keyQuotas: [], calls: 0,
-    apiInfo: null, formatSuspect: false, rateLimited: false, rateLimitInfo: null, quota: null, mock: false,
+    apiInfo: null, rateLimited: false, rateLimitInfo: null,
     decoded: {}, // VIN -> { color, baseColor } | null, decoded this sync (to remember)
   };
   const seen = {}; // vin -> listing (lowest real price wins)
@@ -162,10 +188,7 @@ export async function runSync(steps, tracked, exec, onProgress, opts) {
     out.keyQuotas = mergeReports(out.keyQuotas, r.keyQuotas);
     out.calls += r.calls || 0;
     if (r.apiInfo) out.apiInfo = r.apiInfo;
-    if (r.formatSuspect) out.formatSuspect = true;
-    if (r.mock) out.mock = true;
     if (r.rateLimited) { out.rateLimited = true; if (r.rateLimitInfo) out.rateLimitInfo = r.rateLimitInfo; }
-    if (r.quota && r.quota.remaining != null && (out.quota == null || r.quota.remaining < out.quota.remaining)) out.quota = r.quota;
   };
   const failed = function (e) { return { errors: [(e && e.message) || "sync failed"], rateLimited: !!(e && e.rateLimited) }; };
   let total = steps.length + 1, done = 0;

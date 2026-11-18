@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../api/_auth.js", () => ({ authorize: async () => ({ user: { id: "u1" } }), safeEqual: () => true, DEFAULT_ALLOW: "" }));
-const { createSession, runStep, readApiInfo, API_VERSION, setThrottleMs } = await import("../api/marketcheck.js");
+const { createSession, runStep, readApiInfo, VALIDATED_VERSION, setThrottleMs } = await import("../api/marketcheck.js");
 setThrottleMs(1); // don't sit through the real 500 ms spacing
 // One full-refresh step for the first profile (the old searchListings shape).
 const searchListings = (key, profiles) => runStep(createSession([key]), { kind: "full", profile: profiles[0] });
@@ -23,38 +23,18 @@ const P = [{ id: "p", name: "P", params: { make: "Kia", model: "Telluride" } }];
 const H = [{ n: "Durham, NC", lat: 36, lon: -78.9 }];
 const row = (over) => Object.assign({ vin: "V" + Math.random(), price: 1, miles: 1, build: { make: "Kia", model: "Telluride", year: 2024 } }, over || {});
 
-describe("API version pinning", () => {
-  it("pins the version normalize() was validated against, on every request", async () => {
-    expect(API_VERSION).toBe("v4.8.0");
+describe("no API version pin", () => {
+  it("sends no x-version header (MarketCheck serves its default), only Accept: JSON", async () => {
     mockFetch(() => ({}));
     await searchListings("K", P, H, {});
-    expect(sent.every((s) => s.headers["x-version"] === "v4.8.0" && s.headers.Accept === "application/json")).toBe(true);
-  });
-  it("if MarketCheck rejects the pin itself, retries unpinned once and reports it — sync keeps working", async () => {
-    mockFetch((h) => (h["x-version"] ? { status: 400, body: "Unsupported x-version header value" } : { body: { num_found: 1, listings: [row()] } }));
-    const r = await searchListings("K", P, H, {});
-    expect(sent.map((s) => !!s.headers["x-version"])).toEqual([true, false]);
-    expect(r.listings.length).toBe(1);
-    expect(r.apiInfo.pinRejected).toBe(true);
-  });
-  it("handles MarketCheck's real answer to an unknown version: 404 'release not found' (seen live)", async () => {
-    mockFetch((h) => (h["x-version"] ? { status: 404, body: '{"message":"release not found","code":404}' } : { body: { num_found: 1, listings: [row()] } }));
-    const r = await searchListings("K", P, H, {});
-    expect(sent.map((s) => !!s.headers["x-version"])).toEqual([true, false]);
-    expect(r.listings.length).toBe(1);
-    expect(r.apiInfo.pinRejected).toBe(true);
-  });
-  it("does not drop the pin on an unrelated 404", async () => {
-    mockFetch(() => ({ status: 404, body: "not found" }));
-    const r = await searchListings("K", P, H, {});
     expect(sent.length).toBe(1);
-    expect(r.apiInfo.pinRejected).toBe(false);
+    expect(sent.every((s) => s.headers["x-version"] === undefined && s.headers.Accept === "application/json")).toBe(true);
   });
-  it("does not drop the pin on an unrelated 400", async () => {
+  it("a 404 or 400 is one billed call — no retry", async () => {
+    mockFetch(() => ({ status: 404, body: '{"message":"release not found","code":404}' }));
+    expect((await searchListings("K", P, H, {})).calls).toBe(1);
     mockFetch(() => ({ status: 400, body: "bad price_range" }));
-    const r = await searchListings("K", P, H, {});
-    expect(sent.length).toBe(1);
-    expect(r.apiInfo.pinRejected).toBe(false);
+    expect((await searchListings("K", P, H, {})).calls).toBe(1);
   });
 });
 
@@ -63,10 +43,12 @@ describe("version + lifecycle headers come back with every sync", () => {
     expect(readApiInfo({ headers: { get: (h) => LIVE[h] ?? null } })).toMatchObject({ served: "v4.8.0", sunset: LIVE.sunset, deprecation: LIVE.deprecation });
     expect(readApiInfo({ headers: { get: () => null } })).toBeNull();
   });
-  it("a sync step returns them with the pinned version", async () => {
+  it("a sync step returns them with the version normalize() was validated against", async () => {
+    expect(VALIDATED_VERSION).toBe("v4.8.0");
     mockFetch(() => ({}));
     const r = await searchListings("K", P, H, {});
-    expect(r.apiInfo).toMatchObject({ pinned: "v4.8.0", pinRejected: false, served: "v4.8.0", sunset: LIVE.sunset });
+    expect(r.apiInfo).toMatchObject({ validated: "v4.8.0", served: "v4.8.0", sunset: LIVE.sunset });
+    expect(r.apiInfo.pinned).toBeUndefined();
   });
 });
 
@@ -75,17 +57,16 @@ describe("format drift guard", () => {
     const rows = Array.from({ length: 12 }, () => ({ id: 1, car: { make: "Kia" }, price: 1 }));
     mockFetch(() => ({ headers: Object.assign({}, LIVE, { "served-by-version": "v5.0.0" }), body: { num_found: 12, listings: rows } }));
     const r = await searchListings("K", P, H, {});
-    expect(r.formatSuspect).toBe(true);
     expect(r.errors[0]).toMatch(/response format looks changed \(12 of 12 rows missing VIN\/make\/model, served by v5\.0\.0\)/);
   });
   it("flags a 200 with no listings array at all", async () => {
     mockFetch(() => ({ body: { results: [] } }));
-    expect((await searchListings("K", P, H, {})).formatSuspect).toBe(true);
+    expect((await searchListings("K", P, H, {})).errors[0]).toMatch(/format looks changed \(no listings array/);
   });
   it("stays quiet for normal data, a few odd rows, or tiny samples", async () => {
     mockFetch(() => ({ body: { num_found: 20, listings: Array.from({ length: 20 }, (_, i) => (i < 3 ? { vin: "x" + i } : row())) } }));
-    expect((await searchListings("K", P, H, {})).formatSuspect).toBe(false);
+    expect((await searchListings("K", P, H, {})).errors).toEqual([]);
     mockFetch(() => ({ body: { num_found: 3, listings: [{}, {}, {}] } }));
-    expect((await searchListings("K", P, H, {})).formatSuspect).toBe(false);
+    expect((await searchListings("K", P, H, {})).errors).toEqual([]);
   });
 });

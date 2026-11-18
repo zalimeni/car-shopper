@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { planSync, profileStatus, searchSig, trackedVins, nextProfileMeta, estimateCost, FULL_REFRESH_DAYS } from "../src/syncPlan.js";
+import { planSync, profileStatus, searchSig, trackedVins, nextProfileMeta, estimateCost, FULL_REFRESH_DAYS, DECODE_MAX } from "../src/syncPlan.js";
 import { isSaltState, searchStates, SALT_STATES, ALL_STATES } from "../src/regions.js";
 
 const NOW = Date.parse("2026-10-16T12:00:00Z");
@@ -63,12 +63,14 @@ describe("trackedVins / nextProfileMeta", () => {
 });
 
 describe("estimateCost", () => {
-  const watch = Array.from({ length: 60 }, (_, i) => ({ vin: "W" + i, source: "marketcheck", status: "watch" }));
+  const watch = Array.from({ length: 60 }, (_, i) => ({ vin: "W" + i, source: "marketcheck", status: "watch", color: "Gray" }));
+  const noneUnlisted = { colors: { counts: { Gray: 120 }, unlisted: 0 } }; // every match lists a color
   it("a full refresh costs a call per 50 matching cars, from the known count", () => {
-    const meta = { bolt: fresh(bolt, 1, { count: 120, countSig: searchSig(bolt, OPTS) }) };
+    const meta = { bolt: fresh(bolt, 1, Object.assign({ count: 120, countSig: searchSig(bolt, OPTS) }, noneUnlisted)) };
     const c = estimateCost([bolt], meta, watch, Object.assign({ manual: true }, OPTS), NOW);
     expect(c.profiles[0]).toMatchObject({ kind: "full", min: 3, max: 3 });
     expect(c.vins).toEqual({ min: 0, max: 2 }); // most watched cars come back in a full refresh
+    expect(c.decode).toEqual({ min: 0, max: 0 });
     expect([c.min, c.max]).toEqual([3, 5]);
   });
   it("over 500 it adds a page-1 per extra state group", () => {
@@ -77,7 +79,29 @@ describe("estimateCost", () => {
   });
   it("an unknown count is 1–10 pages; a new-listings pass 1–2", () => {
     expect(estimateCost([bolt], {}, [], OPTS, NOW).profiles[0]).toMatchObject({ min: 1, max: 10 });
-    expect(estimateCost([bolt], { bolt: fresh(bolt, 1) }, watch, OPTS, NOW)).toMatchObject({ min: 2, max: 4, vins: { min: 1, max: 2 } });
+    expect(estimateCost([bolt], { bolt: fresh(bolt, 1, noneUnlisted) }, watch, OPTS, NOW)).toMatchObject({ min: 2, max: 4, vins: { min: 1, max: 2 } });
+  });
+  it("counts the VIN decodes for cars with no color: certain for known ones not yet decoded, possible for new ones", () => {
+    const meta = { bolt: fresh(bolt, 1, Object.assign({ count: 120, countSig: searchSig(bolt, OPTS) }, noneUnlisted)) };
+    const o = Object.assign({ manual: true }, OPTS);
+    const ls = [
+      { vin: "C1", source: "marketcheck", status: "watch" }, // no color: decoded
+      { vin: "C2", source: "marketcheck", status: "watch", baseColor: "Red" },
+      { vin: "C3", source: "marketcheck", status: "watch" }, // decoded before (no color found) — not again
+      { vin: "C4", source: "marketcheck", status: "rejected" },
+    ];
+    const cache = { C3: { color: null, at: "x" } };
+    const c = estimateCost([bolt], meta, ls, Object.assign({ colorCache: cache, candidates: [{ vin: "Q1" }, { vin: "Q2", color: "Blue" }] }, o), NOW);
+    expect(c.decode).toEqual({ min: 2, max: 2 }); // C1 + queued Q1
+    expect([c.min, c.max]).toEqual([3 + 2, 3 + 1 + 2]);
+    // a profile whose matches include cars with no color may turn up more, up to the cap
+    const some = { bolt: Object.assign({}, meta.bolt, { colors: { counts: {}, unlisted: 4 } }) };
+    expect(estimateCost([bolt], some, ls, Object.assign({ colorCache: cache }, o), NOW).decode).toEqual({ min: 1, max: 5 });
+    // no color breakdown yet: anything up to the cap
+    expect(estimateCost([bolt], { bolt: fresh(bolt, 1) }, [], o, NOW).decode).toEqual({ min: 0, max: DECODE_MAX });
+    // never more than the cap
+    const many = Array.from({ length: 30 }, (_, i) => ({ vin: "N" + i, source: "marketcheck", status: "watch" }));
+    expect(estimateCost([bolt], meta, many, o, NOW).decode).toEqual({ min: DECODE_MAX, max: DECODE_MAX });
   });
 });
 

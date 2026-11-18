@@ -191,7 +191,6 @@ describe("decode step (NeoVIN)", () => {
     expect(calls[0]).toMatch(/\/v2\/decode\/car\/neovin\/KM8JCCD10RU1987A1\/specs\?api_key=K/);
     expect(r.decoded).toEqual({ KM8JCCD10RU1987A1: { color: "Shimmering Silver Metallic", baseColor: "Silver", confidence: 0.8 }, KM8JCCD10RU1987A2: null, KM8JCCD10RU1987A3: null });
     expect(r.errors).toEqual([]);
-    expect(r.formatSuspect).toBe(false);
     expect(decodedColor(null)).toBeNull();
   });
   it("a VIN NeoVIN can't decode is remembered as 'no color', not a sync error", async () => {
