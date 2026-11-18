@@ -2,7 +2,6 @@ import { useState, useEffect, useLayoutEffect, useCallback, useRef, Fragment, cl
 import storage, { watchState } from "./storage";
 import { signOut } from "./Auth";
 import { DEMO, demoFetchListings, registerDemoData } from "./demoRuntime";
-import { DemoPublishModal } from "./Demo";
 import { Tutorial } from "./Tutorial";
 import { startTutorial } from "./tutorial.js";
 import { fetchListings, postStep, fetchPriceComps, fetchRawSample, reconcile } from "./sync";
@@ -536,7 +535,6 @@ export default function App({ me }) {
   var [rawBusy, setRawBusy] = useState(false);
   var [syncing, setSyncing] = useState(false);
   var [syncMsg, setSyncMsg] = useState(null);
-  var [publishOpen, setPublishOpen] = useState(false); // admins: Publish demo
 
   // Persist the volatile bits so an app-switch reload restores them.
   useEffect(function () { ssSet("cs-tab", tab); }, [tab]);
@@ -1289,7 +1287,6 @@ export default function App({ me }) {
       </header>
 
       <Tutorial demo={DEMO} />
-      {publishOpen && <DemoPublishModal data={data} candidates={candidates} onClose={function () { setPublishOpen(false); }} />}
       {quotaOpen && (
         <QuotaModal data={data} summary={quotaSummary} onClose={function () { setQuotaOpen(false); }} />
       )}
@@ -1353,7 +1350,6 @@ export default function App({ me }) {
             setExportMsg("Exported " + r.points + " price point" + (r.points === 1 ? "" : "s") + " across " + r.listings + " listing" + (r.listings === 1 ? "" : "s") + " (all statuses incl. rejected).");
           }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })} title="Download a CSV of every price observation across all listings (watch, rejected, sold, skipped, candidates) — for pricing analysis / feeding to Claude">Export prices (CSV)</button>
           {!DEMO && <button onClick={openSnaps} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>{snapsOpen ? "Close backups" : "Backups"}</button>}
-          {isAdmin && !DEMO && <button onClick={function () { setPublishOpen(true); }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })} title="Replace the public demo (/?demo) with a scrubbed copy of your data">Publish demo</button>}
           {!DEMO && <button onClick={function () { runRawDebug(); }} disabled={rawBusy} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" }, rawBusy ? { opacity: 0.6 } : {})}>{rawBusy ? "Running…" : "Debug raw"}</button>}
           <button onClick={function () { save(Object.assign({}, data, { onboarded: false })); }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>Setup wizard</button>
           <button onClick={reset} style={Object.assign({}, S.resetBtn, confirmReset ? { color: "#c44" } : {})}>
@@ -3016,7 +3012,7 @@ export function AdminTab({ goSettings }) {
     <div>
       <div style={S.secH}><h2 style={S.secT}>Allowlist</h2></div>
       <div style={S.card}>
-        <p style={S.help}>The app is invite-only: sign-ups are off, so people get in by an invite from here, and only emails on this list can use the app. Changes write the <code>allowed_emails</code> table and take effect immediately. <b>Admin</b> = this tab and Publish demo; <b>Daily sync</b> = the scheduled background sync runs for that account about once a day (spends its MarketCheck quota); under the email, its last run and outcome. <b>2FA · reset</b> (shown when someone has two-factor on) removes their authenticator apps, for a lost phone.</p>
+        <p style={S.help}>The app is invite-only: sign-ups are off, so people get in by an invite from here, and only emails on this list can use the app. Changes write the <code>allowed_emails</code> table and take effect immediately. <b>Admin</b> = this tab; <b>Daily sync</b> = the scheduled background sync runs for that account about once a day (spends its MarketCheck quota); under the email, its last run and outcome. <b>2FA · reset</b> (shown when someone has two-factor on) removes their authenticator apps, for a lost phone.</p>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
           <input style={Object.assign({}, S.inp, { flex: 1, minWidth: 180 })} type="email" autoComplete="off" placeholder="person@example.com"
             value={input} onChange={function (e) { setInput(e.target.value); }} onKeyDown={function (e) { if (e.key === "Enter") add(); }} />
@@ -3748,7 +3744,7 @@ function HelpTab() {
         <h3 style={S.cardH}>Setup, backup &amp; reset</h3>
         <p style={item}><span style={b}>Setup wizard</span> (footer) re-runs the guided setup (budget, home base, profiles, rules). Listings are kept; finishing it replaces the budget, home base, tagline and rules (and clears the profiles, if you choose to). Budget, home base, salt-belt handling, and tagline also live on the <span style={b}>Settings</span> tab.</p>
         <p style={item}><span style={b}>Export prices (CSV)</span> (footer) downloads every recorded price observation across <span style={b}>all</span> listings — watchlist, rejected, sold, skipped, and candidates — one row per price/date, with year/trim/mileage/dealer-type/CPO/status. Built for offline pricing analysis (e.g. uploading to Claude to reason about model/trim/mileage pricing, including private listings you're evaluating elsewhere).</p>
-        <p style={item}><span style={b}>Demo</span> — <span style={b}>/?demo</span> (or "Try the demo" on the sign-in screen) opens a public demo with no sign-in, over a curated, anonymized slice of the owner's data (bundled with the app): edits stay in that tab, everything that would call MarketCheck or Claude is simulated and paced like the real call — ↻ Sync, ✨ Score (modeled on similar cars already scored), the wizard's Explore and suggestions, a profile's AI price baseline, and the Price tab's live market and AI verdict — while a pretend MarketCheck quota counts down. No real call is ever made; Reset in the banner starts over. Admins can also publish their current data with <span style={b}>Publish demo</span> (footer; keys removed, unchecked notes and typed reject reasons cleared) — that copy opens at <span style={b}>/?demo=live</span>.</p>
+        <p style={item}><span style={b}>Demo</span> — <span style={b}>/?demo</span> (or "Try the demo" on the sign-in screen) opens a public demo with no sign-in, over a curated, anonymized slice of the owner's data (bundled with the app): edits stay in that tab, everything that would call MarketCheck or Claude is simulated and paced like the real call — ↻ Sync, ✨ Score (modeled on similar cars already scored), the wizard's Explore and suggestions, a profile's AI price baseline, and the Price tab's live market and AI verdict — while a pretend MarketCheck quota counts down. No real call is ever made; Reset in the banner starts over.</p>
         <p style={item}><span style={b}>Keys</span> — your Anthropic key and MarketCheck keys (Settings tab) are stored encrypted on the server and never sent back to the browser; only labels and the last 4 characters show. Keys saved by an older version (inside your synced settings) move there on their own the next time you open the app.</p>
         <p style={item}><span style={b}>Access</span> — the app is invite-only: there's no sign-up. Admins invite people from the <span style={b}>Admin</span> tab, and set there who else is an admin and whose account gets the daily background sync.</p>
         <p style={item}><span style={b}>Backups</span> (footer) lists automatic server-side snapshots of your whole app state (up to 30, at most one per hour of activity) — restore any of them in two taps; the pre-restore state is snapshotted too, so a restore is undoable.</p>

@@ -1,32 +1,22 @@
 // Demo mode — the runtime side (see src/demo.js for the pure parts).
 //
 // `/?demo` opens the app with no sign-in over the bundled fixture
-// (public/demo/snapshot.json + thumbnails in public/demo/cars — curated by
-// scripts/demo-fixture/). `/?demo=live` uses the copy the owner published from
-// the app instead (public.demo_snapshot, one row, readable by anyone — RLS
-// select-only); it's also the fallback if the fixture can't load.
+// (public/demo/snapshot.json + thumbnails in public/demo/cars — an anonymized
+// sample curated by scripts/demo-fixture/).
 // Everything happens in this tab: storage.js keeps edits in memory (gone on
 // reload), ↻ Sync is simulated from the snapshot's held-back pool, and every
 // /api call is answered locally with "not in the demo" — no MarketCheck or
 // Anthropic call can leave the browser.
 
-import { supabase } from "./supabaseClient";
-import { isDemoUrl, isLiveDemoUrl, prepareDemo, simulateSync, scoreFieldsOf, demoScore, demoCount, demoMarketComps, demoPriceAssessment, demoBaseline, demoSuggestion, DEMO_KEY_ID, DEMO_QUOTA_LIMIT } from "./demo.js";
+import { isDemoUrl, prepareDemo, simulateSync, scoreFieldsOf, demoScore, demoCount, demoMarketComps, demoPriceAssessment, demoBaseline, demoSuggestion, DEMO_KEY_ID, DEMO_QUOTA_LIMIT } from "./demo.js";
 import { assess } from "./priceCheck.js";
 
 export var DEMO = typeof window !== "undefined" && isDemoUrl(window.location.search);
-export var DEMO_TABLE = "demo_snapshot";
 export var DEMO_FIXTURE = "/demo/snapshot.json";
-var LIVE = typeof window !== "undefined" && isLiveDemoUrl(window.location.search);
 
 var loaded = null; // Promise<{ data, pool } | null>
 var round = 0;
 
-function liveRow() {
-  return Promise.resolve().then(function () { return supabase.from(DEMO_TABLE).select("data").eq("id", 1).maybeSingle(); })
-    .then(function (r) { return r.error || !r.data ? null : prepareDemo(r.data.data, new Date()); })
-    .catch(function () { return null; });
-}
 function fixture() {
   return Promise.resolve().then(function () { return fetch(DEMO_FIXTURE, { cache: "no-cache" }); })
     .then(function (r) { return r.ok ? r.json() : null; })
@@ -35,15 +25,8 @@ function fixture() {
 }
 // Load + prepare the demo data once per page load.
 export function loadDemo() {
-  if (!loaded) loaded = LIVE ? liveRow() : fixture().then(function (d) { return d || liveRow(); });
+  if (!loaded) loaded = fixture();
   return loaded;
-}
-
-// Is there a demo to offer? (sign-in screen link) The fixture ships with the app.
-export function demoAvailable() {
-  return Promise.resolve().then(function () { return fetch(DEMO_FIXTURE, { method: "HEAD", cache: "no-cache" }); })
-    .then(function (r) { return !!(r && r.ok); })
-    .catch(function () { return false; });
 }
 
 // Pretend network time, so sync and scoring feel like the real thing.

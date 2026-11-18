@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { prepareDemo, demoCount, simulateSync, autoNotes } from "../src/demo.js";
+import { prepareDemo, demoCount, simulateSync } from "../src/demo.js";
 
 // The public demo's data (public/demo/, built by scripts/demo-fixture/). It
 // ships to every visitor and lives in git forever, so this test is the
@@ -28,6 +28,9 @@ const vinOk = (v) => {
   return v[8] === (s % 11 === 10 ? "X" : String(s % 11));
 };
 
+// scripts/demo-fixture/build.mjs fakeDealer(): a made-up place name + the make or "Auto Sales".
+const FAKE_DEALER = /^(Larkmoor|Kestrelwood|Bramblegate|Tallowmere|Quillstone|Fernhollow|Ashgrove|Wrenfield|Copperline|Marlowe Bend|Ridgeholt|Saltmarsh|Pinecrest Hollow|Thistleway) \S+( Sales)?$/;
+
 describe("demo fixture: nothing sensitive", () => {
   it("no contacts, keys, tokens or outside links anywhere", () => {
     const bad = [
@@ -44,15 +47,18 @@ describe("demo fixture: nothing sensitive", () => {
   it("settings carry no keys, quota records, VIN caches or custom prompts", () => {
     ["marketcheckKeys", "mcQuota", "mcApi", "mcColors"].forEach((k) => expect(d.settings[k]).toBeUndefined());
     expect(d.scorePrompt).toBeUndefined();
-    expect(Object.keys(d).sort()).toEqual(["autoScore", "candidates", "criteria", "globalReqs", "lastSynced", "listings", "onboarded",
+    expect(Object.keys(fx).sort()).toEqual(["data", "exportedAt", "pool"]);
+    expect(Object.keys(d).sort()).toEqual(["candidates", "criteria", "globalReqs", "lastSynced", "listings", "onboarded",
       "profiles", "scoreModel", "settings", "skipped", "version"]);
   });
-  it("every car: synthetic VIN (valid check digit), no dealer link, a bundled thumbnail", () => {
+  it("every car: synthetic VIN (valid check digit), fictional dealer, no dealer link, a bundled thumbnail", () => {
     const vins = new Set();
     cars.forEach((c) => {
       expect(vinOk(c.vin)).toBe(true);
       vins.add(c.vin);
       expect(c.link).toBe("");
+      expect(c.dealer).toMatch(FAKE_DEALER);
+      expect(c.photoKey).toBeUndefined(); // the owner's private photo copy
       expect(c.photo).toMatch(/^\/demo\/cars\/car-\d{2}\.webp$/);
       expect(fs.existsSync(path.join(DIR, "cars", path.basename(c.photo)))).toBe(true);
       expect(c.distMi).toBeUndefined(); // only city-center coordinates
@@ -60,7 +66,7 @@ describe("demo fixture: nothing sensitive", () => {
     expect(vins.size).toBe(cars.length);
   });
   it("free text is only what the build writes: sync's price notes, neutral reasons, one scripted memo", () => {
-    cars.forEach((c) => expect(c.notes || "").toBe(autoNotes(c.notes)));
+    cars.forEach((c) => String(c.notes || "").split(" · ").filter(Boolean).forEach((n) => expect(n).toMatch(/^[↓↑] Price /)));
     const reasons = d.listings.filter((l) => l.rejectReason).map((l) => l.rejectReason);
     reasons.forEach((r) => expect(["Price is high for the miles", "Trim is missing features I want", "Too far to ship",
       "Accident on the history report", "Not a color I'd live with"]).toContain(r));

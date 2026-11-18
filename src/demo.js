@@ -1,103 +1,38 @@
 // Demo mode — the pure parts (tested). A public, sign-in-free tour of the app
-// over a scrubbed copy of the owner's data:
-//  - buildDemoSnapshot(): what "Publish demo" (footer, admins) sends — the app
-//    state minus secrets, with the notes the owner chose to drop cleared, and
-//    the newest queued candidates held back in a `pool` so the demo's ↻ Sync
-//    has real listings (and their AI scores) to "find".
+// over the bundled fixture (public/demo/snapshot.json, built by
+// scripts/demo-fixture/ — an anonymized sample of the owner's search):
 //  - prepareDemo(): on load, shift every date so the snapshot reads as fresh.
 //  - simulateSync(): one demo sync — released pool cars, a couple of price
 //    drops on the watchlist, and (first sync only) one car gone.
-// The runtime side (loading the row, the fetch guard, the in-memory store) is
-// src/demoRuntime.js; the banner / welcome / toasts are src/Demo.jsx.
+//  - demoScore() and the market / AI stand-ins (demoCount, demoMarketComps, …).
+// The runtime side (loading the fixture, the fetch guard, the in-memory store)
+// is src/demoRuntime.js; the banner / welcome / toasts are src/Demo.jsx.
 
-export var DEMO_VERSION = 1;
-export var DEMO_POOL_MAX = 9;      // queued candidates held back for demo syncs
+import { parseYears } from "./queryPlan.js";
+import { matchesModel, percentile, priceStats } from "./priceCheck.js";
+
 export var RELEASE_PER_SYNC = 3;   // pool cars each demo sync "finds"
 export var DROPS_PER_SYNC = 2;     // watchlist price drops each demo sync
 
+// `/?demo` (old `/?demo=live` links open the same fixture).
 export function isDemoUrl(search) {
   return /(^|[?&])demo(=(1|true|live))?(&|$)/.test(String(search || "").replace(/^\?/, ""));
 }
-// `?demo=live`: the copy the owner published (Supabase) instead of the bundled fixture.
-export function isLiveDemoUrl(search) { return /(^|[?&])demo=live(&|$)/.test(String(search || "").replace(/^\?/, "")); }
 
-// Settings keys that never leave the owner's account.
+// Settings keys that never belong in a demo (the fixture has none; belt and braces).
 var SECRET_SETTINGS = ["marketcheckKeys", "mcQuota", "mcApi"];
-
-// Sync writes "↓ Price $X → $Y (date)" into `notes`; anything else there (an
-// import's notes, hand edits), every `memo` and every typed reject reason is the
-// owner's own writing. ("Reviewed update" is the app's own reason for a reject
-// from an Updated card, so it never needs review.)
-var AUTO_NOTE = /^[↓↑] Price /;
-function splitNotes(s) { return String(s || "").split(" · ").map(function (x) { return x.trim(); }).filter(Boolean); }
-export function autoNotes(notes) { return splitNotes(notes).filter(function (x) { return AUTO_NOTE.test(x); }).join(" · "); }
-export function userNotes(notes) { return splitNotes(notes).filter(function (x) { return !AUTO_NOTE.test(x); }).join(" · "); }
-var AUTO_REASONS = { "Reviewed update": true, "No reason given": true };
-export function userReason(r) { r = String(r || "").trim(); return r && !AUTO_REASONS[r] ? r : ""; }
-
-function carsOf(data) {
-  return [].concat((data && data.listings) || [], (data && data.candidates) || [], (data && data.skipped) || []);
+function scrubSettings(s) {
+  var o = Object.assign({}, s || {});
+  SECRET_SETTINGS.forEach(function (k) { delete o[k]; });
+  return o;
 }
+
 function carName(l) {
   var v = l.make || l.model ? [l.make, l.model].filter(Boolean).join(" ") : l.vehicle;
   return [l.year, v, l.trim].filter(Boolean).join(" ") || l.vin || "Listing";
 }
 // Listings store mileage as `mileage` (older/hand-made ones may say `miles`).
 function milesOf(l) { return l && l.mileage != null ? +l.mileage : l && l.miles != null ? +l.miles : null; }
-
-// Every car with words the owner wrote, for the publish checklist.
-export function reviewableNotes(data) {
-  var seen = {};
-  return carsOf(data).map(function (l) {
-    var key = l.id || l.vin;
-    if (!key || seen[key]) return null;
-    seen[key] = true;
-    var memo = String(l.memo || "").trim(), notes = userNotes(l.notes), reason = userReason(l.rejectReason);
-    return memo || notes || reason ? { key: key, name: carName(l), memo: memo, notes: notes, reason: reason } : null;
-  }).filter(Boolean);
-}
-
-function scrubCar(l, keep) {
-  var o = Object.assign({}, l);
-  delete o._candidate; delete o.fromScheduled;
-  // The stored photo copy is in the owner's private bucket — no visitor can read it.
-  delete o.photoKey; delete o.photoFailed;
-  if (!keep[o.id || o.vin]) {
-    if (o.memo) o.memo = "";
-    if (o.notes) o.notes = autoNotes(o.notes);
-    if (userReason(o.rejectReason)) o.rejectReason = "No reason given";
-  }
-  return o;
-}
-
-export function scrubSettings(s) {
-  var o = Object.assign({}, s || {});
-  SECRET_SETTINGS.forEach(function (k) { delete o[k]; });
-  return o;
-}
-
-// opts: { keep: { [id|vin]: true } notes to keep, now: Date, poolMax }
-export function buildDemoSnapshot(data, opts) {
-  var o = opts || {};
-  var keep = o.keep || {};
-  var d = JSON.parse(JSON.stringify(data || {}));
-  d.settings = scrubSettings(d.settings);
-  d.autoScore = false; // no Anthropic key in the demo
-  d.listings = (d.listings || []).map(function (l) { return scrubCar(l, keep); });
-  d.skipped = (d.skipped || []).map(function (l) { return scrubCar(l, keep); });
-  var queue = (d.candidates || []).map(function (l) { return scrubCar(l, keep); });
-  // Newest first; hold back the newest (scored ones first) for the demo's syncs.
-  var order = queue.map(function (c, i) { return { c: c, i: i }; }).sort(function (a, b) {
-    var s = (b.c.scoredAt ? 1 : 0) - (a.c.scoredAt ? 1 : 0);
-    if (s) return s;
-    return String(b.c.addedDate || "").localeCompare(String(a.c.addedDate || "")) || b.i - a.i;
-  });
-  var max = o.poolMax != null ? o.poolMax : DEMO_POOL_MAX;
-  var held = {};
-  var pool = order.slice(0, max).map(function (x) { held[x.i] = true; return x.c; }).filter(function (c) { return c.vin; });
-  d.candidates = queue.filter(function (c, i) { return !held[i]; });
-  return { demoVersion: DEMO_VERSION, exportedAt: (o.now || new Date()).toISOString(), data: d, pool: pool };
-}
 
 // ── Dates ──
 var DAY = 86400000;
@@ -133,8 +68,7 @@ export function prepareDemo(snap, now) {
   if (!snap || typeof snap !== "object" || !snap.data || typeof snap.data !== "object") return null;
   var days = daysSince(snap.exportedAt, now);
   var data = shiftDates(snap.data, days);
-  // No secret slipped in by an older publish survives; in their place a demo
-  // key with a made-up quota, so the gauge and quota modal have something to show.
+  // No secret survives; in their place a demo key with a made-up quota, so the gauge and quota modal have something to show.
   // Auto-score is on: demo scoring is simulated (demoScore), no AI call.
   data.settings = Object.assign(scrubSettings(data.settings), {
     marketcheckKeys: [{ key: DEMO_KEY, label: "Demo key" }],
@@ -246,21 +180,15 @@ export function scoreFieldsOf(c) {
 
 // ── Market answers from the demo's own cars (no MarketCheck) ──
 
-// l.vehicle is "Make Model" on synced cars; hand-made ones may carry make/model.
+// Price Check's model match; l.vehicle is "Make Model" on synced cars,
+// hand-made ones may carry make/model instead.
 export function sameModel(l, make, model) {
-  var v = (String(l.vehicle || "") + " " + String(l.make || "") + " " + String(l.model || "")).toLowerCase();
-  var mk = String(make || "").toLowerCase().trim(), md = String(model || "").toLowerCase().trim();
-  if (!mk && !md) return false;
-  return (!mk || v.indexOf(mk) > -1) && (!md || v.indexOf(md) > -1);
+  return matchesModel({ vehicle: [l.vehicle, l.make, l.model].filter(Boolean).join(" ") }, make, model);
 }
+// A profile's years ("2019-2021, 2023") as a lookup, or null for any year.
 function yearSet(s) {
-  var out = {};
-  String(s || "").split(",").forEach(function (t) {
-    var m = t.trim().match(/^(\d{4})\s*-\s*(\d{4})$/);
-    if (m) { for (var y = Math.min(+m[1], +m[2]); y <= Math.max(+m[1], +m[2]); y++) out[y] = true; }
-    else if (/^\d{4}$/.test(t.trim())) out[+t.trim()] = true;
-  });
-  return Object.keys(out).length ? out : null;
+  var ys = parseYears(s);
+  return ys ? Object.fromEntries(ys.split(",").map(function (y) { return [y, true]; })) : null;
 }
 function uniqCars(cars) {
   var seen = {};
@@ -271,18 +199,15 @@ function countBy(cars, f) {
   cars.forEach(function (l) { var v = f(l); if (v) { counts[v] = (counts[v] || 0) + 1; listed++; } });
   return Object.keys(counts).length ? { counts: counts, unlisted: cars.length - listed } : null;
 }
-function pct(xs, p) {
-  if (!xs.length) return null;
-  var i = (xs.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i);
-  return xs[lo] + (xs[hi] - xs[lo]) * (i - lo);
-}
+var pct = percentile; // Price Check's, over a sorted array
+// MarketCheck's `stats` shape: priceStats plus a percentile table.
 export function statsOf(values) {
   var xs = values.filter(function (v) { return v != null && v > 0; }).sort(function (a, b) { return a - b; });
-  if (!xs.length) return null;
+  var st = priceStats(xs);
+  if (!st) return null;
   var pc = {};
   [5, 25, 50, 75, 90, 95, 99].forEach(function (p) { pc[p.toFixed(1)] = Math.round(pct(xs, p / 100)); });
-  return { min: xs[0], max: xs[xs.length - 1], mean: Math.round(xs.reduce(function (a, b) { return a + b; }, 0) / xs.length),
-    median: Math.round(pct(xs, 0.5)), count: xs.length, missing: 0, percentiles: pc };
+  return { min: st.min, max: st.max, mean: st.mean, median: st.median, count: st.n, missing: 0, percentiles: pc };
 }
 
 // A `count` step's answer (facets + price/mileage stats) for a profile, from the
