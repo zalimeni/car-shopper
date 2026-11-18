@@ -17,7 +17,6 @@
 
 import { authorize, deny } from "./_auth.js";
 import { adminClient } from "./_supabaseAdmin.js";
-import { importBlobKeys } from "./_keys.js";
 import { storePhotos } from "./_photos.js";
 
 export default async function handler(req, res) {
@@ -60,17 +59,14 @@ export default async function handler(req, res) {
   // can be undone from the same list.
   const cur = await db.from("app_state").select("data,rev").eq("user_id", userId).maybeSingle();
   if (!cur.error && cur.data && cur.data.data != null) {
-    // MarketCheck keys left in an old blob move to the vault first; snapshots
-    // never hold them (the trigger strips them the same way).
-    await importBlobKeys(userId, cur.data.data.settings);
-    await db.from("app_state_history").insert({ user_id: userId, data: withoutBlobKeys(cur.data.data) });
+    await db.from("app_state_history").insert({ user_id: userId, data: cur.data.data });
   }
 
   // Bump rev so any still-open session's compare-and-swap write loses to the
   // restore (it reloads) instead of silently clobbering it.
   const payload = {
     user_id: userId,
-    data: withoutBlobKeys(snap.data.data),
+    data: snap.data.data,
     updated_at: new Date().toISOString(),
     rev: ((cur.data && cur.data.rev) || 0) + 1,
   };
@@ -78,14 +74,6 @@ export default async function handler(req, res) {
   if (up.error) { res.status(500).json({ error: up.error.message }); return; }
 
   res.status(200).json({ ok: true, restored: snap.data.saved_at });
-}
-
-// The blob minus settings.marketcheckKeys (they live in the key vault).
-function withoutBlobKeys(d) {
-  if (!d || !d.settings || d.settings.marketcheckKeys == null) return d;
-  const settings = Object.assign({}, d.settings);
-  delete settings.marketcheckKeys;
-  return Object.assign({}, d, { settings: settings });
 }
 
 function safeParse(s) { try { return JSON.parse(s); } catch (e) { return {}; } }

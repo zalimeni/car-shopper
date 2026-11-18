@@ -97,7 +97,7 @@ export function applyPhotoResults(listings, result, missing) {
 export function referencedPhotoKeys(data) {
   var keys = {};
   var d = data || {};
-  [d.listings, d.candidates, d.pendingCandidates, d.skipped].forEach(function (arr) {
+  [d.listings, d.candidates, d.skipped].forEach(function (arr) {
     (Array.isArray(arr) ? arr : []).forEach(function (l) { if (l && typeof l.photoKey === "string" && l.photoKey) keys[l.photoKey] = true; });
   });
   return keys;

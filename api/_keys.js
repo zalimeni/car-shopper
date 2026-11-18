@@ -6,14 +6,9 @@
 // Every endpoint that needs a key goes through this module: the decrypt calls
 // live here and nowhere else. Plaintext keys never leave the server; what the
 // browser sees is metadata (id, label, last4, valid).
-//
-// Legacy v1 ciphertexts (from the old user_anthropic_keys vault) are
-// re-encrypted to v2 when read, and reencryptLegacy() (daily cron) sweeps the
-// rest — see supabase/README.md "Key encryption v2".
 
 import { adminClient } from "./_supabaseAdmin.js";
-import { encrypt, decrypt, isLegacy } from "./_crypto.js";
-import { legacyBlobKeys } from "../src/quota.js";
+import { encrypt, decrypt } from "./_crypto.js";
 
 const TABLE = "user_api_keys";
 export const PROVIDERS = ["anthropic", "marketcheck"];
@@ -28,14 +23,8 @@ async function rows(db, userId, provider) {
   return data || [];
 }
 
-// Decrypt one row; a v1 row is rewritten as v2 on the way (best effort).
-async function open(db, userId, row) {
-  const key = decrypt(row.ciphertext, aadOf(userId, row.provider));
-  if (isLegacy(row.ciphertext)) {
-    try { await db.from(TABLE).update({ ciphertext: encrypt(key, aadOf(userId, row.provider)) }).eq("id", row.id); } catch (e) { /* retried next read / cron */ }
-  }
-  return key;
-}
+// Decrypt one row (throws if it can't be read).
+function open(userId, row) { return decrypt(row.ciphertext, aadOf(userId, row.provider)); }
 
 // ── Metadata (what the browser may see) ──
 
@@ -66,7 +55,7 @@ export async function getAnthropicKey(userId) {
   let list;
   try { list = await rows(db, userId, "anthropic"); } catch (e) { return { error: "not_configured", message: e.message }; }
   if (!list.length) return { error: "no_key", message: "No Anthropic key on file — add one in Settings" };
-  try { return { key: await open(db, userId, list[0]) }; }
+  try { return { key: open(userId, list[0]) }; }
   catch (e) {
     await setAnthropicValid(userId, false);
     return { error: "key_unreadable", message: "Stored key couldn't be decrypted — re-enter it" };
@@ -110,7 +99,7 @@ export async function getMarketcheckKeys(userId) {
   const list = await rows(db, userId, "marketcheck").catch(function () { return []; });
   const out = [];
   for (const r of list) {
-    try { out.push(await open(db, userId, r)); }
+    try { out.push(open(userId, r)); }
     catch (e) { await db.from(TABLE).update({ valid: false }).eq("id", r.id); }
   }
   return out;
@@ -126,7 +115,7 @@ export async function addMarketcheckKeys(userId, entries) {
   if (!db) return Object.assign({ added: 0 }, noDb());
   const list = await rows(db, userId, "marketcheck");
   const have = {};
-  for (const r of list) { try { have[await open(db, userId, r)] = true; } catch (e) { /* unreadable: not a duplicate of anything */ } }
+  for (const r of list) { try { have[open(userId, r)] = true; } catch (e) { /* unreadable: not a duplicate of anything */ } }
   let pos = list.reduce(function (m, r) { return Math.max(m, r.position); }, -1);
   const add = [];
   (entries || []).forEach(function (e) {
@@ -165,30 +154,4 @@ export async function deleteMarketcheckKey(userId, id) {
   if (!db) return noDb();
   const { error } = await db.from(TABLE).delete().eq("user_id", userId).eq("provider", "marketcheck").eq("id", id);
   return { error: error ? error.message : null };
-}
-
-// ── One-time moves and sweeps ──
-
-// Move any plaintext keys in `settings` into the vault. -> true when the blob's
-// copy can be dropped (moved, or there was nothing to move).
-export async function importBlobKeys(userId, settings) {
-  const list = legacyBlobKeys(settings);
-  if (!list.length) return true;
-  const r = await addMarketcheckKeys(userId, list).catch(function (e) { return { error: e.message }; });
-  return !r.error;
-}
-
-// Re-encrypt every remaining v1 row as v2 (daily cron). -> { rewritten, failed }
-export async function reencryptLegacy(db) {
-  const out = { rewritten: 0, failed: 0 };
-  const { data, error } = await db.from(TABLE).select("id,user_id,provider,ciphertext").not("ciphertext", "like", "v2:%").limit(500);
-  if (error) return Object.assign(out, { error: error.message });
-  for (const r of data || []) {
-    try {
-      const key = decrypt(r.ciphertext);
-      const u = await db.from(TABLE).update({ ciphertext: encrypt(key, aadOf(r.user_id, r.provider)) }).eq("id", r.id);
-      if (u.error) out.failed++; else out.rewritten++;
-    } catch (e) { out.failed++; }
-  }
-  return out;
 }

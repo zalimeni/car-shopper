@@ -7,7 +7,7 @@
 //    budget. Every 15 minutes it picks the accounts that are due, so the day's
 //    syncs are staggered instead of sharing one 60 s run.
 //  - Vercel Cron, daily with no target (see "crons" in vercel.json): the
-//    keepalive and the key-vault sweep. If the dispatcher is in charge
+//    keepalive and the stored-photo sweep. If the dispatcher is in charge
 //    (scheduled_sync_dispatcher_ready(): its job is scheduled and the Vault
 //    holds its URL + secret) that's all. Otherwise it is the fallback and syncs,
 //    one after another, the accounts not attempted in the last day.
@@ -27,10 +27,6 @@
 // device shows on next open. No AI scoring here — that stays a client-initiated
 // action against the user's own key/quota.
 //
-// Also, every daily run: re-encrypts any key-vault rows still in the legacy v1
-// format (api/_keys.js reencryptLegacy); and each account's sync moves
-// MarketCheck keys left in its old app-state blob into the vault.
-//
 // Scheduled sync is OFF BY DEFAULT: the endpoint does nothing (a clean no-op)
 // unless CRON_SECRET (≥16 chars) is configured — so the daily Vercel cron can't
 // burn MarketCheck quota until you deliberately opt in by setting the key.
@@ -44,7 +40,7 @@
 import { safeEqual } from "./_auth.js";
 import { adminClient, anonClient } from "./_supabaseAdmin.js";
 import { createSession, runStep, resolveKeys, keyId, STEP_BUDGET_MS } from "./marketcheck.js";
-import { getMarketcheckKeys, importBlobKeys, reencryptLegacy } from "./_keys.js";
+import { getMarketcheckKeys } from "./_keys.js";
 import { sweepOrphanPhotos } from "./_photos.js";
 import { reconcile } from "../src/reconcile.js";
 import { ingestSnaps, spentKeyIds } from "../src/quota.js";
@@ -121,7 +117,6 @@ export default async function handler(req, res) {
 
   const target = targetEmail(req);
   const nowMs = Date.now();
-  let vault = null;
   let photos = null;
 
   // "*" so this still works before the bookkeeping columns' migration is applied.
@@ -133,12 +128,11 @@ export default async function handler(req, res) {
     due = (opted.data || []).filter(function (r) { return String(r.email || "").toLowerCase() === target; });
     if (!due.length) { res.status(200).json({ ok: true, email: target, skipped: "Daily sync is not on for this account" }); return; }
   } else {
-    vault = await reencryptLegacy(db).catch(function (e) { return { error: e.message }; });
     photos = await sweepOrphanPhotos(db).catch(function (e) { return { errors: [e.message] }; }); // unreferenced stored listing photos (api/_photos.js)
     console.log("photo sweep", JSON.stringify(photos));
     const ready = await db.rpc("scheduled_sync_dispatcher_ready");
     if (!ready.error && ready.data === true) {
-      res.status(200).json({ ok: true, dispatcher: true, message: "Syncs run per account from the database dispatcher; this run did maintenance only.", vault: vault, photos: photos });
+      res.status(200).json({ ok: true, dispatcher: true, message: "Syncs run per account from the database dispatcher; this run did maintenance only.", photos: photos });
       return;
     }
     // Fallback: the dispatcher isn't set up, so sync whoever is due from here.
@@ -185,8 +179,6 @@ export default async function handler(req, res) {
       const budgetMs = deadline - Date.now() - 2000;
       if (budgetMs < 5000) { out.skipped = "out of time this run"; continue; }
       const dealerType = state.settings && state.settings.franchiseOnly ? "franchise" : null;
-      // Keys still in an old blob move to the vault (and out of the blob below).
-      const movedKeys = await importBlobKeys(u.id, state.settings);
       // The user's own keys, in order — or the shared key only if they have none.
       const own = await getMarketcheckKeys(u.id);
       const resolved = resolveKeys(own, apiKey);
@@ -215,7 +207,7 @@ export default async function handler(req, res) {
       // already queued. Flagged fromScheduled so the app can say how many arrived.
       const skip = {};
       (state.skipped || []).forEach(function (s) { if (s.vin) skip[s.vin] = true; });
-      const queue = (Array.isArray(state.candidates) ? state.candidates : []).concat(Array.isArray(state.pendingCandidates) ? state.pendingCandidates : []);
+      const queue = Array.isArray(state.candidates) ? state.candidates : [];
       const queued = {};
       queue.forEach(function (c) { if (c && c.vin) queued[c.vin] = true; });
       const fresh = rec.candidates.filter(function (c) { return c.vin && !skip[c.vin] && !queued[c.vin]; })
@@ -227,7 +219,6 @@ export default async function handler(req, res) {
         listings: rec.listings,
         candidates: newQueue,
       });
-      delete nextData.pendingCandidates;
       // Same API-version bookkeeping as the in-app sync (drift banner).
       const nowIso = new Date().toISOString();
       nextData.settings = Object.assign({}, settings, {
@@ -235,7 +226,6 @@ export default async function handler(req, res) {
           mcColors: mergeColorCache(settings.mcColors, r.decoded, nowIso),
           mcQuota: ingestSnaps(settings.mcQuota, r.keyQuotas, nowIso) },
         r.apiInfo ? { mcApi: Object.assign({}, r.apiInfo, { at: nowIso }) } : {});
-      if (movedKeys) delete nextData.settings.marketcheckKeys;
       // Don't advance lastSynced on an incomplete (rate-limited) run — leave it
       // at the last good sync so the "Last synced" display isn't misleading.
       if (!r.rateLimited) nextData.lastSynced = new Date().toISOString();
@@ -268,5 +258,5 @@ export default async function handler(req, res) {
     await db.from("allowed_emails").update(patch).eq("email", r.email).then(null, function () {});
   }
 
-  res.status(200).json({ ok: true, mode: target ? "account" : "fallback", matchedUsers: users.length, report: report, vault: vault, photos: photos });
+  res.status(200).json({ ok: true, mode: target ? "account" : "fallback", matchedUsers: users.length, report: report, photos: photos });
 }

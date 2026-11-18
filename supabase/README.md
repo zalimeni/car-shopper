@@ -108,32 +108,21 @@ loses every app:
 The scheduled sync and backup restore use the service role, which isn't
 subject to RLS, so two-factor doesn't affect them.
 
-## Key encryption v2 (migration plan)
+## Key encryption v2
 
-Every key in `user_api_keys` is AES-256-GCM. **v2** (written by the current
-code) derives the key with HKDF-SHA256 from `KEY_ENCRYPTION_SECRET` and binds
-each ciphertext to its row's owner and provider as additional authenticated
-data, so a ciphertext copied into another user's row fails to decrypt. v2
-values start with `v2:`. **v1** (the old `user_anthropic_keys` format: SHA-256
-of the secret, no AAD) can still be read.
+Every key in `user_api_keys` is AES-256-GCM. **v2** derives the key with
+HKDF-SHA256 from `KEY_ENCRYPTION_SECRET` and binds each ciphertext to its
+row's owner and provider as additional authenticated data, so a ciphertext
+copied into another user's row fails to decrypt. v2 values start with `v2:`.
+The old **v1** format (from `user_anthropic_keys`: SHA-256 of the secret, no
+AAD) is no longer read: every key was re-encrypted, the old table is dropped
+(`20261118170000_drop_user_anthropic_keys.sql`), and MarketCheck keys no longer
+live in the app-state blob. Checks (all 0):
 
-1. **Deploy** this version. The migration copies the v1 Anthropic keys into
-   `user_api_keys` unchanged; MarketCheck keys move in from each user's app
-   state the next time they open the app (or at the next scheduled sync, or a
-   backup restore) and are written as v2.
-2. **Re-encrypt.** Each v1 key is rewritten as v2 the first time the server
-   reads it, and the daily Vercel cron (`/api/cron-sync`, needs `CRON_SECRET`)
-   rewrites every remaining v1 row. No user action is needed.
-3. **Verify** in the SQL editor:
-   ```sql
-   select count(*) from public.user_api_keys where ciphertext not like 'v2:%';
-   select count(*) from public.app_state where data #> '{settings,marketcheckKeys}' is not null;
-   ```
-   Both should reach 0 (the second once every user with MarketCheck keys has
-   opened the app or been synced).
-4. **Clean up** in a later change: delete the v1 branch of `decrypt()` in
-   `api/_crypto.js` (and `encryptV1ForTests`), and add a migration that drops
-   `public.user_anthropic_keys`.
+```sql
+select count(*) from public.user_api_keys where ciphertext not like 'v2:%';
+select count(*) from public.app_state where data #> '{settings,marketcheckKeys}' is not null;
+```
 
 Rotating `KEY_ENCRYPTION_SECRET` still invalidates every stored key (users
 re-enter theirs).
@@ -151,6 +140,12 @@ re-enter theirs).
   `storage.objects` (every command, every bucket), and `my_access_mfa()`
   (allowed + admin + has_mfa in one call, for `api/_auth.js`). See
   "Two-factor authentication" below.
+- `20261118170000_drop_user_anthropic_keys.sql` — drops the old
+  `user_anthropic_keys` table (its rows were copied into `user_api_keys` and
+  re-encrypted as v2).
+- `20261118170100_strict_save_app_state.sql` — `save_app_state()` no longer
+  overwrites when `expected_rev` is null: that's a conflict when a row exists
+  (still an insert at rev 1 when none does).
 
 All are idempotent and ordered by filename, so applying the full set against an
 existing database is safe.

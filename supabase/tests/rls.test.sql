@@ -10,23 +10,22 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(38);
+select plan(40);
 
 -- ── Fixtures (as postgres, so RLS does not apply) ──
 insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-0000000000a1', 'owner@example.com'),
   ('00000000-0000-0000-0000-0000000000b2', 'friend@example.com'),
   ('00000000-0000-0000-0000-0000000000c3', 'stranger@example.com'),
-  ('00000000-0000-0000-0000-0000000000d4', 'newbie@example.com');
+  ('00000000-0000-0000-0000-0000000000d4', 'newbie@example.com'),
+  ('00000000-0000-0000-0000-0000000000e5', 'fresh@example.com');
 -- Mixed case on purpose: is_allowed() must match it case-insensitively.
-insert into public.allowed_emails (email) values ('owner@example.com'), ('Friend@Example.com'), ('newbie@example.com')
+insert into public.allowed_emails (email) values ('owner@example.com'), ('Friend@Example.com'), ('newbie@example.com'), ('fresh@example.com')
   on conflict do nothing;
 insert into public.app_state (user_id, data) values
   ('00000000-0000-0000-0000-0000000000a1', '{"who":"owner"}'),
   ('00000000-0000-0000-0000-0000000000b2', '{"who":"friend"}'),
   ('00000000-0000-0000-0000-0000000000c3', '{"who":"stranger"}');
-insert into public.user_anthropic_keys (user_id, ciphertext, last4)
-  values ('00000000-0000-0000-0000-0000000000a1', 'opaque', 'abcd');
 
 -- The world-readable demo table is gone (/?demo uses the bundled fixture).
 select hasnt_table('public', 'demo_snapshot', 'public.demo_snapshot was dropped');
@@ -54,7 +53,7 @@ select throws_ok(
   '42501', null, 'owner cannot insert a row for another user id');
 
 select throws_ok('select * from public.allowed_emails', '42501', null, 'authenticated cannot read allowed_emails');
-select throws_ok('select * from public.user_anthropic_keys', '42501', null, 'authenticated cannot read user_anthropic_keys');
+select hasnt_table('public', 'user_anthropic_keys', 'the old user_anthropic_keys table is gone');
 select throws_ok('select * from public.app_state_history', '42501', null, 'authenticated cannot read app_state_history');
 select throws_ok($q$insert into public.allowed_emails (email) values ('me@example.com')$q$, '42501', null, 'authenticated cannot add itself to allowed_emails');
 select throws_ok('truncate public.app_state', '42501', null, 'authenticated cannot truncate app_state');
@@ -64,8 +63,9 @@ select is(public.save_app_state('{"v":1}', 0), '{"ok":true,"rev":1}'::jsonb, 'sa
 select is(public.save_app_state('{"v":2}', 0) - 'data', '{"ok":false,"rev":1}'::jsonb, 'save with a stale rev is a conflict');
 select is(public.save_app_state('{"v":2}', 0) -> 'data', '{"v":1}'::jsonb, 'the conflict carries the stored data');
 select is((select data ->> 'v' from public.app_state), '1', 'a conflict writes nothing');
-select is(public.save_app_state('{"v":3}', null), '{"ok":true,"rev":2}'::jsonb, 'a null rev writes regardless');
-select is(public.save_app_state('{"v":4}', 2), '{"ok":true,"rev":3}'::jsonb, 'the next save chains from the new rev');
+select is(public.save_app_state('{"v":3}', null) - 'data', '{"ok":false,"rev":1}'::jsonb, 'a null rev never overwrites an existing row (conflict)');
+select is((select data ->> 'v' from public.app_state), '1', 'the null-rev save wrote nothing');
+select is(public.save_app_state('{"v":4}', 1), '{"ok":true,"rev":2}'::jsonb, 'the next save chains from the stored rev');
 reset role;
 
 select is(
@@ -91,6 +91,12 @@ select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000
 select is(public.save_app_state('{"first":true}', 0), '{"ok":true,"rev":1}'::jsonb, 'a first save inserts the row at rev 1');
 select is((select data from public.app_state), '{"first":true}'::jsonb, 'the new row holds the saved data');
 select is(public.save_app_state('{"again":true}', 0) - 'data', '{"ok":false,"rev":1}'::jsonb, 'a second insert attempt at rev 0 is a conflict');
+reset role;
+
+-- ── Allowlisted, no row yet, null rev: inserts at rev 1 ──
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000e5","email":"fresh@example.com","role":"authenticated"}', true);
+select is(public.save_app_state('{"first":true}', null), '{"ok":true,"rev":1}'::jsonb, 'a null rev with no row inserts it at rev 1');
 reset role;
 
 -- ── Signed in, not allowlisted ──
