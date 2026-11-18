@@ -2,7 +2,7 @@
 # `supabase test db`). `project_id` is just a local label; CI selects the
 # production project with --db-url. Settings not listed here use the CLI's
 # defaults (`supabase init` writes the full file if you want to edit them).
-project_id = "car-shopper"
+project_id = "tirekicker"
 
 [db]
 port = 54322

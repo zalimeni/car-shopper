@@ -24,6 +24,8 @@ import crypto from "node:crypto";
 const IV_LEN = 12; // GCM standard nonce length
 const TAG_LEN = 16;
 const V2 = "v2:";
+// Keeps the app's old name (Car Shopper) on purpose: the salt is part of every stored
+// key's encryption, so changing it would make all vaulted keys unreadable.
 const HKDF_SALT = "car-shopper/user-api-keys";
 const HKDF_INFO = "aes-256-gcm v2";
 

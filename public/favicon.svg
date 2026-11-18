@@ -1,7 +1,26 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="12" fill="#0f1114"/>
-  <path d="M14 38l3-10a6 6 0 0 1 5.7-4h18.6a6 6 0 0 1 5.7 4l3 10v8a2 2 0 0 1-2 2h-3a2 2 0 0 1-2-2v-2H21v2a2 2 0 0 1-2 2h-3a2 2 0 0 1-2-2z" fill="#2563eb"/>
-  <path d="M20 28l2-6a3 3 0 0 1 2.8-2h14.4a3 3 0 0 1 2.8 2l2 6z" fill="#0f1114"/>
-  <circle cx="22" cy="42" r="3" fill="#0f1114"/>
-  <circle cx="42" cy="42" r="3" fill="#0f1114"/>
+  <!-- Tirekicker: a tire with rounded tread blocks and a sidewall ring, on the app's green. -->
+  <rect width="64" height="64" rx="12" fill="#2d8659"/>
+  <g fill="#0f1114">
+    <rect x="29.1" y="8.3" width="5.8" height="6.2" rx="2.6" transform="rotate(0 32 32)"/>
+    <rect x="29.1" y="8.3" width="5.8" height="6.2" rx="2.6" transform="rotate(22.5 32 32)"/>
+    <rect x="29.1" y="8.3" width="5.8" height="6.2" rx="2.6" transform="rotate(45 32 32)"/>
+    <rect x="29.1" y="8.3" width="5.8" height="6.2" rx="2.6" transform="rotate(67.5 32 32)"/>
+    <rect x="29.1" y="8.3" width="5.8" height="6.2" rx="2.6" transform="rotate(90 32 32)"/>
+    <rect x="29.1" y="8.3" width="5.8" height="6.2" rx="2.6" transform="rotate(112.5 32 32)"/>
+    <rect x="29.1" y="8.3" width="5.8" height="6.2" rx="2.6" transform="rotate(135 32 32)"/>
+    <rect x="29.1" y="8.3" width="5.8" height="6.2" rx="2.6" transform="rotate(157.5 32 32)"/>
+    <rect x="29.1" y="8.3" width="5.8" height="6.2" rx="2.6" transform="rotate(180 32 32)"/>
+    <rect x="29.1" y="8.3" width="5.8" height="6.2" rx="2.6" transform="rotate(202.5 32 32)"/>
+    <rect x="29.1" y="8.3" width="5.8" height="6.2" rx="2.6" transform="rotate(225 32 32)"/>
+    <rect x="29.1" y="8.3" width="5.8" height="6.2" rx="2.6" transform="rotate(247.5 32 32)"/>
+    <rect x="29.1" y="8.3" width="5.8" height="6.2" rx="2.6" transform="rotate(270 32 32)"/>
+    <rect x="29.1" y="8.3" width="5.8" height="6.2" rx="2.6" transform="rotate(292.5 32 32)"/>
+    <rect x="29.1" y="8.3" width="5.8" height="6.2" rx="2.6" transform="rotate(315 32 32)"/>
+    <rect x="29.1" y="8.3" width="5.8" height="6.2" rx="2.6" transform="rotate(337.5 32 32)"/>
+    <circle cx="32" cy="32" r="20.5"/>
+  </g>
+  <circle cx="32" cy="32" r="15.5" fill="none" stroke="#2b2f38" stroke-width="1.6"/>
+  <circle cx="32" cy="32" r="10.5" fill="#f0ede4"/>
+  <circle cx="32" cy="32" r="3.8" fill="#0f1114"/>
 </svg>

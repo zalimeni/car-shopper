@@ -1419,7 +1419,7 @@ export default function App() {
     <div style={S.app}>
       <header style={S.header}>
         <div style={S.hRow}>
-          <h1 style={S.title}>Car Shopper</h1>
+          <h1 style={S.title}>Tirekicker</h1>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <QuotaGauge summary={quotaSummary} onClick={function () { setQuotaOpen(true); }} />
             <span style={S.badge}>{DEMO ? "Demo · not saved" : saving ? "Saving..." : "Saved ✓"}</span>
@@ -1508,7 +1508,7 @@ export default function App() {
             if (!data) return;
             var r = buildPriceHistoryCsv(data, candidates);
             if (!r.points) { setExportMsg("No priced listings to export yet."); return; }
-            downloadText("car-shopper-prices-" + today() + ".csv", r.csv, "text/csv");
+            downloadText("tirekicker-prices-" + today() + ".csv", r.csv, "text/csv");
             setExportMsg("Exported " + r.points + " price point" + (r.points === 1 ? "" : "s") + " across " + r.listings + " listing" + (r.listings === 1 ? "" : "s") + " (all statuses incl. rejected).");
           }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })} title="Download a CSV of every price observation across all listings (watch, rejected, sold, skipped, candidates) — for pricing analysis / feeding to Claude">Export prices (CSV)</button>
           {!DEMO && <button onClick={openSnaps} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>{snapsOpen ? "Close backups" : "Backups"}</button>}

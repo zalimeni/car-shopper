@@ -36,7 +36,7 @@ describe("the review queue syncs through the app state", () => {
   it("restores the saved queue, prunes decided cars, and writes it back once", async () => {
     localStorage.clear();
     render(React.createElement(App));
-    await screen.findByText("Car Shopper", {}, { timeout: 4000 });
+    await screen.findByText("Tirekicker", {}, { timeout: 4000 });
     await waitFor(() => expect(writes.length).toBeGreaterThan(0));
     expect(writes[0].candidates.map((c) => c.vin)).toEqual(["QUEUED000000000001"]);
     await new Promise((r) => setTimeout(r, 1200)); // past the queue's save delay

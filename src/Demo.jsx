@@ -9,7 +9,7 @@ import { startTutorial } from "./tutorial.js";
 // anything the demo can't do. See src/demoRuntime.js.
 
 var WELCOME_KEY = "cs-demo-welcomed";
-var REPO = "https://github.com/zalimeni/car-shopper";
+var REPO = "https://github.com/zalimeni/tirekicker";
 
 export function DemoShell({ children }) {
   var [state, setState] = useState("loading"); // loading | ready | missing

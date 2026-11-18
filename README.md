@@ -1,4 +1,4 @@
-# car-shopper
+# Tirekicker
 
 Personal used-car search dashboard. It pulls dealer inventory for the vehicles
 you're hunting, tracks them on a scored watchlist (price changes, staleness,

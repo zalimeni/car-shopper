@@ -35,7 +35,7 @@ describe("App load does not hang on a stalled write-back", () => {
   it("renders the app even when the initial persist never resolves", async () => {
     render(React.createElement(App));
     // Header appears -> got past "Loading..." despite the hung write.
-    await screen.findByText("Car Shopper", {}, { timeout: 4000 });
+    await screen.findByText("Tirekicker", {}, { timeout: 4000 });
     expect(screen.queryByText("Loading...")).toBeNull();
   });
 });

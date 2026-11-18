@@ -38,7 +38,7 @@ describe("profile trim chips", () => {
   it("show saved states, cycle on tap, and save as arrays", async () => {
     localStorage.clear();
     render(React.createElement(App));
-    await screen.findByText("Car Shopper", {}, { timeout: 4000 });
+    await screen.findByText("Tirekicker", {}, { timeout: 4000 });
     fireEvent.click(screen.getAllByText("Profiles")[0]);
     fireEvent.click(await screen.findByText("Edit"));
 

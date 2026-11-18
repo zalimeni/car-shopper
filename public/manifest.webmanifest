@@ -1,6 +1,6 @@
 {
-  "name": "Car Shopper",
-  "short_name": "Car Shopper",
+  "name": "Tirekicker",
+  "short_name": "Tirekicker",
   "description": "Personal used-car search tracker.",
   "start_url": "/",
   "scope": "/",

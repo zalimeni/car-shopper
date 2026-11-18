@@ -40,7 +40,7 @@ describe("Results profile filter", () => {
   it("defaults to active profiles; candidates, hidden and skipped follow it", async () => {
     localStorage.clear();
     render(React.createElement(App));
-    await screen.findByText("Car Shopper", {}, { timeout: 4000 });
+    await screen.findByText("Tirekicker", {}, { timeout: 4000 });
     fireEvent.click(screen.getByText(/^Results/));
     await screen.findByText("Candidates (2)");
     expect(screen.getByText(/Hidden by your trim, drivetrain or color filters \(1\)/)).toBeTruthy();
