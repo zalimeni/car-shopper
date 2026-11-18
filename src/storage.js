@@ -22,7 +22,7 @@ async function currentUserId() {
   return data && data.session && data.session.user ? data.session.user.id : null;
 }
 
-// Demo mode (/?demo): the published snapshot, edited in memory only — nothing
+// Demo mode (/?demo): the bundled fixture, edited in memory only — nothing
 // is ever written to Supabase, and a reload starts the demo over.
 const demoStorage = {
   async get() {

@@ -2,7 +2,6 @@ import { useState, useEffect, useLayoutEffect, useCallback, useRef, Fragment, cl
 import storage, { watchState } from "./storage";
 import { signOut } from "./Auth";
 import { DEMO, demoFetchListings, registerDemoData } from "./demoRuntime";
-import { DemoPublishModal } from "./Demo";
 import { Tutorial } from "./Tutorial";
 import { startTutorial } from "./tutorial.js";
 import { fetchListings, postStep, fetchPriceComps, fetchRawSample, reconcile } from "./sync";
@@ -535,7 +534,6 @@ export default function App({ me }) {
   var [rawBusy, setRawBusy] = useState(false);
   var [syncing, setSyncing] = useState(false);
   var [syncMsg, setSyncMsg] = useState(null);
-  var [publishOpen, setPublishOpen] = useState(false); // admins: Publish demo
 
   // Persist the volatile bits so an app-switch reload restores them.
   useEffect(function () { ssSet("cs-tab", tab); }, [tab]);
@@ -816,16 +814,14 @@ export default function App({ me }) {
   // updates written to the blob. Manual only (↻ Sync) — no sync-on-load, to
   // spare MarketCheck's free-tier quota. A manual sync fully refreshes every
   // active profile (src/syncPlan.js); the scheduled sync takes the cheap path.
-  // (opts.auto is retained but unused.)
-  var doSync = useCallback(async function (opts) {
+  var doSync = useCallback(async function () {
     if (!data || syncing) return;
-    var auto = opts && opts.auto;
     setSyncing(true);
-    if (!auto) setSyncMsg(null);
+    setSyncMsg(null);
     try {
       var active = data.profiles.filter(function (p) { return p.active; });
       if (!active.length) {
-        if (!auto) setSyncMsg({ ok: false, error: "No active profiles to sync." });
+        setSyncMsg({ ok: false, error: "No active profiles to sync." });
         setSyncing(false);
         return;
       }
@@ -837,7 +833,7 @@ export default function App({ me }) {
       var skV = {};
       (data.skipped || []).forEach(function (s) { if (s.vin) skV[s.vin] = true; });
       function onSyncProgress(info) {
-        if (!auto) setSyncMsg({ busy: true, text: syncProgressText(info) });
+        setSyncMsg({ busy: true, text: syncProgressText(info) });
         var pr = reconcile(data.listings, info.listings, today());
         var dec = pr.candidates
           .map(function (c) { return Object.assign({}, c, { compositeScore: calcScore(c.scores, data.criteria), _candidate: true }); })
@@ -849,8 +845,8 @@ export default function App({ me }) {
         });
       }
       var po = planOpts(data);
-      var steps = planSync(active, getSettings(data).mcProfiles || {}, Object.assign({ manual: !auto }, po));
-      var res = DEMO ? await demoFetchListings((dataRef.current || data).listings, steps, onSyncProgress, getSettings(data).mcQuota) : await fetchListings(steps, trackedVins(data.listings), opts, { franchiseOnly: po.franchiseOnly, excludeSalt: po.excludeSalt, spentKeys: mcSpent(data, mcVaultRef.current), colorCache: getSettings(data).mcColors || {},
+      var steps = planSync(active, getSettings(data).mcProfiles || {}, Object.assign({ manual: true }, po));
+      var res = DEMO ? await demoFetchListings((dataRef.current || data).listings, steps, onSyncProgress, getSettings(data).mcQuota) : await fetchListings(steps, trackedVins(data.listings), { franchiseOnly: po.franchiseOnly, excludeSalt: po.excludeSalt, spentKeys: mcSpent(data, mcVaultRef.current), colorCache: getSettings(data).mcColors || {},
         // Queued candidates still without a color get decoded too (they may not come back in this sync).
         alsoDecode: candidates.filter(function (c) { return c.vin && !c.color && !c.baseColor; }).map(function (c) { return c.vin; }) }, onSyncProgress);
       // Reconcile + save against the LATEST state, not the `data` snapshot from
@@ -892,18 +888,16 @@ export default function App({ me }) {
       if (!res.rateLimited) syncPatch.lastSynced = new Date().toISOString();
       // Keep each key's latest monthly quota (MarketCheck reports it on every
       // response) and — for a clean, complete run — what the sync actually cost.
-      if (!res.mock) {
-        var nowIso = new Date().toISOString();
-        var mq1 = ingestSnaps(getSettings(base).mcQuota, res.keyQuotas, nowIso);
-        // A query error still paid for its call, so the count stands; only a run cut
-        // short (rate limit, or stopped before the timeout) under-counts.
-        var cutShort = res.rateLimited || (res.errors || []).some(function (m) { return /Stopped early/.test(String(m)); });
-        if (!cutShort && res.calls > 0) {
-          mq1 = recordSyncCalls(mq1, res.calls, nowIso);
-          mq1.lastSync = Object.assign({}, mq1.lastSync, { full: steps.filter(function (x) { return x.kind === "full"; }).length, searches: steps.length });
-        }
-        syncPatch.settings = Object.assign({}, base.settings || {}, { mcQuota: mq1, mcProfiles: nextProfileMeta(getSettings(base).mcProfiles, res.results, po, nowIso), mcColors: mergeColorCache(getSettings(base).mcColors, res.decoded, nowIso) }, res.apiInfo ? { mcApi: Object.assign({}, res.apiInfo, { at: nowIso }) } : {});
+      var nowIso = new Date().toISOString();
+      var mq1 = ingestSnaps(getSettings(base).mcQuota, res.keyQuotas, nowIso);
+      // A query error still paid for its call, so the count stands; only a run cut
+      // short (rate limit, or stopped before the timeout) under-counts.
+      var cutShort = res.rateLimited || (res.errors || []).some(function (m) { return /Stopped early/.test(String(m)); });
+      if (!cutShort && res.calls > 0) {
+        mq1 = recordSyncCalls(mq1, res.calls, nowIso);
+        mq1.lastSync = Object.assign({}, mq1.lastSync, { full: steps.filter(function (x) { return x.kind === "full"; }).length, searches: steps.length });
       }
+      syncPatch.settings = Object.assign({}, base.settings || {}, { mcQuota: mq1, mcProfiles: nextProfileMeta(getSettings(base).mcProfiles, res.results, po, nowIso), mcColors: mergeColorCache(getSettings(base).mcColors, res.decoded, nowIso) }, res.apiInfo ? { mcApi: Object.assign({}, res.apiInfo, { at: nowIso }) } : {});
       await save(Object.assign({}, base, syncPatch));
       // Report the count actually added to the queue (reconcile's newCount also
       // counts skipped VINs, which we hide), and note how many matched skips.
@@ -913,7 +907,7 @@ export default function App({ me }) {
       // run those listings were just never checked, so don't report them as gone.
       var summaryOut = Object.assign({}, rec.summary, { newCount: added.length });
       if (res.rateLimited) summaryOut.notSeen = 0;
-      setSyncMsg({ ok: true, summary: summaryOut, skippedSeen: skippedSeen, calls: res.calls, errors: res.errors, notices: res.notices, mock: res.mock, demo: res.demo, rateLimited: res.rateLimited, rateLimitInfo: res.rateLimitInfo, quota: res.quota });
+      setSyncMsg({ ok: true, summary: summaryOut, skippedSeen: skippedSeen, calls: res.calls, errors: res.errors, notices: res.notices, demo: res.demo, rateLimited: res.rateLimited, rateLimitInfo: res.rateLimitInfo, keyQuotas: res.keyQuotas });
       setSyncing(false);
       // Auto-score only NEW candidates (never skipped, never already-queued, not
       // already scored, and passing their profile's trim filter — no point
@@ -946,7 +940,7 @@ export default function App({ me }) {
       return;
     } catch (e) {
       console.error("Sync:", e);
-      if (!auto) setSyncMsg({ ok: false, error: e.message });
+      setSyncMsg({ ok: false, error: e.message });
     }
     setSyncing(false);
   }, [data, syncing, save, autoScore, keyLoaded, keyStatus, scoreBusy, scoreItems, candidates]);
@@ -961,7 +955,7 @@ export default function App({ me }) {
     if (typeof window === "undefined" || !data) return;
     window.__rawSync = function (vin) {
       var active = data.profiles.filter(function (p) { return p.active; });
-      return fetchRawSample(active, [], vin).then(function (r) { console.log("[rawSync]", r); return r; });
+      return fetchRawSample(active[0], vin, Object.assign({ spentKeys: mcSpent(data, mcVaultRef.current) }, planOpts(data))).then(function (r) { console.log("[rawSync]", r); return r; });
     };
   }, [data]);
 
@@ -975,11 +969,12 @@ export default function App({ me }) {
     setRawBusy(true); setRawDebug("");
     try {
       var active = data.profiles.filter(function (p) { return p.active; });
-      var r = await fetchRawSample(active, [], vin.trim());
+      var r = await fetchRawSample(active[0], vin.trim(), Object.assign({ spentKeys: mcSpent(data, mcVaultRef.current) }, planOpts(data)));
       setRawDebug(JSON.stringify(r, null, 2));
+      if (r && (r.keyQuotas || r.apiInfo)) noteQuota(r.keyQuotas, r.apiInfo); // it was a real (billed) call — keep the gauge honest
     } catch (e) { setRawDebug("Error: " + (e && e.message ? e.message : String(e))); }
     setRawBusy(false);
-  }, [data, rawBusy]);
+  }, [data, rawBusy]); // noteQuota (declared below) changes with data
 
   // ── MarketCheck quota gauge ──
   var [quotaOpen, setQuotaOpen] = useState(false);
@@ -1106,7 +1101,7 @@ export default function App({ me }) {
     var d0 = dataRef.current;
     if (!d0 || !profile || !profile.params || !(profile.params.make || profile.params.model)) return null;
     var po = planOpts(d0);
-    var r = await postStep({ kind: "count", profile: profile }, null, Object.assign({}, po, { spentKeys: mcSpent(d0, mcVaultRef.current) }));
+    var r = await postStep({ kind: "count", profile: profile }, Object.assign({}, po, { spentKeys: mcSpent(d0, mcVaultRef.current) }));
     var d = dataRef.current || d0;
     var st = getSettings(d);
     var nowIso = new Date().toISOString();
@@ -1288,7 +1283,6 @@ export default function App({ me }) {
       </header>
 
       <Tutorial demo={DEMO} />
-      {publishOpen && <DemoPublishModal data={data} candidates={candidates} onClose={function () { setPublishOpen(false); }} />}
       {quotaOpen && (
         <QuotaModal data={data} summary={quotaSummary} onClose={function () { setQuotaOpen(false); }} />
       )}
@@ -1352,7 +1346,6 @@ export default function App({ me }) {
             setExportMsg("Exported " + r.points + " price point" + (r.points === 1 ? "" : "s") + " across " + r.listings + " listing" + (r.listings === 1 ? "" : "s") + " (all statuses incl. rejected).");
           }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })} title="Download a CSV of every price observation across all listings (watch, rejected, sold, skipped, candidates) — for pricing analysis / feeding to Claude">Export prices (CSV)</button>
           {!DEMO && <button onClick={openSnaps} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>{snapsOpen ? "Close backups" : "Backups"}</button>}
-          {isAdmin && !DEMO && <button onClick={function () { setPublishOpen(true); }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })} title="Replace the public demo (/?demo) with a scrubbed copy of your data">Publish demo</button>}
           {!DEMO && <button onClick={function () { runRawDebug(); }} disabled={rawBusy} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" }, rawBusy ? { opacity: 0.6 } : {})}>{rawBusy ? "Running…" : "Debug raw"}</button>}
           <button onClick={function () { save(Object.assign({}, data, { onboarded: false })); }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>Setup wizard</button>
           <button onClick={reset} style={Object.assign({}, S.resetBtn, confirmReset ? { color: "#c44" } : {})}>
@@ -1436,7 +1429,7 @@ export function syncWarning(data, nowMs, keys) {
   var s = getSettings(data);
   var active = (data.profiles || []).filter(function (p) { return p.active; });
   // The ↻ Sync button fully refreshes every active profile.
-  var cost = estimateCost(active, s.mcProfiles || {}, data.listings, Object.assign({ manual: true }, planOpts(data)), now);
+  var cost = estimateCost(active, s.mcProfiles || {}, data.listings, Object.assign({ manual: true, colorCache: s.mcColors, candidates: data.candidates }, planOpts(data)), now);
   var sum = summarize(keys || s.marketcheckKeys || [], s.mcQuota, now);
   var newest = (data.listings || []).reduce(function (m, l) { return l.mcSeen && l.mcSeen > m ? l.mcSeen : m; }, "");
   var ago = ageH < 1 ? Math.max(1, Math.round(ageH * 60)) + " min" : Math.round(ageH) + " hour" + (Math.round(ageH) === 1 ? "" : "s");
@@ -1449,17 +1442,19 @@ export function syncWarning(data, nowMs, keys) {
 
 // ── MarketCheck API version drift ──
 // Every response says which API version answered and, when that version is on its
-// way out, its deprecation and sunset dates. We pin a version (api/marketcheck.js
-// API_VERSION); this turns those headers into a banner when action is needed.
+// way out, its deprecation and sunset dates. No version is pinned — MarketCheck
+// serves its default — so this turns those headers into a banner when action is
+// needed: near the sunset, or when a different major version answers than the one
+// normalize() was validated against (api/marketcheck.js VALIDATED_VERSION).
 var SUNSET_WARN_DAYS = 60;
 function majorOf(v) { var m = String(v || "").match(/v?(\d+)/i); return m ? Number(m[1]) : null; }
 function fmtDay(v) { var t = Date.parse(v); return isNaN(t) ? String(v) : new Date(t).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }); }
 export function apiDriftNotice(api, nowMs) {
   if (!api) return null;
   var now = nowMs != null ? nowMs : Date.now();
-  if (api.pinRejected) return "MarketCheck rejected the pinned API version (" + (api.pinned || "?") + "), so syncs are running on its default version" + (api.served ? " (" + api.served + ")" : "") + " — listings may parse wrong until the app is updated.";
-  var pm = majorOf(api.pinned), sm = majorOf(api.served);
-  if (pm != null && sm != null && pm !== sm) return "MarketCheck answered with API " + api.served + ", not the " + api.pinned + " this app was built for — listings may parse wrong until the app is updated.";
+  var built = api.validated || api.pinned; // `pinned`: stored before the pin was dropped
+  var pm = majorOf(built), sm = majorOf(api.served);
+  if (pm != null && sm != null && pm !== sm) return "MarketCheck answered with API " + api.served + ", not the " + built + " this app was built for — listings may parse wrong until the app is updated.";
   var sunset = api.sunset ? Date.parse(api.sunset) : NaN;
   if (!isNaN(sunset)) {
     var days = Math.ceil((sunset - now) / 86400000);
@@ -1473,7 +1468,7 @@ function ApiVersionLine({ api }) {
   var notice = apiDriftNotice(api);
   return (
     <div style={{ fontSize: 13, color: "#c8c8d0", lineHeight: 1.6 }}>
-      <div>Served by <strong>{api.served || "unknown"}</strong>{api.pinned ? <span> · pinned to <strong>{api.pinned}</strong>{api.pinRejected ? <span style={{ color: "#e07a7a" }}> (rejected)</span> : null}</span> : " · not pinned"}</div>
+      <div>Served by <strong>{api.served || "unknown"}</strong>{api.validated || api.pinned ? <span> · app built for <strong>{api.validated || api.pinned}</strong></span> : null}</div>
       {(api.deprecation || api.sunset) && <div style={{ color: "#8a8a96" }}>{api.deprecation ? "Deprecated " + fmtDay(api.deprecation) : ""}{api.deprecation && api.sunset ? " · " : ""}{api.sunset ? "sunsets " + fmtDay(api.sunset) : ""}</div>}
       {notice && <div style={{ color: "#e8c96a", marginTop: 2 }}>⚠ {notice}</div>}
       {api.at && <div style={{ color: "#555", fontSize: 11 }}>as of {fmtResetTs(api.at)}</div>}
@@ -1529,7 +1524,7 @@ export function QuotaModal({ data, summary, onClose }) {
   var active = activeList.length;
   var meta = s.mcProfiles || {};
   var po = planOpts(data);
-  var cost = estimateCost(activeList, meta, data.listings, Object.assign({ manual: true }, po)); // the ↻ Sync button
+  var cost = estimateCost(activeList, meta, data.listings, Object.assign({ manual: true, colorCache: s.mcColors, candidates: data.candidates }, po)); // the ↻ Sync button
   // The scheduled sync: a new-listings pass most days, a full refresh every FULL_REFRESH_DAYS.
   var dailyNew = activeList.length + (trackedVins(data.listings).length ? 1 : 0);
   var perMonth = Math.round((30 - 30 / FULL_REFRESH_DAYS) * dailyNew + (30 / FULL_REFRESH_DAYS) * (cost.min + cost.max) / 2);
@@ -1600,7 +1595,7 @@ export function QuotaModal({ data, summary, onClose }) {
           <p style={S.help}>Activate a profile to estimate sync cost.</p>
         ) : (
           <div data-tour="quota-syncs" style={{ fontSize: 13, color: "#c8c8d0", lineHeight: 1.6 }}>
-            <div>Each active profile is one nationwide search{po.excludeSalt ? " (salt-belt states left out)" : ""}. <strong>↻ Sync</strong> fully refreshes them all: one call per 50 matching cars, so <strong>{range(cost.min, cost.max)}</strong> calls{cost.vins.max ? ", including up to " + n(cost.vins.max) + " for watchlist cars the searches don't return" : ""}.</div>
+            <div>Each active profile is one nationwide search{po.excludeSalt ? " (salt-belt states left out)" : ""}. <strong>↻ Sync</strong> fully refreshes them all: one call per 50 matching cars, so <strong>{range(cost.min, cost.max)}</strong> calls{cost.vins.max ? ", including up to " + n(cost.vins.max) + " for watchlist cars the searches don't return" : ""}{cost.decode.max ? (cost.vins.max ? " and " : ", including ") + range(cost.decode.min, cost.decode.max) + " to decode the color of cars that list none" : ""}.</div>
             <div style={{ overflowX: "auto", margin: "6px 0" }}>
               <table style={{ borderCollapse: "collapse", width: "100%" }}>
                 <thead><tr>{["Profile", "Matching cars", "Full refresh", "Last full refresh"].map(function (h) { return (<th key={h} style={th}>{h}</th>); })}</tr></thead>
@@ -1644,8 +1639,7 @@ export function QuotaModal({ data, summary, onClose }) {
                 ["Check a profile's match count", "1"],
                 ["Color for a listing that has none (VIN decode, per sync)", "1 each, at most " + DECODE_MAX],
                 ["Price Check → live market", "1–4"],
-                ["Debug raw VIN lookup", "1"],
-                ["Debug raw sample (+ up to 4 diagnosis re-runs if empty)", "1–5"],
+                ["Debug raw (a one-page sample, or a VIN lookup)", "1"],
                 ["Daily scheduled sync, if enabled on the server", "≈ " + n(perMonth) + " / month (full refresh every " + FULL_REFRESH_DAYS + " days)"],
               ].map(function (row) { return (<tr key={row[0]}><td style={td}>{row[0]}</td><td style={td}>{row[1]}</td></tr>); })}
             </tbody>
@@ -3015,7 +3009,7 @@ export function AdminTab({ goSettings }) {
     <div>
       <div style={S.secH}><h2 style={S.secT}>Allowlist</h2></div>
       <div style={S.card}>
-        <p style={S.help}>The app is invite-only: sign-ups are off, so people get in by an invite from here, and only emails on this list can use the app. Changes write the <code>allowed_emails</code> table and take effect immediately. <b>Admin</b> = this tab and Publish demo; <b>Daily sync</b> = the scheduled background sync runs for that account about once a day (spends its MarketCheck quota); under the email, its last run and outcome. <b>2FA · reset</b> (shown when someone has two-factor on) removes their authenticator apps, for a lost phone.</p>
+        <p style={S.help}>The app is invite-only: sign-ups are off, so people get in by an invite from here, and only emails on this list can use the app. Changes write the <code>allowed_emails</code> table and take effect immediately. <b>Admin</b> = this tab; <b>Daily sync</b> = the scheduled background sync runs for that account about once a day (spends its MarketCheck quota); under the email, its last run and outcome. <b>2FA · reset</b> (shown when someone has two-factor on) removes their authenticator apps, for a lost phone.</p>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
           <input style={Object.assign({}, S.inp, { flex: 1, minWidth: 180 })} type="email" autoComplete="off" placeholder="person@example.com"
             value={input} onChange={function (e) { setInput(e.target.value); }} onKeyDown={function (e) { if (e.key === "Enter") add(); }} />
@@ -3148,7 +3142,7 @@ export function PriceCheckTab({ data, candidates, keyStatus, mcKeys, goSettings,
     setLive({ busy: true });
     // One location, not all of them: each location is a separate (billed) query,
     // and comps near home are the ones that matter for a fair-price read.
-    fetchPriceComps(result.query, [hub], spentKeyIds(mcKeys || [], getSettings(data).mcQuota)).then(function (r) {
+    fetchPriceComps(result.query, hub, spentKeyIds(mcKeys || [], getSettings(data).mcQuota)).then(function (r) {
       var merged = localPriceCheck(data, candidates, result.query, { extra: r.listings });
       setResult(Object.assign({ query: result.query }, merged));
       setAi(null); // comps changed — any prior AI verdict is stale
@@ -3736,7 +3730,7 @@ function HelpTab() {
         <h3 style={S.cardH}>Listings &amp; scores</h3>
         <p style={li}>The big number on a card is the <span style={b}>composite score</span> (your weighted criteria). AI per-criterion scores feed into it; the <span style={b}>✨ AI assessment</span> box shows the summary and a per-criterion breakdown.</p>
         <p style={item}><span style={b}>Notes</span> — every listing card has <span style={b}>📝 Add notes</span> for free-form notes in Markdown (headings, <span style={b}>**bold**</span>, lists, <span style={b}>- [ ]</span> checklists, links), up to 4,000 characters — about a page. They're separate from the rejection reason and from the price-change log sync keeps. AI scoring reads them as first-hand information about that car (a test drive, a dealer call) whenever it next scores that listing. Editing notes never triggers or flags a re-score — use ✨ Re-score on the card when a note matters.</p>
-        <p style={item}><span style={b}>Colors</span> — each profile's editor lists the colors its matches actually come in, with counts (measured when you save the profile with new search filters — one MarketCheck call — and kept current by every full refresh at no extra cost). Tap a color to hide those cars; "Include cars with no color listed" (on by default) keeps listings MarketCheck has no color for. Hiding happens on your device, so a color you didn't expect still shows up. When a listing has no color, sync looks it up from the car's VIN (its factory build data — one MarketCheck call per car, at most {DECODE_MAX} a sync; the answer is kept for 90 days, so a car is normally looked up once); those colors are marked ⓥ. Hidden candidates sit under "Hidden by your trim, drivetrain or color filters", one tap to show them again. Settings sets which colors new profiles start out hiding.</p>
+        <p style={item}><span style={b}>Colors</span> — each profile's editor lists the colors its matches actually come in, with counts (measured when you save the profile with new search filters — one MarketCheck call — and kept current by every full refresh at no extra cost). Tap a color to hide those cars; "Include cars with no color listed" (on by default) keeps listings MarketCheck has no color for. Hiding happens on your device, so a color you didn't expect still shows up. When a listing has no color, sync looks it up from the car's VIN (its factory build data — one MarketCheck call per car, at most {DECODE_MAX} a sync; the answer is kept for 90 days, so a car is normally looked up once, and a sync's cost estimate counts these look-ups); those colors are marked ⓥ. Hidden candidates sit under "Hidden by your trim, drivetrain or color filters", one tap to show them again. Settings sets which colors new profiles start out hiding.</p>
         <p style={item}><span style={b}>Tags</span> — tap <span style={b}>+ tag</span> on a watchlist card to label it however you like ("called dealer", "test drive booked", "waiting on Carfax"). Tags you've used before are suggested, so spellings stay consistent. Filter by tag on Results and Compare (or "No tags" to see what's untouched). AI scoring sees them too; like notes, editing tags never flags a re-score.</p>
         <p style={item}><span style={b}>Statuses</span>: Watchlist (active), Rejected (with a reason, restorable), and <span style={b}>Sold</span> (no longer available — archived, restorable). Synced cars are re-confirmed by every sync ("Last seen in sync"). Cars you added by hand with <span style={b}>+ Add</span> aren't, so after {STALE_DAYS} days they move under "Needs check" — check the dealer, then tap <span style={b}>Still avail</span> (or Sold).</p>
         <p style={item}><span style={b}>Budget</span>: each card says how far its asking price is under or over your budget (Settings) — before tax and fees.</p>
@@ -3747,7 +3741,7 @@ function HelpTab() {
         <h3 style={S.cardH}>Setup, backup &amp; reset</h3>
         <p style={item}><span style={b}>Setup wizard</span> (footer) re-runs the guided setup (budget, home base, profiles, rules). Listings are kept; finishing it replaces the budget, home base, tagline and rules (and clears the profiles, if you choose to). Budget, home base, salt-belt handling, and tagline also live on the <span style={b}>Settings</span> tab.</p>
         <p style={item}><span style={b}>Export prices (CSV)</span> (footer) downloads every recorded price observation across <span style={b}>all</span> listings — watchlist, rejected, sold, skipped, and candidates — one row per price/date, with year/trim/mileage/dealer-type/CPO/status. Built for offline pricing analysis (e.g. uploading to Claude to reason about model/trim/mileage pricing, including private listings you're evaluating elsewhere).</p>
-        <p style={item}><span style={b}>Demo</span> — <span style={b}>/?demo</span> (or "Try the demo" on the sign-in screen) opens a public demo with no sign-in, over a curated, anonymized slice of the owner's data (bundled with the app): edits stay in that tab, everything that would call MarketCheck or Claude is simulated and paced like the real call — ↻ Sync, ✨ Score (modeled on similar cars already scored), the wizard's Explore and suggestions, a profile's AI price baseline, and the Price tab's live market and AI verdict — while a pretend MarketCheck quota counts down. No real call is ever made; Reset in the banner starts over. Admins can also publish their current data with <span style={b}>Publish demo</span> (footer; keys removed, unchecked notes and typed reject reasons cleared) — that copy opens at <span style={b}>/?demo=live</span>.</p>
+        <p style={item}><span style={b}>Demo</span> — <span style={b}>/?demo</span> (or "Try the demo" on the sign-in screen) opens a public demo with no sign-in, over a curated, anonymized slice of the owner's data (bundled with the app): edits stay in that tab, everything that would call MarketCheck or Claude is simulated and paced like the real call — ↻ Sync, ✨ Score (modeled on similar cars already scored), the wizard's Explore and suggestions, a profile's AI price baseline, and the Price tab's live market and AI verdict — while a pretend MarketCheck quota counts down. No real call is ever made; Reset in the banner starts over.</p>
         <p style={item}><span style={b}>Keys</span> — your Anthropic key and MarketCheck keys (Settings tab) are stored encrypted on the server and never sent back to the browser; only labels and the last 4 characters show. Keys saved by an older version (inside your synced settings) move there on their own the next time you open the app.</p>
         <p style={item}><span style={b}>Access</span> — the app is invite-only: there's no sign-up. Admins invite people from the <span style={b}>Admin</span> tab, and set there who else is an admin and whose account gets the daily background sync.</p>
         <p style={item}><span style={b}>Backups</span> (footer) lists automatic server-side snapshots of your whole app state (up to 30, at most one per hour of activity) — restore any of them in two taps; the pre-restore state is snapshotted too, so a restore is undoable.</p>
@@ -4097,11 +4091,15 @@ function fmtResetTs(iso) {
 }
 
 // Warn when free-tier sync headroom is running low: under 10% of the monthly
-// quota left (or under an absolute floor when the limit header isn't present).
+// quota left on the key in use (or under an absolute floor when the limit header
+// isn't present). keyQuotas: the sync's per-key reports; a key it moved past is
+// spent, so the one still in use is the live key with the least left.
 var QUOTA_WARN_FRACTION = 0.1;
 var QUOTA_WARN_FLOOR = 1000;
-function quotaWarnNote(quota) {
-  if (!quota || quota.remaining == null) return "";
+export function quotaWarnNote(keyQuotas) {
+  var quota = (keyQuotas || []).filter(function (q) { return q && !q.exhausted && q.remaining != null; })
+    .sort(function (a, b) { return a.remaining - b.remaining; })[0];
+  if (!quota) return "";
   var threshold = quota.limit ? quota.limit * QUOTA_WARN_FRACTION : QUOTA_WARN_FLOOR;
   if (quota.remaining > threshold) return "";
   var of = quota.limit ? " / " + Number(quota.limit).toLocaleString() : "";
@@ -4159,7 +4157,7 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
     if (syncMsg.skippedSeen) parts.push(syncMsg.skippedSeen + " skipped (hidden)");
     if (s.notSeen) parts.push(s.notSeen + " no longer listed");
     var detail = parts.length ? parts.join(" · ") : "no changes";
-    text = (syncMsg.demo ? "Demo sync" : syncMsg.mock ? "Mock sync" : "Synced") + " — " + detail + " (from " + (s.fetched || 0) + " found" + (syncMsg.calls ? ", " + syncMsg.calls + " MarketCheck call" + (syncMsg.calls === 1 ? "" : "s") : "") + ")";
+    text = (syncMsg.demo ? "Demo sync" : "Synced") + " — " + detail + " (from " + (s.fetched || 0) + " found" + (syncMsg.calls ? ", " + syncMsg.calls + " MarketCheck call" + (syncMsg.calls === 1 ? "" : "s") : "") + ")";
     if (syncMsg.errors && syncMsg.errors.length) {
       text += " · " + syncMsg.errors.length + " query error(s): " + String(syncMsg.errors[0]).slice(0, 240);
       color = "#d4a017";
@@ -4174,7 +4172,7 @@ function SyncStatus({ syncing, syncMsg, lastSynced }) {
       color = "#c44";
     } else {
       // Not yet limited, but warn if we're getting close to the monthly cap.
-      var lowNote = quotaWarnNote(syncMsg.quota);
+      var lowNote = quotaWarnNote(syncMsg.keyQuotas);
       if (lowNote) { text += lowNote; if (color === "#6b6b76") color = "#d4a017"; }
     }
   } else {

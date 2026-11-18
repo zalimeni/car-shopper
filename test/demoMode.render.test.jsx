@@ -3,15 +3,15 @@ import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 
-// /?demo end to end: the published snapshot loads with no session, the welcome
+// /?demo end to end: the bundled fixture loads with no session, the welcome
 // shows once, edits stay in memory, ↻ Sync is simulated (held-back cars with
 // their scores, a price drop, a car gone), and no /api call leaves the browser.
-window.history.replaceState(null, "", "/?demo=live#results"); // the published copy (Supabase); the fixture has its own test
+window.history.replaceState(null, "", "/?demo#results"); // a stand-in fixture; the real one has its own test
 
 const car = (id, o) => Object.assign({ id: id, vin: "VIN000000000000" + id, year: 2021, make: "Subaru", model: "Outback", vehicle: "Subaru Outback", trim: "Premium",
   status: "watch", source: "marketcheck", profileId: "p1", price: 22000, miles: 40000, dealer: "Dealer " + id, addedDate: "2026-10-01", lastSeen: "2026-10-30", lastChecked: "2026-10-30" }, o || {});
 const snapshot = {
-  demoVersion: 1, exportedAt: "2026-10-31T12:00:00Z",
+  exportedAt: "2026-10-31T12:00:00Z",
   data: {
     version: 9, onboarded: true, autoScore: true,
     profiles: [{ id: "p1", name: "Outback", role: "SUV", active: true, params: { make: "Subaru", model: "Outback" } }],
@@ -25,7 +25,7 @@ const snapshot = {
 
 const writes = [];
 const chain = (table) => { const c = {}; ["select", "eq", "order", "limit"].forEach((m) => { c[m] = () => c; });
-  c.maybeSingle = async () => (table === "demo_snapshot" ? { data: { id: 1, data: snapshot }, error: null } : (writes.push(table), { data: null, error: null }));
+  c.maybeSingle = async () => { writes.push(table); return { data: null, error: null }; };
   c.upsert = c.update = c.insert = c.delete = () => { writes.push(table); return c; };
   return c; };
 vi.mock("../src/supabaseClient", () => ({ supabase: {
@@ -34,7 +34,10 @@ vi.mock("../src/supabaseClient", () => ({ supabase: {
 } }));
 
 const apiCalls = [];
-window.fetch = async (u) => { apiCalls.push(String(u)); return new Response("{}", { status: 200 }); };
+window.fetch = async (u) => {
+  if (String(u) === "/demo/snapshot.json") return new Response(JSON.stringify(snapshot), { status: 200 });
+  apiCalls.push(String(u)); return new Response("{}", { status: 200 });
+};
 
 const { installFetchGuard, setDemoDelay } = await import("../src/demoRuntime.js");
 installFetchGuard();
@@ -64,8 +67,8 @@ describe("demo mode", () => {
     expect(screen.getAllByText(/Clean one-owner car/).length).toBeGreaterThan(0);
 
     // A blocked live call explains itself.
-    await window.fetch("/api/pricecomps", { method: "POST" });
-    await screen.findByText(/Live comparables are off in the demo/);
+    await window.fetch("/api/marketcheck", { method: "POST" });
+    await screen.findByText(/Live MarketCheck searches are off in the demo/);
 
     // Settings has no two-factor section in the demo (no supabase.auth.mfa calls).
     fireEvent.click(screen.getAllByText("Settings")[0]);

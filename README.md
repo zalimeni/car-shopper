@@ -32,8 +32,8 @@ data live in Supabase.
   for new users; re-runnable, and it keeps your listings.
 - **Price Check** — judges an asking price against comparable cars in your own
   data, optionally widened by a live MarketCheck search and an AI verdict.
-- **Demo mode** — `/?demo` runs the app with no sign-in over a scrubbed,
-  read-only copy of the owner's data.
+- **Demo mode** — `/?demo` runs the app with no sign-in over a bundled,
+  anonymized sample of the owner's search (edits stay in the tab).
 
 A new account starts blank — a $30,000 budget, a Boston home base and a few common-sense rules — and the setup wizard, Profiles and Settings make it your own search.
 
@@ -109,7 +109,7 @@ Beyond signing in, a user must be in the **`public.allowed_emails`** table to
 be served by the API or to read/write data. The API checks it through the
 `my_access()` RPC (which also says whether the user is an admin) and Row Level
 Security through `is_allowed()`. Each row also carries two flags: **Admin**
-(the Admin tab, Publish demo) and **Daily sync** (the scheduled sync runs for
+(the Admin tab) and **Daily sync** (the scheduled sync runs for
 that account). Accounts removed from the list see an "access not enabled"
 screen.
 
@@ -149,8 +149,8 @@ different project, set `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`.
 Apply the SQL in `supabase/migrations/` (via the Supabase CLI `supabase db
 push`, or paste into the SQL editor) — it creates `app_state` + RLS, the
 `allowed_emails` allowlist + `is_allowed()` / `my_access()`, the encrypted
-`user_api_keys` vault, the backup history + trigger, and the public demo
-snapshot (see `supabase/README.md`). Then, in the Dashboard: turn off
+`user_api_keys` vault, and the backup history + trigger (see
+`supabase/README.md`). Then, in the Dashboard: turn off
 **Authentication → Sign In / Providers → Allow new users to sign up**, set
 **Authentication → URL Configuration → Site URL** to your deployed URL, and add
 `http://localhost:3000` (and any preview URLs) to the redirect allowlist so
@@ -188,12 +188,12 @@ api/                Vercel serverless functions (server-side secrets)
   _keys.js          the key vault (the only module that decrypts)
   _supabaseAdmin.js service-role client for the server-only tables
   _scoring.js       scoring prompt/schema/coercion + model allowlist
-  marketcheck.js    MarketCheck proxy (buildUrl/normalize, one sync step per request)
+  marketcheck.js    MarketCheck proxy (buildUrl/normalize, one sync step per request, Price Check live comps)
   cron-sync.js      scheduled sync, one account per call (pg_cron dispatcher) + daily keepalive (Vercel Cron)
   me.js             auth + key-status check for the client
   keys.js           set/validate/remove the user's Anthropic + MarketCheck keys
   ai.js             every AI feature (score / price / baseline / suggest) with the user's key
-  …                 allowlist, snapshots, pricecomps
+  …                 allowlist, snapshots
 supabase/
   migrations/       schema, RLS, grants, triggers (append-only, idempotent)
   tests/            pgTAP tests: RLS, grants, save_app_state, key vault (supabase test db)

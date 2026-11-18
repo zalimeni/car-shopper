@@ -10,7 +10,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(45);
+select plan(40);
 
 -- ── Fixtures (as postgres, so RLS does not apply) ──
 insert into auth.users (id, email) values
@@ -26,8 +26,9 @@ insert into public.app_state (user_id, data) values
   ('00000000-0000-0000-0000-0000000000a1', '{"who":"owner"}'),
   ('00000000-0000-0000-0000-0000000000b2', '{"who":"friend"}'),
   ('00000000-0000-0000-0000-0000000000c3', '{"who":"stranger"}');
-insert into public.demo_snapshot (id, data) values (1, '{"demo":true}')
-  on conflict (id) do update set data = excluded.data;
+
+-- The world-readable demo table is gone (/?demo uses the bundled fixture).
+select hasnt_table('public', 'demo_snapshot', 'public.demo_snapshot was dropped');
 
 -- ── Allowlisted owner ──
 set local role authenticated;
@@ -55,9 +56,7 @@ select throws_ok('select * from public.allowed_emails', '42501', null, 'authenti
 select hasnt_table('public', 'user_anthropic_keys', 'the old user_anthropic_keys table is gone');
 select throws_ok('select * from public.app_state_history', '42501', null, 'authenticated cannot read app_state_history');
 select throws_ok($q$insert into public.allowed_emails (email) values ('me@example.com')$q$, '42501', null, 'authenticated cannot add itself to allowed_emails');
-select throws_ok($q$update public.demo_snapshot set data = '{}'$q$, '42501', null, 'authenticated cannot write demo_snapshot');
 select throws_ok('truncate public.app_state', '42501', null, 'authenticated cannot truncate app_state');
-select is((select count(*)::int from public.demo_snapshot), 1, 'authenticated can read demo_snapshot');
 
 -- save_app_state(): compare-and-swap on rev, as the owner (stored rev is 0).
 select is(public.save_app_state('{"v":1}', 0), '{"ok":true,"rev":1}'::jsonb, 'save with the current rev writes, rev + 1');
@@ -117,11 +116,7 @@ select is(
 -- ── Signed out (anon) ──
 set local role anon;
 select set_config('request.jwt.claims', '{"role":"anon"}', true);
-select is((select count(*)::int from public.demo_snapshot), 1, 'anon can read demo_snapshot');
 select throws_ok('select * from public.app_state', '42501', null, 'anon cannot read app_state');
-select throws_ok($q$update public.demo_snapshot set data = '{}'$q$, '42501', null, 'anon cannot update demo_snapshot');
-select throws_ok('delete from public.demo_snapshot', '42501', null, 'anon cannot delete demo_snapshot');
-select throws_ok('truncate public.demo_snapshot', '42501', null, 'anon cannot truncate demo_snapshot');
 select throws_ok('select public.is_allowed()', '42501', null, 'anon cannot call is_allowed()');
 select throws_ok($q$select public.save_app_state('{}', 0)$q$, '42501', null, 'anon cannot call save_app_state()');
 reset role;

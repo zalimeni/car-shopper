@@ -12,13 +12,13 @@ vi.mock("../src/score", () => ({ getKeyStatus: async () => ({}), saveKey: async 
 vi.mock("../src/admin", () => ({ getMe: async () => ({}), listAllowed: async () => [], addAllowed: async () => {}, removeAllowed: async () => {} }));
 vi.mock("../src/snapshots", () => ({ listSnapshots: async () => [], restoreSnapshot: async () => {} }));
 
-const { syncWarning, liveSearchHub, syncProgressText } = await import("../src/App.jsx");
+const { syncWarning, liveSearchHub, syncProgressText, quotaWarnNote } = await import("../src/App.jsx");
 const { searchSig } = await import("../src/syncPlan.js");
 
 const NOW = Date.parse("2026-10-14T12:00:00Z");
 const PROFS = [{ id: "a", active: true, params: { make: "Toyota", model: "RAV4" } }, { id: "b", active: true, params: { make: "Honda", model: "CR-V" } }];
 const OPTS = { excludeSalt: true, franchiseOnly: false };
-const meta = (count) => ({ fullAt: "2026-10-14T10:00:00Z", lastAt: "2026-10-14T10:00:00Z", count: count, countSig: searchSig(PROFS[count === 120 ? 0 : 1], OPTS), sig: searchSig(PROFS[count === 120 ? 0 : 1], OPTS) });
+const meta = (count) => ({ fullAt: "2026-10-14T10:00:00Z", lastAt: "2026-10-14T10:00:00Z", count: count, colors: { counts: { Gray: count }, unlisted: 0 }, countSig: searchSig(PROFS[count === 120 ? 0 : 1], OPTS), sig: searchSig(PROFS[count === 120 ? 0 : 1], OPTS) });
 const base = (over) => Object.assign({
   lastSynced: "2026-10-14T10:00:00Z",
   profiles: PROFS,
@@ -42,7 +42,13 @@ describe("syncWarning (confirm before a redundant sync)", () => {
   });
   it("gives a range for profiles whose match count isn't known yet", () => {
     const d = base(); d.settings = Object.assign({}, d.settings, { mcProfiles: {} });
-    expect(syncWarning(d, NOW)).toMatch(/It will use 2–20 MarketCheck calls/);
+    expect(syncWarning(d, NOW)).toMatch(/It will use 2–30 MarketCheck calls/); // + up to 10 color decodes
+  });
+  it("counts the color decodes a sync will make", () => {
+    const d = base({ listings: [{ vin: "AAAAAAAAAAAAAAAA1", source: "marketcheck", status: "watch", mcSeen: "2026-10-12" }] });
+    expect(syncWarning(d, NOW)).toMatch(/It will use 5–6 MarketCheck calls/); // + 1 decode, and maybe a VIN lookup
+    d.settings = Object.assign({}, d.settings, { mcColors: { AAAAAAAAAAAAAAAA1: { color: null, at: "2026-10-01T00:00:00Z" } } });
+    expect(syncWarning(d, NOW)).toMatch(/It will use 4–5 MarketCheck calls/); // decoded before: no decode
   });
   it("counts minutes when it was very recent", () => {
     expect(syncWarning(base({ lastSynced: "2026-10-14T11:50:00Z" }), NOW)).toMatch(/10 min ago/);
@@ -63,5 +69,14 @@ describe("liveSearchHub (Price Check searches around the home base)", () => {
 describe("syncProgressText", () => {
   it("counts steps and names the profile", () => {
     expect(syncProgressText({ done: 1, total: 3, label: "Bolt EV", listings: [1, 2] })).toBe("Searching… 1/3 · Bolt EV · 2 found");
+  });
+});
+
+describe("quotaWarnNote (the sync's per-key reports)", () => {
+  it("warns when the key in use is under 10% — a key the sync moved past doesn't count", () => {
+    expect(quotaWarnNote([{ id: "1111", remaining: 0, limit: 500, exhausted: true }, { id: "2222", remaining: 40, limit: 500 }])).toMatch(/Low MarketCheck sync quota: 40 \/ 500 requests left/);
+    expect(quotaWarnNote([{ id: "1111", remaining: 0, limit: 500, exhausted: true }, { id: "2222", remaining: 400, limit: 500 }])).toBe("");
+    expect(quotaWarnNote([])).toBe("");
+    expect(quotaWarnNote(undefined)).toBe("");
   });
 });

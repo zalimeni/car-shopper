@@ -1,32 +1,22 @@
 // Demo mode — the runtime side (see src/demo.js for the pure parts).
 //
 // `/?demo` opens the app with no sign-in over the bundled fixture
-// (public/demo/snapshot.json + thumbnails in public/demo/cars — curated by
-// scripts/demo-fixture/). `/?demo=live` uses the copy the owner published from
-// the app instead (public.demo_snapshot, one row, readable by anyone — RLS
-// select-only); it's also the fallback if the fixture can't load.
+// (public/demo/snapshot.json + thumbnails in public/demo/cars — an anonymized
+// sample curated by scripts/demo-fixture/).
 // Everything happens in this tab: storage.js keeps edits in memory (gone on
 // reload), ↻ Sync is simulated from the snapshot's held-back pool, and every
 // /api call is answered locally with "not in the demo" — no MarketCheck or
 // Anthropic call can leave the browser.
 
-import { supabase } from "./supabaseClient";
-import { isDemoUrl, isLiveDemoUrl, prepareDemo, simulateSync, scoreFieldsOf, demoScore, demoCount, demoMarketComps, demoPriceAssessment, demoBaseline, demoSuggestion, DEMO_KEY_ID, DEMO_QUOTA_LIMIT } from "./demo.js";
+import { isDemoUrl, prepareDemo, simulateSync, scoreFieldsOf, demoScore, demoCount, demoMarketComps, demoPriceAssessment, demoBaseline, demoSuggestion, DEMO_KEY_ID, DEMO_QUOTA_LIMIT } from "./demo.js";
 import { assess } from "./priceCheck.js";
 
 export var DEMO = typeof window !== "undefined" && isDemoUrl(window.location.search);
-export var DEMO_TABLE = "demo_snapshot";
 export var DEMO_FIXTURE = "/demo/snapshot.json";
-var LIVE = typeof window !== "undefined" && isLiveDemoUrl(window.location.search);
 
 var loaded = null; // Promise<{ data, pool } | null>
 var round = 0;
 
-function liveRow() {
-  return Promise.resolve().then(function () { return supabase.from(DEMO_TABLE).select("data").eq("id", 1).maybeSingle(); })
-    .then(function (r) { return r.error || !r.data ? null : prepareDemo(r.data.data, new Date()); })
-    .catch(function () { return null; });
-}
 function fixture() {
   return Promise.resolve().then(function () { return fetch(DEMO_FIXTURE, { cache: "no-cache" }); })
     .then(function (r) { return r.ok ? r.json() : null; })
@@ -35,15 +25,8 @@ function fixture() {
 }
 // Load + prepare the demo data once per page load.
 export function loadDemo() {
-  if (!loaded) loaded = LIVE ? liveRow() : fixture().then(function (d) { return d || liveRow(); });
+  if (!loaded) loaded = fixture();
   return loaded;
-}
-
-// Is there a demo to offer? (sign-in screen link) The fixture ships with the app.
-export function demoAvailable() {
-  return Promise.resolve().then(function () { return fetch(DEMO_FIXTURE, { method: "HEAD", cache: "no-cache" }); })
-    .then(function (r) { return !!(r && r.ok); })
-    .catch(function () { return false; });
 }
 
 // Pretend network time, so sync and scoring feel like the real thing.
@@ -80,7 +63,7 @@ export async function demoFetchListings(listings, steps, onProgress, quota) {
   var calls = list.length + (s.goneVins.length ? 1 : 0);
   var snap = quota && quota.snaps && quota.snaps[DEMO_KEY_ID];
   var remaining = Math.max(0, (snap && snap.remaining != null ? snap.remaining : DEMO_QUOTA_LIMIT) - calls);
-  return { listings: s.listings, goneVins: s.goneVins, scores: scores, calls: calls, errors: [], notices: [], mock: false, demo: true, results: [], decoded: {},
+  return { listings: s.listings, goneVins: s.goneVins, scores: scores, calls: calls, errors: [], notices: [], demo: true, results: [], decoded: {},
     keyQuotas: [{ id: DEMO_KEY_ID, remaining: remaining, limit: (snap && snap.limit) || DEMO_QUOTA_LIMIT, reset: snap && snap.reset, exhausted: remaining <= 0 }] };
 }
 
@@ -131,7 +114,7 @@ export async function demoPostStep(step) {
 // Price Check's live-market button: a few simulated listings near the demo's own.
 export async function demoPriceComps(query) {
   await pause(900, 1600);
-  return { listings: demoMarketComps(query, await allCars(), 6), errors: [], rateLimited: false, rateLimitInfo: null, quota: null, keyQuotas: spendQuota(1), calls: 1, apiInfo: null, formatSuspect: false };
+  return { listings: demoMarketComps(query, await allCars(), 6), errors: [], rateLimited: false, rateLimitInfo: null, keyQuotas: spendQuota(1), calls: 1, apiInfo: null };
 }
 
 // The three one-shot AI answers, written locally.
@@ -167,7 +150,6 @@ export function demoToast(msg) {
 var BLOCKED = {
   "/api/ai": "AI calls are simulated in the demo — no real request is made.",
   "/api/keys": "The demo's keys are simulated — they can't be changed.",
-  "/api/pricecomps": "Live comparables are off in the demo.",
   "/api/marketcheck": "Live MarketCheck searches are off in the demo — ↻ Sync is simulated.",
   // Backups, and the photo copies (src/photos.js — it skips the call in the demo anyway).
   "/api/snapshots": "Backups and saved photo copies are off in the demo.",

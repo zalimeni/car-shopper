@@ -6,7 +6,7 @@ import { DemoShell } from "./Demo";
 import { DEMO, installFetchGuard } from "./demoRuntime";
 import "./index.css";
 
-// /?demo: no sign-in, the published snapshot, nothing leaves the browser.
+// /?demo: no sign-in, the bundled fixture, nothing leaves the browser.
 if (DEMO) installFetchGuard();
 
 ReactDOM.createRoot(document.getElementById("root")).render(

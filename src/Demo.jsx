@@ -1,11 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { loadDemo, DEMO_EVENT } from "./demoRuntime";
-import { buildDemoSnapshot, reviewableNotes } from "./demo.js";
-import { authHeaders } from "./apiAuth";
 import { startTutorial } from "./tutorial.js";
 
-// Demo mode chrome (/?demo): waits for the published snapshot, then shows the
-// app under a slim banner, with a welcome on the first visit and toasts for
+// Demo mode chrome (/?demo): waits for the bundled fixture
+// (public/demo/snapshot.json) to load, then shows the app under a slim banner, with a welcome on the first visit and toasts for
 // anything the demo can't do. See src/demoRuntime.js.
 
 var WELCOME_KEY = "cs-demo-welcomed";
@@ -52,7 +50,7 @@ export function DemoShell({ children }) {
     <div style={D.center}>
       <div style={D.card}>
         <h1 style={D.h1}>The demo isn't available</h1>
-        <p style={D.p}>There's no published demo right now — try again later.</p>
+        <p style={D.p}>The demo's sample data couldn't be loaded — check your connection and try again.</p>
         <a href="/" style={D.btn}>Go to sign in</a>
       </div>
     </div>
@@ -109,67 +107,6 @@ export function WelcomeModal({ onClose, first }) {
           <button style={D.btn} onClick={function () { onClose(true); }}>Start the tutorial</button>
           <button style={D.small} onClick={function () { onClose(false); }}>{first ? "Explore on my own" : "Close"}</button>
           <a href={REPO} target="_blank" rel="noopener noreferrer" style={D.link}>Source on GitHub ↗</a>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Owner side: review the notes, then publish the scrubbed snapshot
-// (POST /api/snapshots { demo } — admins only, written with the service role).
-export function DemoPublishModal({ data, candidates, onClose }) {
-  useEscape(onClose);
-  var full = Object.assign({}, data, { candidates: candidates });
-  var items = reviewableNotes(full);
-  var [keep, setKeep] = useState({});
-  var [busy, setBusy] = useState(false);
-  var [msg, setMsg] = useState("");
-  var snap = buildDemoSnapshot(full, { keep: keep });
-  var counts = (snap.data.listings || []).length + " listings, " + (snap.data.candidates || []).length + " queued, " + snap.pool.length + " held back for demo syncs";
-
-  async function publish() {
-    setBusy(true); setMsg("");
-    try {
-      var res = await fetch("/api/snapshots", { method: "POST", headers: await authHeaders(), body: JSON.stringify({ demo: buildDemoSnapshot(full, { keep: keep }) }) });
-      var j = await res.json().catch(function () { return {}; });
-      if (!res.ok) throw new Error(j.error || "HTTP " + res.status);
-      setMsg("Published — open " + window.location.origin + "/?demo=live to see it.");
-    } catch (e) { setMsg("Publish failed: " + (e.message || e)); }
-    setBusy(false);
-  }
-
-  return (
-    <div onMouseDown={onClose} style={D.backdrop}>
-      <div role="dialog" aria-modal="true" aria-label="Publish demo" onMouseDown={function (e) { e.stopPropagation(); }} style={D.dialog}>
-        <h2 style={D.h1}>Publish demo</h2>
-        <p style={D.p}>Publishes a copy of your data as it is now to <code>/?demo=live</code> (the public <code>/?demo</code> uses the curated fixture in the repo): {counts}. Removed always: MarketCheck keys, quota records, API-version info. Kept: profiles, criteria, listings, prices, tags, AI scores, home base.</p>
-        <h3 style={D.h3}>Your notes ({items.length})</h3>
-        <p style={Object.assign({}, D.p, { fontSize: 12 })}>Unchecked notes and typed reject reasons are cleared (price-change notes sync wrote are always kept).</p>
-        {items.length > 0 && (
-          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-            <button style={D.small} onClick={function () { var k = {}; items.forEach(function (i) { k[i.key] = true; }); setKeep(k); }}>Keep all</button>
-            <button style={D.small} onClick={function () { setKeep({}); }}>Drop all</button>
-          </div>
-        )}
-        <div style={{ maxHeight: "40vh", overflowY: "auto", marginBottom: 12 }}>
-          {items.map(function (i) {
-            return (
-              <label key={i.key} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "6px 0", borderBottom: "1px solid #1e2028", fontSize: 13, cursor: "pointer" }}>
-                <input type="checkbox" checked={!!keep[i.key]} onChange={function (e) { var on = e.target.checked; setKeep(function (k) { var n = Object.assign({}, k); if (on) n[i.key] = true; else delete n[i.key]; return n; }); }} style={{ marginTop: 3 }} />
-                <span style={{ minWidth: 0 }}>
-                  <b style={{ color: "#e4e4e7" }}>{i.name}</b>
-                  {i.memo && <span style={{ display: "block", color: "#a8a8b3", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{i.memo}</span>}
-                  {i.notes && <span style={{ display: "block", color: "#8a8a96", overflowWrap: "anywhere" }}>{i.notes}</span>}
-                  {i.reason && <span style={{ display: "block", color: "#c88", overflowWrap: "anywhere" }}>Rejected: {i.reason}</span>}
-                </span>
-              </label>
-            );
-          })}
-        </div>
-        {msg && <p style={Object.assign({}, D.p, { color: /failed/.test(msg) ? "#e07a7a" : "#3fae74" })}>{msg}</p>}
-        <div style={{ display: "flex", gap: 8 }}>
-          <button style={Object.assign({}, D.btn, busy ? { opacity: 0.6 } : {})} disabled={busy} onClick={publish}>{busy ? "Publishing…" : "Publish"}</button>
-          <button style={D.small} onClick={onClose}>Close</button>
         </div>
       </div>
     </div>

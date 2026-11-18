@@ -26,6 +26,8 @@ export function Tutorial({ demo }) {
   var [busy, setBusy] = useState(false);
   var [vp, setVp] = useState({ w: typeof window !== "undefined" ? window.innerWidth : 390, h: typeof window !== "undefined" ? window.innerHeight : 800 });
   var [card, setCard] = useState({ w: 320, h: 180 });
+  var [skipped, setSkipped] = useState({}); // step index → true: skipped this run (no target), left out of the counter
+  function markSkipped(n, on) { setSkipped(function (m) { if (!!m[n] === on) return m; var o = Object.assign({}, m); if (on) o[n] = true; else delete o[n]; return o; }); }
   var cardRef = useRef(null);
   var stepRef = useRef(0); // guards async work against a step that's since moved on
   var memRef = useRef({});  // what earlier steps noted (remember: "car")
@@ -54,7 +56,7 @@ export function Tutorial({ demo }) {
   // A layout effect, not useEffect: the listener must exist by the time the
   // "Start the tutorial" button is in the DOM, or an immediate tap is lost.
   useLayoutEffect(function () {
-    function start() { memRef.current = {}; modalRef.current = null; setI(0); setDir(1); setBusy(false); setOn(true); }
+    function start() { memRef.current = {}; modalRef.current = null; setSkipped({}); setI(0); setDir(1); setBusy(false); setOn(true); }
     window.addEventListener(TUTORIAL_EVENT, start);
     return function () { window.removeEventListener(TUTORIAL_EVENT, start); };
   }, []);
@@ -69,7 +71,7 @@ export function Tutorial({ demo }) {
     leaveModal(s);
     if (s.modal) modalRef.current = s.modal;
     if (s.tab) { var h = "#" + s.tab.toLowerCase(); if (window.location.hash.split("/")[0] !== h) window.location.hash = h; }
-    if (!s.target) { setReady(true); return; }
+    if (!s.target) { markSkipped(i, false); setReady(true); return; }
     (async function () {
       var t0 = Date.now(), found = null;
       while (!found && Date.now() - t0 < FIND_MS) {
@@ -78,6 +80,7 @@ export function Tutorial({ demo }) {
         if (token !== stepRef.current) return;
       }
       if (!found) { // nothing to show here (e.g. no candidates in the queue): skip it
+        markSkipped(i, true);
         if (i + dir < 0) go(1); else go(dir);
         return;
       }
@@ -86,6 +89,7 @@ export function Tutorial({ demo }) {
         try { found.scrollIntoView({ block: tall ? "start" : "center", behavior: "smooth" }); } catch (e) { found.scrollIntoView(); }
       }
       setEl(found);
+      markSkipped(i, false);
       if (s.remember === "car") { var card = found.closest("[data-car]"); memRef.current.car = card ? card.getAttribute("data-car") : null; }
       // Show the card once the scroll has settled (same spot for ~150 ms).
       var last = null, still = 0, t1 = Date.now();
@@ -180,6 +184,10 @@ export function Tutorial({ demo }) {
   var tappable = runsAction(step, demo) && !busy;
   var block = { position: "fixed", pointerEvents: "auto", background: "transparent" };
   var n = steps.length;
+  // The counter counts only steps shown: skipped ones so far drop out of both numbers.
+  var gone = Object.keys(skipped).map(Number);
+  var shownAt = i + 1 - gone.filter(function (k) { return k < i; }).length;
+  var shownOf = n - gone.length;
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 250, pointerEvents: "none" }} aria-live="polite">
@@ -209,7 +217,7 @@ export function Tutorial({ demo }) {
               borderLeft: pos.arrow === "down" ? "none" : undefined, borderTop: pos.arrow === "down" ? "none" : undefined,
               top: pos.arrow === "up" ? -8 : undefined, bottom: pos.arrow === "down" ? -8 : undefined }} />
           )}
-          <div style={{ fontSize: 11, color: "#6b9bf2", fontWeight: 600, letterSpacing: "0.04em", marginBottom: 4 }}>TUTORIAL · {i + 1} / {n}</div>
+          <div style={{ fontSize: 11, color: "#6b9bf2", fontWeight: 600, letterSpacing: "0.04em", marginBottom: 4 }}>TUTORIAL · {shownAt} / {shownOf}</div>
           <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6, color: "#f0f0f3" }}>{step.title}</div>
           <div style={{ fontSize: 13.5, color: "#c8c8d0", lineHeight: 1.55 }}>{stepText(step, demo)}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>

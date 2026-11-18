@@ -14,7 +14,6 @@ vi.mock("../src/supabaseClient", () => ({ supabase: {
 } }));
 
 const { signPhotoKeys, signedPhotoUrl, missing, removePhotos, copyPhotos } = await import("../src/photos.js");
-const { buildDemoSnapshot } = await import("../src/demo.js");
 
 describe("src/photos.js", () => {
   it("batches signing, caches URLs and remembers missing objects", async () => {
@@ -30,11 +29,5 @@ describe("src/photos.js", () => {
     await removePhotos(["u/A1.jpg", ""]);
     expect(removed).toEqual(["u/A1.jpg"]);
     expect(await copyPhotos([{ vin: "A1", url: "https://d.example/a.jpg" }])).toBe(null);
-  });
-  it("the demo snapshot drops photoKey", () => {
-    const s = buildDemoSnapshot({ listings: [{ id: "1", vin: "A1", photo: "https://d.example/a.jpg", photoKey: "u/A1.jpg", photoFailed: "x" }], settings: {} });
-    expect(s.data.listings[0].photoKey).toBeUndefined();
-    expect(s.data.listings[0].photoFailed).toBeUndefined();
-    expect(s.data.listings[0].photo).toBe("https://d.example/a.jpg");
   });
 });
