@@ -1,13 +1,6 @@
 // Client for /api/snapshots — list + restore the automatic app-state backups.
-// Same session-token pattern as sync.js / admin.js.
 
-import { supabase } from "./supabaseClient";
-
-async function authHeaders() {
-  const { data } = await supabase.auth.getSession();
-  const token = data && data.session ? data.session.access_token : "";
-  return { "Content-Type": "application/json", Authorization: token ? "Bearer " + token : "" };
-}
+import { authHeaders } from "./apiAuth";
 
 export async function listSnapshots() {
   const res = await fetch("/api/snapshots", { headers: await authHeaders() });

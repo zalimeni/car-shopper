@@ -5,7 +5,7 @@
 //   POST { task: "score", listings, criteria, profile, globalReqs, model?, system?, homeBase? }
 //        -> { results: [{ index, vin, ok, scores?, rationales?, summary?, error? }] }
 //   POST { task: "price", query, comps, stats, confidence }          -> { assessment }
-//   POST { task: "baseline", profile, listings }                     -> { baseline }
+//   POST { task: "baseline", profile, listings, model? }             -> { baseline }
 //   POST { task: "suggest", profile, market }                        -> { suggestion }
 //
 // Key errors come back as { error: "no_key" | "key_unreadable" | "key_rejected",
@@ -23,12 +23,12 @@ import { SUGGEST_SYSTEM, buildSuggestSchema, buildSuggestPrompt, coerceSuggestio
 
 const MAX_LISTINGS = 12; // the client chunks; this bounds one scoring request's fan-out
 
-// One-shot tasks use a fixed fast model rather than the user's scoring model:
-// Sonnet 5.5 is capable enough for an estimate the user edits. It REJECTS
-// thinking:{type:"disabled"} (400), so they send thinking:{type:"between_tools"}
-// — its lowest setting, no up-front reasoning — which keeps each call well
-// under the 60 s function limit.
-const BASELINE_MODEL = "claude-sonnet-5-5";
+// The wizard's suggest task uses a fixed fast model: Sonnet 5.5 is capable
+// enough for an estimate the user edits. The baseline uses the user's scoring
+// model (allowlisted by resolveScoreModel; Sonnet 5.5 when absent/invalid).
+// 5.5 models REJECT thinking:{type:"disabled"} (400), so one-shot tasks send
+// thinking:{type:"between_tools"} — the lowest setting, no up-front reasoning —
+// which keeps each call well under the 60 s function limit.
 const SUGGEST_MODEL = "claude-sonnet-5-5";
 
 const TASKS = { score: score, price: price, baseline: baseline, suggest: suggest };
@@ -136,7 +136,7 @@ async function baseline(userId, body, res) {
   const listings = Array.isArray(body.listings) ? body.listings : [];
   await oneShot(userId, res, "Baseline generation failed", async function () {
     const r = await callText(client, {
-      model: BASELINE_MODEL,
+      model: resolveScoreModel(body.model),
       max_tokens: 8000,
       thinking: { type: "between_tools" },
       system: BASELINE_SYSTEM,

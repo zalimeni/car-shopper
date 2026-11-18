@@ -96,7 +96,7 @@ export function WelcomeModal({ onClose, first }) {
 
         <h3 style={D.h3}>How this app uses Supabase</h3>
         <ul style={{ margin: "0 0 12px", paddingLeft: 18, fontSize: 13, color: "#c8c8d0" }}>
-          <li style={li}><b>Auth:</b> invite-only magic link or one-time code, plus an allowlist table.</li>
+          <li style={li}><b>Auth:</b> invite-only magic link (tapped or pasted), plus an allowlist table.</li>
           <li style={li}><b>Data:</b> one JSON document per user in Postgres, guarded by RLS, with trigger-based backups.</li>
           <li style={li}><b>Key vault:</b> users' API keys, encrypted in a table only server functions can read.</li>
         </ul>
