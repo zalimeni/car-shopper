@@ -19,7 +19,7 @@ vi.mock("../src/storage", () => ({
   watchState: async (cb) => { onChange = cb; return () => { onChange = null; }; },
   default: {
     get: async () => { gets++; return { key: "k", value: JSON.stringify(stored.data), rev: stored.rev }; },
-    set: async (k, v) => ({ key: k, value: v, rev: stored.rev }),
+    set: async (v) => ({ value: v, rev: stored.rev }),
   },
 }));
 vi.mock("../src/supabaseClient", () => ({ supabase: { auth: { getSession: async () => ({ data: {} }), onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }) } } }));

@@ -11,7 +11,7 @@ const writes = [];
 const chain = () => { const c = {}; ["select","eq","maybeSingle","update","insert","order","limit","single","delete","upsert"].forEach(m => c[m] = () => c); c.then = (r) => r({ data: null, error: null }); return c; };
 vi.mock("../src/storage", () => ({ watchState: async () => () => {}, default: {
   get: async () => (store.state ? { key: "k", value: JSON.stringify(store.state), rev: 3 } : null),
-  set: async (k, v) => { writes.push(JSON.parse(v)); return { rev: 4 + writes.length }; },
+  set: async (v) => { writes.push(JSON.parse(v)); return { rev: 4 + writes.length }; },
   delete: async () => ({}),
 } }));
 vi.mock("../src/supabaseClient", () => ({ supabase: {

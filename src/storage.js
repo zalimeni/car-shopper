@@ -25,23 +25,23 @@ async function currentUserId() {
 // Demo mode (/?demo): the published snapshot, edited in memory only — nothing
 // is ever written to Supabase, and a reload starts the demo over.
 const demoStorage = {
-  async get(key) {
+  async get() {
     const d = await loadDemo();
     if (!d) throw new Error("The demo isn't available right now");
-    return { key, value: JSON.stringify(d.data), rev: 0 };
+    return { value: JSON.stringify(d.data), rev: 0 };
   },
-  async set(key, value) { return { key, value, rev: 0 }; },
+  async set(value) { return { value, rev: 0 }; },
 };
 
 const storage = DEMO ? demoStorage : {
-  async get(key) {
+  async get() {
     try {
       const userId = await currentUserId();
       if (!userId) return null;
       const { data, error } = await supabase.from(TABLE).select("data,rev").eq("user_id", userId).maybeSingle();
       if (error) throw error;
       if (!data || data.data == null) return null;
-      return { key, value: JSON.stringify(data.data), rev: data.rev == null ? 0 : data.rev };
+      return { value: JSON.stringify(data.data), rev: data.rev == null ? 0 : data.rev };
     } catch (e) {
       console.error("storage.get error:", e);
       return null;
@@ -50,19 +50,18 @@ const storage = DEMO ? demoStorage : {
 
   // One save_app_state() call (supabase/migrations/*_save_app_state_and_realtime.sql):
   // the compare-and-swap on rev happens in the database, atomically.
-  // Returns { key, value, rev } on success, { conflict: true, key, value, rev }
+  // Returns { value, rev } on success, { conflict: true, value, rev }
   // when another device wrote first (value = the stored state), or null on error.
-  async set(key, value, expectedRev) {
+  async set(value, expectedRev) {
     try {
       const { data, error } = await supabase.rpc("save_app_state", {
         p_data: JSON.parse(value),
         p_expected_rev: expectedRev == null ? null : expectedRev,
       });
       if (error) throw error;
-      if (data && data.ok) return { key, value, rev: data.rev };
+      if (data && data.ok) return { value, rev: data.rev };
       return {
         conflict: true,
-        key,
         value: JSON.stringify(data && data.data != null ? data.data : {}),
         rev: data && data.rev != null ? data.rev : 0,
       };

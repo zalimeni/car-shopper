@@ -31,7 +31,6 @@ import { photoTodo, applyPhotoResults } from "./photoKey";
 
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
 
-var STORAGE_KEY = "car-search-data";
 var VERSION = 11;
 var STALE_DAYS = 5;
 var STALE_MC_DAYS = 3; // flag a listing MarketCheck itself last confirmed this many days ago
@@ -498,7 +497,7 @@ export default function App({ me }) {
     var gen = genRef.current;
     writeQ.current = writeQ.current.then(async function () {
       if (gen !== genRef.current) return; // superseded by a conflict reload
-      var r = await storage.set(STORAGE_KEY, JSON.stringify(nd), revRef.current);
+      var r = await storage.set(JSON.stringify(nd), revRef.current);
       if (!r) return; // storage error (already logged) — same as before
       if (r.conflict) {
         applyRemote(r, "Your data was updated on another device, so this session reloaded the latest version. Your most recent change here wasn't saved — please redo it.");
@@ -576,7 +575,7 @@ export default function App({ me }) {
         // Guard against a stalled read (e.g. the auth client wedged right after a
         // magic-link redirect) so the app can never hang forever on "Loading…".
         var r = await Promise.race([
-          storage.get(STORAGE_KEY),
+          storage.get(),
           new Promise(function (_, rej) { setTimeout(function () { rej(new Error("load timed out")); }, 15000); }),
         ]);
         var d, writeBack = false;
@@ -624,7 +623,7 @@ export default function App({ me }) {
     watchState(function (rev) {
       writeQ.current = writeQ.current.then(async function () {
         if (rev != null && revRef.current != null && rev <= revRef.current) return;
-        var r = await storage.get(STORAGE_KEY);
+        var r = await storage.get();
         if (!r || r.rev == null || (revRef.current != null && r.rev <= revRef.current)) return;
         applyRemote(r, "Your data was updated on another device, so this session loaded the latest version.");
       }).catch(function (e) { console.error("Realtime reload:", e); });
