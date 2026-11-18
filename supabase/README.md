@@ -44,6 +44,14 @@ Dashboard → SQL editor. The migrations are idempotent, so re-running is safe.
   backups no longer keep `settings.marketcheckKeys` (the trigger strips it,
   old snapshots are scrubbed); and deleting a user no longer fails on the
   backup trigger.
+- `20261118120000_listing_photos.sql` — the private Storage bucket
+  `listing-photos` (2 MB, image types only) for copies of watchlist cars'
+  dealer photos, at `<user_id>/<VIN>.<ext>`. Policies on `storage.objects`: an
+  allowlisted user may read and delete only their own folder; the server
+  uploads (and the daily cron sweeps unreferenced objects) with the service
+  role. No Dashboard step is needed: the migration creates the bucket. Storage
+  objects don't cascade when a user is deleted — the sweep removes the folder
+  of any user with no `app_state` row (it runs only when `CRON_SECRET` is set).
 
 ## Access: invite-only, allowlisted
 

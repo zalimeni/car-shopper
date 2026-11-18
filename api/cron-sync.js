@@ -30,6 +30,7 @@ import { safeEqual } from "./_auth.js";
 import { adminClient, anonClient } from "./_supabaseAdmin.js";
 import { createSession, runStep, resolveKeys, keyId, STEP_BUDGET_MS } from "./marketcheck.js";
 import { getMarketcheckKeys, importBlobKeys, reencryptLegacy } from "./_keys.js";
+import { sweepOrphanPhotos } from "./_photos.js";
 import { reconcile } from "../src/reconcile.js";
 import { ingestSnaps, spentKeyIds } from "../src/quota.js";
 import { planSync, runSync, trackedVins, nextProfileMeta, mergeColorCache } from "../src/syncPlan.js";
@@ -70,6 +71,8 @@ export default async function handler(req, res) {
   const apiKey = process.env.MARKETCHECK_API_KEY || "";
 
   const vault = await reencryptLegacy(db).catch(function (e) { return { error: e.message }; });
+  const photos = await sweepOrphanPhotos(db).catch(function (e) { return { errors: [e.message] }; }); // unreferenced stored listing photos (api/_photos.js)
+  console.log("photo sweep", JSON.stringify(photos));
 
   const opted = await db.from("allowed_emails").select("email").eq("scheduled_sync", true);
   if (opted.error) { res.status(500).json({ error: "allowed_emails: " + opted.error.message }); return; }
@@ -178,5 +181,5 @@ export default async function handler(req, res) {
     }
   }
 
-  res.status(200).json({ ok: true, matchedUsers: users.length, report: report, vault: vault });
+  res.status(200).json({ ok: true, matchedUsers: users.length, report: report, vault: vault, photos: photos });
 }

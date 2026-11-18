@@ -7,6 +7,11 @@
 //   POST { demo }  — admins only: publish the public demo (/?demo) — the
 //                   snapshot src/demo.js buildDemoSnapshot() made, re-scrubbed
 //                   here — into public.demo_snapshot (one row, anyone can read).
+//   POST { photos: [{ vin, url }] } — copy up to 6 dealer photos into the
+//                   caller's folder of the private listing-photos bucket
+//                   (api/_photos.js) → { stored: [{ vin, key }], failed: [...] }.
+//                   The client then sets listing.photoKey; the blob isn't
+//                   touched here. (A mode here rather than a new function.)
 //
 // Snapshots are written automatically by a DB trigger on app_state (see
 // supabase/migrations/*_app_state_history.sql). The history table is
@@ -17,6 +22,7 @@ import { authorize } from "./_auth.js";
 import { scrubSettings, DEMO_VERSION } from "../src/demo.js";
 import { adminClient } from "./_supabaseAdmin.js";
 import { importBlobKeys } from "./_keys.js";
+import { storePhotos } from "./_photos.js";
 
 const DEMO_MAX_BYTES = 3 * 1024 * 1024;
 
@@ -44,6 +50,7 @@ export default async function handler(req, res) {
 
   const body = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
   if (body.demo) { await publishDemo(db, auth, body.demo, res); return; }
+  if (Array.isArray(body.photos)) { res.status(200).json(await storePhotos(db, userId, body.photos)); return; }
   const id = Number(body.id);
   if (!id) { res.status(400).json({ error: "Missing snapshot 'id'" }); return; }
 
