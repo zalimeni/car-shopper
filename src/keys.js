@@ -20,9 +20,6 @@ export async function listMarketcheckKeys() {
   try { return await call("GET"); } catch (e) { return null; }
 }
 export function addMarketcheckKey(key, label) { return call("POST", { key: key, label: label || "" }); }
-export function importMarketcheckKeys(entries) { return call("POST", { import: entries }); }
 export function renameMarketcheckKey(id, label) { return call("PATCH", { id: id, label: label }); }
 export function reorderMarketcheckKeys(ids) { return call("PATCH", { order: ids }); }
 export function removeMarketcheckKey(id) { return call("DELETE", { id: id }); }
-
-export { legacyBlobKeys } from "./quota.js";

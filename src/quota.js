@@ -13,32 +13,6 @@
 // the sum across keys, and "where we are" is the first key with calls left. The
 // shared server key is used only when you have no keys of your own.
 
-// Plaintext MarketCheck keys still in an old app-state blob (settings.marketcheckKeys,
-// from before the key vault) -> [{ key, label }], in order, blanks skipped. Used
-// by the one-time moves into the vault (App.jsx on load, the cron, a restore).
-export function legacyBlobKeys(settings) {
-  const list = settings && Array.isArray(settings.marketcheckKeys) ? settings.marketcheckKeys : [];
-  return list.map(function (k) { return typeof k === "string" ? { key: k, label: "" } : { key: (k && k.key) || "", label: (k && k.label) || "" }; })
-    .filter(function (k) { return String(k.key).trim() !== ""; });
-}
-
-// The one-time move of keys out of an old blob (App.jsx): trim, drop blanks, and drop repeats of the same key (first
-// wins, but it adopts a later copy's label if it had none). The vault (api/_keys.js)
-// also skips a key it already holds.
-export function dedupeKeyEntries(entries) {
-  const out = [];
-  const at = {};
-  (entries || []).forEach(function (e) {
-    const key = String((e && e.key) || "").trim();
-    if (!key) return;
-    const label = String((e && e.label) || "").trim();
-    if (at[key] != null) { if (!out[at[key]].label && label) out[at[key]].label = label; return; }
-    at[key] = out.length;
-    out.push({ key: key, label: label });
-  });
-  return out;
-}
-
 // The free plan's monthly allowance. One of your keys that's never been used (so
 // MarketCheck hasn't reported its counter yet) is presumed to have this much until
 // its first call says otherwise — reading it any sooner would cost a call.

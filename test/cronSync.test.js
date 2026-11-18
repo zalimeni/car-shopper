@@ -5,12 +5,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // it writes. The Supabase client is a fake that logs every query; the test
 // accounts have no active profiles, so no MarketCheck call is ever made.
 
-const h = vi.hoisted(() => ({ db: null, vaultSweeps: 0 }));
+const h = vi.hoisted(() => ({ db: null, photoSweeps: 0 }));
 vi.mock("../api/_supabaseAdmin.js", () => ({ adminClient: () => h.db, anonClient: () => null }));
 vi.mock("../api/_keys.js", () => ({
-  reencryptLegacy: async () => { h.vaultSweeps++; return { reencrypted: 0 }; },
-  importBlobKeys: async () => false,
   getMarketcheckKeys: async () => [],
+}));
+vi.mock("../api/_photos.js", () => ({
+  sweepOrphanPhotos: async () => { h.photoSweeps++; return { removed: 0 }; },
 }));
 const { default: handler, targetEmail, isDue, resultText, DUE_MS } = await import("../api/cron-sync.js");
 
@@ -64,7 +65,7 @@ const rows = () => [
   { email: "stale@example.com", scheduled_sync: true, last_scheduled_sync: new Date(Date.now() - 48 * HOUR).toISOString() },
 ];
 
-beforeEach(() => { process.env.CRON_SECRET = SECRET; h.vaultSweeps = 0; h.db = fakeDb({ rows: rows(), users: users }); });
+beforeEach(() => { process.env.CRON_SECRET = SECRET; h.photoSweeps = 0; h.db = fakeDb({ rows: rows(), users: users }); });
 afterEach(() => { delete process.env.CRON_SECRET; });
 
 describe("request parsing", () => {
@@ -113,7 +114,7 @@ describe("one account (the database dispatcher)", () => {
     expect(r.code).toBe(200);
     expect(r.body.mode).toBe("account");
     expect(synced()).toEqual(["u-stale"]);
-    expect(h.vaultSweeps).toBe(0); // maintenance is the daily run's job
+    expect(h.photoSweeps).toBe(0); // maintenance is the daily run's job
     const u = updates();
     expect(u[0].patch.last_scheduled_sync_result).toBe("started");
     expect(u[0].filters).toEqual([["in", "email", ["stale@example.com"]]]);
@@ -138,14 +139,14 @@ describe("the daily Vercel run", () => {
     const r = await call({});
     expect(r.code).toBe(200);
     expect(r.body.dispatcher).toBe(true);
-    expect(h.vaultSweeps).toBe(1);
+    expect(h.photoSweeps).toBe(1);
     expect(synced()).toEqual([]);
     expect(updates()).toEqual([]);
   });
   it("otherwise syncs only the accounts not attempted in the last day", async () => {
     const r = await call({});
     expect(r.body.mode).toBe("fallback");
-    expect(h.vaultSweeps).toBe(1);
+    expect(h.photoSweeps).toBe(1);
     expect(synced()).toEqual(["u-never", "u-stale"]);
     expect(updates()[0].filters).toEqual([["in", "email", ["never@example.com", "stale@example.com"]]]);
   });

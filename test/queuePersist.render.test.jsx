@@ -26,13 +26,13 @@ describe("candidate review queue in the synced app state", () => {
     const r = restoreQueue(data({ candidates: [{ vin: "A" }] }));
     expect(r.changed).toBe(false);
   });
-  it("counts and unflags what the scheduled sync added, and drains legacy pendingCandidates", () => {
-    const r = restoreQueue(data({ candidates: [{ vin: "A" }, { vin: "N1", fromScheduled: true, scores: {} }], pendingCandidates: [{ vin: "N2", scores: {} }, { vin: "A" }] }));
+  it("counts and unflags what the scheduled sync added", () => {
+    const r = restoreQueue(data({ candidates: [{ vin: "A" }, { vin: "N1", fromScheduled: true, scores: {} }, { vin: "N2", fromScheduled: true, scores: {} }] }));
     expect(r.queue.map((c) => c.vin)).toEqual(["A", "N1", "N2"]);
     expect(r.scheduled).toBe(2);
+    expect(r.changed).toBe(true);
     expect(r.queue.some((c) => c.fromScheduled)).toBe(false);
     expect(r.queue[1]._candidate).toBe(true);
-    expect("pendingCandidates" in r.data).toBe(false);
   });
   it("keeps the newest 300", () => {
     const q = trimQueue(Array.from({ length: 305 }, (_, i) => ({ vin: "V" + i })));

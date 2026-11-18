@@ -26,7 +26,7 @@ describe("reconcile", () => {
 
   const fetched = [
     { vin: "VIN_PRICE_DROP", vehicle: "Toyota RAV4 Hybrid", year: 2021, price: 25500, source: "marketcheck", profileId: "rav4-hybrid", dom: 30, distMi: 42 },
-    { vin: "VIN_NEW", vehicle: "Toyota RAV4 Hybrid", year: 2022, price: 24000, source: "marketcheck", profileId: "rav4-hybrid", dom: 9 },
+    { vin: "VIN_NEW", vehicle: "Toyota RAV4 Hybrid", year: 2022, price: 24000, source: "marketcheck", profileId: "rav4-hybrid", dom: 9, distMi: null },
   ];
 
   // VIN_GONE's direct VIN lookup came back empty this sync.
@@ -52,10 +52,11 @@ describe("reconcile", () => {
     ]);
   });
 
-  it("refreshes drifting market facts (dom, distMi) on every sighting", () => {
+  it("refreshes drifting market facts (dom) on every sighting, but never stores a search radius (distMi)", () => {
     const updated = result.listings.find((l) => l.id === "a1");
     expect(updated.dom).toBe(30);
-    expect(updated.distMi).toBe(42);
+    expect("distMi" in updated).toBe(false);
+    expect("distMi" in result.candidates.find((c) => c.vin === "VIN_NEW")).toBe(false);
   });
 
   it("flags a price-changed listing for review with a lastChange", () => {

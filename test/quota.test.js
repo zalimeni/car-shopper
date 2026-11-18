@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { dedupeKeyEntries, ingestSnaps, recordSyncCalls, mergeReports, summarize, syncsLeft, gaugeTone, keyIdOf } from "../src/quota.js";
+import { ingestSnaps, recordSyncCalls, mergeReports, summarize, syncsLeft, gaugeTone, keyIdOf } from "../src/quota.js";
 
 const NOW = Date.parse("2026-10-14T12:00:00Z");
 const keys = [{ key: "sk-aaaa1111", label: "Personal" }, { key: "sk-bbbb2222", label: "" }];
@@ -104,22 +104,6 @@ describe("syncsLeft", () => {
 describe("gaugeTone", () => {
   it("is neutral, then amber, then red as the share USED grows; grey when unknown", () => {
     expect([gaugeTone(0), gaugeTone(0.5), gaugeTone(0.74), gaugeTone(0.75), gaugeTone(0.89), gaugeTone(0.9), gaugeTone(1), gaugeTone(null)]).toEqual(["ok", "ok", "ok", "warn", "warn", "bad", "bad", "none"]);
-  });
-});
-
-describe("dedupeKeyEntries (Settings save)", () => {
-  it("drops repeats of the same key, keeping the first position", () => {
-    expect(dedupeKeyEntries([{ key: "A", label: "one" }, { key: "B", label: "" }, { key: "A", label: "again" }])).toEqual([{ key: "A", label: "one" }, { key: "B", label: "" }]);
-  });
-  it("treats keys that differ only by surrounding whitespace as the same", () => {
-    expect(dedupeKeyEntries([{ key: "A" }, { key: "  A " }]).map((e) => e.key)).toEqual(["A"]);
-  });
-  it("lets the kept entry adopt a label from a later copy if it had none", () => {
-    expect(dedupeKeyEntries([{ key: "A", label: "" }, { key: "A", label: "Personal" }])).toEqual([{ key: "A", label: "Personal" }]);
-  });
-  it("drops blank keys, tolerates junk, and returns [] for nothing", () => {
-    expect(dedupeKeyEntries([{ key: "" }, { key: "   " }, null, undefined, {}])).toEqual([]);
-    expect(dedupeKeyEntries(undefined)).toEqual([]);
   });
 });
 

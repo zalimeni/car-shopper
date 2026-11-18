@@ -157,7 +157,7 @@ export function localPriceCheck(data, candidates, query, opts) {
     return {
       vin: l.vin || "", year: l.year, trim: l.trim || "", mileage: l.mileage,
       price: repPrice(l), status: l._live ? "market" : (l.status || ""), dealerType: l.dealerType || "",
-      cpo: !!(l.cpo === true || l.dealerType === "CPO"), state: l.state || "",
+      cpo: l.cpo === true, state: l.state || "",
       date: l._live ? "" : (l.lastSeen || l.addedDate || ""),
       live: !!l._live,
     };
