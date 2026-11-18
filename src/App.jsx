@@ -3063,14 +3063,15 @@ function Swap({ labels, show }) {
   );
 }
 // An on/off switch (role="switch"): a fixed-size track with a sliding knob, so
-// flipping it never moves anything beside it.
+// flipping it never moves anything beside it. Blue when on, matching the logo and
+// the active tab's underline (green stays reserved for "good").
 function Toggle({ on, onChange, label }) {
   return (
     <button type="button" role="switch" aria-checked={on} aria-label={label} title={label} onClick={onChange}
-      style={{ position: "relative", width: 38, height: 22, flex: "0 0 auto", borderRadius: 11, border: "1px solid " + (on ? "#2d8659" : "#3a3d48"),
-        background: on ? "#1f6b45" : "#22252e", padding: 0, cursor: "pointer", transition: "background 0.15s, border-color 0.15s", verticalAlign: "middle" }}>
+      style={{ position: "relative", width: 38, height: 22, flex: "0 0 auto", borderRadius: 11, border: "1px solid " + (on ? "#6ba8f5" : "#3a3d48"),
+        background: on ? "#16233d" : "#22252e", padding: 0, cursor: "pointer", transition: "background 0.15s, border-color 0.15s", verticalAlign: "middle" }}>
       <span aria-hidden="true" style={{ position: "absolute", top: 2, left: on ? 18 : 2, width: 16, height: 16, borderRadius: "50%",
-        background: on ? "#e8f5ee" : "#8a8a96", transition: "left 0.15s, background 0.15s" }} />
+        background: on ? "#6ba8f5" : "#6b6b76", transition: "left 0.15s, background 0.15s" }} />
     </button>
   );
 }
@@ -4832,7 +4833,7 @@ var S = {
   sub: { fontSize: 13, color: "#6b6b76", margin: "4px 0 12px" },
   nav: { display: "flex", gap: 2, overflowX: "auto", paddingBottom: 4 },
   tab: { background: "none", border: "none", color: "#8a8a96", fontSize: 13, padding: "6px 12px", cursor: "pointer", borderRadius: 6, whiteSpace: "nowrap", fontFamily: "inherit" },
-  tabOn: { background: "#1e2028", color: "#f0f0f3", fontWeight: 500 },
+  tabOn: { background: "#1e2028", color: "#f0f0f3", fontWeight: 500, boxShadow: "inset 0 -2px 0 #2563eb" }, // underline = the logo's blue
   footer: { marginTop: 28, padding: "12px 16px", background: "#0f1114", borderTop: "1px solid #1a1c22", textAlign: "center" },
   resetBtn: { background: "none", border: "none", color: "#555", fontSize: 11, cursor: "pointer", fontFamily: "inherit" },
   stats: { display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginBottom: 16 },
