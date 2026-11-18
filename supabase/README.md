@@ -81,7 +81,7 @@ of the secret, no AAD) can still be read.
    state the next time they open the app (or at the next scheduled sync, or a
    backup restore) and are written as v2.
 2. **Re-encrypt.** Each v1 key is rewritten as v2 the first time the server
-   reads it, and the daily cron (`/api/cron-sync`, needs `CRON_SECRET`)
+   reads it, and the daily Vercel cron (`/api/cron-sync`, needs `CRON_SECRET`)
    rewrites every remaining v1 row. No user action is needed.
 3. **Verify** in the SQL editor:
    ```sql
@@ -101,6 +101,10 @@ re-enter theirs).
   expected_rev)`, the one call the browser saves with (compare-and-swap on
   `rev`, SECURITY INVOKER so RLS applies), and `app_state` added to the
   `supabase_realtime` publication.
+- `20261118120000_pg_cron_scheduled_sync.sql` — the scheduled sync runs from
+  the database: `pg_cron` + `pg_net`, `allowed_emails.last_scheduled_sync` /
+  `last_scheduled_sync_result`, the `dispatch_scheduled_sync()` dispatcher and
+  its 15-minute job, and `scheduled_sync_dispatcher_ready()`. See below.
 
 All are idempotent and ordered by filename, so applying the full set against an
 existing database is safe.
@@ -115,7 +119,8 @@ existing database is safe.
   is then applied a second time with `psql` to prove it is idempotent. Then
   `supabase test db` runs the pgTAP tests in `tests/`: acting as the `anon`
   and `authenticated` roles (with JWT claims set the way PostgREST sets them),
-  they check that each user sees only their own row, a user not on the
+  they check that each user sees only their own row, the scheduled-sync dispatcher
+  is scheduled, locked away from clients and a no-op without its Vault secrets, a user not on the
   allowlist sees nothing, the server-only tables refuse both roles, the demo
   snapshot is read-only, `save_app_state()` does its compare-and-swap, and
   `app_state` is published to Realtime. Run it locally the same way (needs
@@ -147,6 +152,60 @@ The DB password (inside that URL) is the right credential for migrations — it
 authenticates the direct Postgres connection that runs the DDL. API keys
 (`anon`/`service_role`, `sb_publishable_*`/`sb_secret_*`) are data-API
 credentials and cannot run migrations.
+
+## Scheduled sync from the database (pg_cron + pg_net)
+
+The pg_cron job `scheduled-sync-dispatch` runs `public.dispatch_scheduled_sync(2)`
+every 15 minutes. It picks up to two accounts that are due (Daily sync on in
+the Admin tab, last attempt 23 h 50 min ago or more, never-synced first),
+stamps `allowed_emails.last_scheduled_sync`, and POSTs `{ "email": … }` to
+`/api/cron-sync` with pg_net, so each account syncs in its own function
+invocation, about 24 h apart and spread over the day. A failing account is
+retried the next day, not every tick.
+
+The migration holds no URL or secret: the dispatcher reads them from Supabase
+Vault and does nothing until both exist. Until then the daily Vercel cron syncs
+the due accounts itself, as before; once they exist it does only the keepalive
+and the key-vault sweep (it asks `scheduled_sync_dispatcher_ready()`).
+
+**One-time setup** (Dashboard → SQL editor, after the migration is applied and
+`CRON_SECRET` is set in Vercel's Production env):
+
+```sql
+select vault.create_secret('https://<your-app-domain>/api/cron-sync', 'cron_sync_url');
+select vault.create_secret('<the same value as CRON_SECRET>', 'cron_secret');
+```
+
+Use the production domain (a Preview URL is behind Vercel's deployment
+protection). To change a value later: `select vault.update_secret(id, '<new>')
+from vault.secrets where name = 'cron_secret';` (same for `cron_sync_url`).
+Remember to update `cron_secret` whenever `CRON_SECRET` is rotated in Vercel.
+
+**Check it's working:**
+
+```sql
+-- the job, and its recent runs (each returns how many accounts it dispatched)
+select jobid, schedule, command, active from cron.job where jobname = 'scheduled-sync-dispatch';
+select start_time, status, return_message from cron.job_run_details
+  where jobid = (select jobid from cron.job where jobname = 'scheduled-sync-dispatch')
+  order by start_time desc limit 10;
+-- the HTTP responses from /api/cron-sync (pg_net keeps them ~6 hours)
+select id, created, status_code, error_msg, left(content, 300) from net._http_response
+  order by created desc limit 10;
+-- per account: last attempt and outcome ("dispatched" = the request never
+-- reached the function; "started" = it ran out of time or crashed)
+select email, last_scheduled_sync, last_scheduled_sync_result from public.allowed_emails
+  where scheduled_sync order by last_scheduled_sync;
+-- is the database in charge (what the daily Vercel run asks)?
+select public.scheduled_sync_dispatcher_ready();
+```
+
+The Admin tab shows the same last run + outcome under each email. To sync an
+account again right away, clear its stamp
+(`update public.allowed_emails set last_scheduled_sync = null where email = '…'`);
+the next tick picks it up. To pause the dispatcher:
+`select cron.alter_job((select jobid from cron.job where jobname = 'scheduled-sync-dispatch'), active := false);`
+(the daily Vercel run then takes over as the fallback).
 
 ## Signing in from an iPhone Home Screen bookmark
 
