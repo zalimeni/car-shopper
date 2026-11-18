@@ -10,8 +10,8 @@ aggregator, scores listings against weighted criteria (optionally with AI using
 the user's own Anthropic key), and keeps a watchlist with price/availability
 tracking. Budget, home base, and freeform categories are configurable
 (one car or several); a setup wizard handles first-run. Access is allowlisted;
-sign-in is invite-only; the default config is opinionated (the owner's two-car ≤$40K Durham-based hybrid/EV
-search) but fully editable.
+sign-in is invite-only; a new account starts blank (no profiles, $30K budget,
+Boston home base, three starter rules) and the setup wizard takes it from there.
 
 It is a small, pragmatic app — not a framework. Favor simple, surgical changes
 over architecture.
@@ -21,8 +21,8 @@ over architecture.
 - **Frontend:** React 18 + Vite 8, plain JS (no TypeScript). One big component
   file (`src/App.jsx`).
 - **Backend:** Vercel **serverless functions** in `api/` (Node 24, ESM).
-- **Data/auth:** Supabase — invite-only email auth (magic link, pasted link, or
-  one-time code — see `supabase/README.md`) + `app_state` (one JSONB blob per
+- **Data/auth:** Supabase — invite-only email auth (magic link, tapped or
+  pasted — see `supabase/README.md`) + `app_state` (one JSONB blob per
   user) and a server-only `user_api_keys` vault (each user's encrypted
   Anthropic and MarketCheck keys). RLS + the `allowed_emails` allowlist.
   Optional TOTP two-factor (Supabase Auth MFA; required for admins): once
@@ -45,11 +45,13 @@ over architecture.
 | `src/App.jsx` | The entire UI + app logic (large; the main file). |
 | `src/sync.js` | Client side of the listing sync: `fetchListings`, `fetchRawSample` (re-exports `reconcile`). |
 | `src/reconcile.js` | `reconcile()` — pure, import-free (shared with server-side sync). |
-| `src/score.js` | Client side of AI scoring + Anthropic-key management; `scoreSet`, model list. |
+| `src/score.js` | Client side of AI scoring + Anthropic-key management; `scoreSet`; re-exports the model list. |
+| `src/scoreModels.js` | The scoring-model list (`SCORE_MODEL_OPTIONS`, `DEFAULT_SCORE_MODEL`) — one copy, read by the UI picker and the server allowlist (`api/_scoring.js`). |
+| `src/apiAuth.js` | `authHeaders()` (JSON + `Bearer` from the Supabase session) — the one helper every client module uses for `/api` calls. |
 | `src/keys.js` | Client for the MarketCheck keys in the vault (list / add / rename / reorder / remove / the one-time import from an old blob). |
 | `src/storage.js` | Supabase-backed get/set of the per-user JSONB blob: `set()` is one `save_app_state()` RPC (compare-and-swap on `rev`, in the database); `watchState()` is the Realtime subscription to the user's own row. |
 | `src/supabaseClient.js` | Supabase client + default URL/anon key. |
-| `src/Auth.jsx` | Email auth gate: tap the magic link, **paste** it (`src/authLink.js` — how an iOS Home Screen web app signs in, since links open in Safari), or type the one-time code (needs custom SMTP + template) — plus the "not authorized" screen, and `StepUp`, the two-factor code prompt shown before the app loads when the account has an authenticator app (`src/mfa.js`). |
+| `src/Auth.jsx` | Email auth gate: tap the magic link, or **paste** it (`src/authLink.js` — how an iOS Home Screen web app signs in, since links open in Safari); no typed-code sign-in (custom SMTP isn't set up) — plus the "not authorized" screen, and `StepUp`, the two-factor code prompt shown before the app loads when the account has an authenticator app (`src/mfa.js`). |
 | `src/mfa.js` | Two-factor (TOTP) client: pure `assurance(session)` / `needsStepUp` (aal from the session's own JWT + `user.factors` — no network), `qrSrc`; wrappers over `supabase.auth.mfa.*` (`listTotp`, `startEnroll`, `confirmEnroll`, `removeFactor`, `verifyStepUp` — tries each app). UI: `MfaCard` (Settings) in `App.jsx`. Pure parts tested. |
 | `src/main.jsx`, `src/index.css` | Entry point + global styles. |
 | `src/locations.js` | Home-base picker logic: parse/search `public/locations.txt` (city or ZIP suggestions with coordinates). Pure, tested. |
@@ -72,14 +74,14 @@ over architecture.
 | `api/_auth.js` | Server-side auth + allowlist: `authorize()` verifies the access token locally (`getClaims()` against the project's ES256 signing keys, JWKS cached per warm instance — no Auth-server call), then `{ user: { id, email }, admin, mfa: { enrolled, aal } }` from one `my_access_mfa()` RPC; an enrolled user's aal1 token → 401 `mfa_required`. `requireAdmin()` (admin **and** aal2, else 403 `mfa_enroll_required`), `deny()` (sends `{ error, code }`). Shared module. |
 | `api/allowlist.js`, `src/admin.js` | Admin tab (admins only, `allowed_emails.is_admin`): list / add / remove emails, send an invite (the only way to get an account), toggle Admin / Daily sync per row. |
 | `api/me.js` | Allowlist + admin + key-status check for the UI (key metadata only). |
-| `api/_scoring.js` | Scoring prompt/schema/coercion + model allowlist (`resolveScoreModel`). |
+| `api/_scoring.js` | Scoring prompt/schema/coercion + model allowlist (`resolveScoreModel`, over `src/scoreModels.js`). |
 | `api/_crypto.js` | AES-256-GCM for the key vault: v2 = HKDF key + AAD `<user_id>:<provider>`, `v2:` prefix (the old v1 format is no longer read). The HKDF salt keeps the old name (`car-shopper/…`) — changing it orphans every stored key. Tested. |
 | `api/_keys.js` | The key vault (`user_api_keys`): the only module that decrypts. `getAnthropicKey`, `getMarketcheckKeys`, `keyMeta`, add/rename/reorder/remove. Tested. |
 | `api/_supabaseAdmin.js` | Service-role (`SUPABASE_SECRET_KEY`) client for the server-only tables; also the server's one copy of the project URL + publishable key. |
 | `api/keys.js` | `/api/keys`: validate / store (encrypted) / remove the Anthropic key; add / rename / reorder / remove MarketCheck keys. Answers with metadata only. |
 | `api/snapshots.js`, `src/snapshots.js` | List/restore the automatic app-state backups (`app_state_history`); admins also publish the demo snapshot here (`POST { demo }`), and it copies listing photos (`POST { photos }` — see the next row). |
 | `src/photoKey.js`, `src/photos.js`, `api/_photos.js` | **Stored listing photos** (Supabase Storage, private bucket `listing-photos`, object `<user_id>/<VIN>.<ext>`, kept on the listing as `photoKey`; a dealer URL that can't be copied is remembered as `photoFailed`). `photoKey.js` (pure, tested): key build/validate (`isPhotoKey` — import keeps only the importer's own), `photoTodo`, `applyPhotoResults`, `referencedPhotoKeys`. `photos.js`: batched + cached signed URLs (`useStoredPhoto` in `Thumb`, which falls back to `listing.photo` either way), `copyPhotos` (on approve + a per-session backfill), `removePhotos` (delete, after Undo expires). `_photos.js` (tested): `storePhotos` behind an SSRF guard (http(s), default ports, public IPs checked at connect time, ≤3 checked redirects, 2 MB, 6 s, sniffed image types; stored as-is), and `sweepOrphanPhotos` — the daily cleanup in `cron-sync`: deletes objects no blob references (listings / queue / skipped) and whole folders of users with no `app_state` row, older than 24 h only, capped per run. Off in the demo. |
-| `api/ai.js`, `api/_ai.js` | **Every AI feature, one function.** `POST { task }`: `score` (batch listing scoring), `price` (Price Check's fair-price verdict), `baseline` (a profile's AI price baseline), `suggest` (the profile wizard's AI step); `GET ?task=prompt` returns the default scoring prompt. `_ai.js`: `loadAnthropicKey(userId)` (the only place the vaulted key is decrypted), the streamed call, refusal / token-limit / rejected-key handling. Prompts + schemas: `_scoring.js` (score, baseline), `_pricecheck.js`, `_suggest.js`. |
+| `api/ai.js`, `api/_ai.js` | **Every AI feature, one function.** `POST { task }`: `score` (batch listing scoring), `price` (Price Check's fair-price verdict), `baseline` (a profile's AI price baseline), `suggest` (the profile wizard's AI step); `GET ?task=prompt` returns the default scoring prompt. `baseline` runs on the user's scoring model (allowlisted); `price`/`suggest` on Sonnet. `_ai.js`: `loadAnthropicKey(userId)` (reads the vaulted key via `api/_keys.js`, which does the decrypting), the streamed call, refusal / token-limit / rejected-key handling. Prompts + schemas: `_scoring.js` (score, baseline), `_pricecheck.js`, `_suggest.js`. |
 | `api/pricecomps.js` | Price tab: live MarketCheck comps around the home base (a `local` step). |
 | `src/priceCheck.js`, `src/priceExport.js` | Price tab's local-comps math (pure, 0 API calls) and the price-history CSV export. Pure, tested. |
 | `src/geo.js`, `src/tableSort.js` | Straight-line distance to the home base; shared sortable-table helpers (Compare, Price comps). Pure, tested. |
@@ -87,7 +89,7 @@ over architecture.
 | `api/_suggest.js` | The wizard's optional AI step (`api/ai.js` task `suggest`): must-haves / dealbreakers / years to avoid / trim notes from the vehicle + Explore's market snapshot. Prompt, schema, `coerceSuggestion` (tested). |
 | `supabase/migrations/*.sql` | DB schema: `app_state` + RLS, allowlist, Anthropic-key vault, backup history + trigger, `rev`, demo snapshot, grant/RLS tightening, the `listing-photos` bucket + its `storage.objects` policies, the pg_cron/pg_net scheduled-sync dispatcher, two-factor enforcement (`mfa_ok()`, restrictive aal2 policies, `my_access_mfa()`). |
 | `supabase/tests/*.test.sql`, `supabase/config.toml` | pgTAP tests (`supabase test db`): RLS, grants and `save_app_state()` (`rls.test.sql`); allowlist flags, `my_access()`, the key vault, backup scrubbing (`access.test.sql`); the scheduled-sync dispatcher (`scheduled_sync.test.sql`); the photo bucket's policies (`storage.test.sql`); two-factor: `mfa_ok()`, the restrictive aal2 policies, `my_access_mfa()` (`mfa.test.sql`, claims carry `aal`); run as `anon`/`authenticated`; CLI config (Postgres 17). |
-| `supabase/templates/magic_link.html` | Magic Link email body with the one-time code (paste into the Dashboard; needs custom SMTP). |
+| `supabase/templates/magic_link.html` | Optional branded Magic Link email body (link + the Home Screen paste tip); only usable with custom SMTP, which isn't set up. |
 | `.github/workflows/migrations.yml` | Validate + apply migrations. |
 | `docs/listing-pipeline.md` | **Design doc** for the sync pipeline. Read for the "why". |
 | `supabase/README.md` | How to apply migrations + CI secrets. |
@@ -112,7 +114,7 @@ There is **no generated source** in `src/` or `api/` — it's all authored by ha
 See `docs/listing-pipeline.md` for the full design. In short:
 
 - **State model:** the whole app state (`profiles`, `criteria`, `globalReqs`,
-  `listings`, `candidates`, `settings` {budget, taxRate, tagline, homeBase, saltMode, …}, `skipped`,
+  `listings`, `candidates`, `settings` {budget, tagline, homeBase, saltMode, …}, `skipped`,
   `scoreModel`, `autoScore`, `onboarded`, `version`, `lastSynced`) is one JSONB
   blob per user in `app_state.data`. `storage.js` reads/writes it; `App.jsx`
   holds it in `data` and saves via `save()` / `saveRecalc()` / `patchListings()`.
@@ -155,8 +157,11 @@ See `docs/listing-pipeline.md` for the full design. In short:
   the email be in the `allowed_emails` table (`my_access_mfa()` RPC, which also
   says whether they're an admin and have two-factor) — there is no env-var
   allowlist. RLS on `app_state` enforces the same at the data layer
-  (`is_allowed()`). The UI calls `GET /api/me` and shows a friendly screen for
-  non-allowlisted users (fails open on error — RLS/API are the real boundary).
+  (`is_allowed()`). The UI calls `GET /api/me` once, in `AuthGate`, and shows a friendly screen for
+  non-allowlisted users (fails open on error — RLS/API are the real boundary);
+  the answer (admin flag, Anthropic key status, MarketCheck key list) is
+  handed to `App` as its `me` prop, so a load makes no other `/api/me` or
+  `/api/keys` call.
 - **Two-factor (TOTP, Supabase Auth MFA):** opt-in for users, required for
   admins. Enrolled in Settings (`MfaCard`); after any email sign-in an
   enrolled account's session is aal1 and `AuthGate` shows `StepUp` until a
@@ -173,7 +178,7 @@ See `docs/listing-pipeline.md` for the full design. In short:
   /api/marketcheck` per step (proxy holding `MARKETCHECK_API_KEY`) → MarketCheck
   `/v2/search/car/active`, **nationwide, one search per active profile**, salt-belt
   states excluded via `state=` (or flagged — Settings) → `normalize()` →
-  `reconcile()`. New VINs become **candidates** (human-approved, same as Import);
+  `reconcile()`. New VINs become **candidates** (human-approved);
   known VINs get price-change notes + `lastSeen`; a watchlist VIN the direct VIN
   lookup can't find is stamped `goneAt`. Manual only — the **↻ Sync** button on
   the Results tab (a full refresh of every active profile) — plus the optional
@@ -195,13 +200,13 @@ See `docs/listing-pipeline.md` for the full design. In short:
   `buildUrl()` + the fixture, then bump `API_VERSION`.
 
 `App.jsx` is large but navigable; in order: constants/defaults (incl.
-`DEFAULT_SETTINGS`, `roleColor`, `RoleBadge`) → utilities (`calcRem`, `applyScore`)
-→ import validation → `dedupInsert`/`migrate`/`freshData` → `App` component
+`DEFAULT_SETTINGS`, `roleColor`, `RoleBadge`) → utilities (`budgetDiff`, `needsCheck`, `applyScore`)
+→ profile import → `dedupInsert`/`migrate`/`freshData` → `App` component
 (state + callbacks) → `DashView`/`BG` → `Wizard` → `SettingsCard`/`ProfilesTab`/
 `ProfEd` → `CriteriaTab` → `HelpTab` → `ResultsTab` → `SyncStatus`/`AiPanel` →
 `AiBox`/`TitleNote`/`Thumb` → `CandCard` → `LForm` → `LCard` → the `S` style
-object. (The old manual `QueriesTab`/`SOURCES` and the two-car `PairCalc` were
-removed.)
+object. (The old manual `QueriesTab`/`SOURCES`, the two-car `PairCalc` and the
+listings JSON Import/Export were removed — Backups cover restore.)
 
 ## Commands
 
@@ -405,9 +410,9 @@ admin: admin endpoints need aal2).
   (idempotent). CI validates it; merge to `main` applies it.
 - **New env var:** document it in `.env.example`; set it in Vercel for the right
   environment (and `VITE_`-prefix only if it's safe for the browser).
-- **New default profile / criterion:** edit `DEFAULT_PROFILES` /
-  `DEFAULT_CRITERIA` near the top of `App.jsx` (and bump `VERSION` + add a
-  `migrate()` step if the blob shape changes).
+- **New default criterion / starter rule:** edit `DEFAULT_CRITERIA` /
+  `DEFAULT_REQS` near the top of `App.jsx` (new accounts start with no
+  profiles; bump `VERSION` + add a `migrate()` step if the blob shape changes).
 
 ## Merging
 

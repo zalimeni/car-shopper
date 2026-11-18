@@ -3,15 +3,9 @@
 // The browser never holds a key after it's submitted: it sees metadata only —
 // [{ id, label, last4, position, valid }] in the order the keys are used. The
 // server reads the keys itself for every sync (api/_keys.js). Each call answers
-// with the updated list. Same session-token pattern as score.js / admin.js.
+// with the updated list.
 
-import { supabase } from "./supabaseClient";
-
-async function authHeaders() {
-  const { data } = await supabase.auth.getSession();
-  const token = data && data.session ? data.session.access_token : "";
-  return { "Content-Type": "application/json", Authorization: token ? "Bearer " + token : "" };
-}
+import { authHeaders } from "./apiAuth";
 
 async function call(method, body) {
   const res = await fetch("/api/keys", { method: method, headers: await authHeaders(), body: body ? JSON.stringify(Object.assign({ provider: "marketcheck" }, body)) : undefined });

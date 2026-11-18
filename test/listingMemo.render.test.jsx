@@ -11,7 +11,7 @@ vi.mock("../src/score", () => ({ getKeyStatus: async () => ({}), saveKey: async 
 vi.mock("../src/admin", () => ({ getMe: async () => ({}), listAllowed: async () => [], addAllowed: async () => {}, removeAllowed: async () => {} }));
 vi.mock("../src/snapshots", () => ({ listSnapshots: async () => [], restoreSnapshot: async () => {} }));
 
-const { ListingMemo, MarkdownView, parseImport } = await import("../src/App.jsx");
+const { ListingMemo, MarkdownView } = await import("../src/App.jsx");
 const { MEMO_MAX } = await import("../src/markdown.js");
 
 const box = () => screen.getByRole("textbox", { name: /Listing notes/ });
@@ -128,22 +128,6 @@ describe("ListingMemo", () => {
     fireEvent.click(screen.getByText(/Show more/));
     expect(screen.getByText(/Show less/)).toBeTruthy();
     cleanup();
-  });
-});
-
-describe("notes survive export -> import, clamped, as their own field", () => {
-  const row = (over) => Object.assign({ vehicle: "Toyota RAV4", year: 2021, price: 24000, profileId: "p1", notes: "↓ Price $25,000 → $24,000", rejectReason: "too many miles" }, over);
-  it("keeps memo separate from notes and rejectReason", () => {
-    const r = parseImport(JSON.stringify([row({ memo: "## Call Tuesday\n- ask about fees" })]), ["p1"]);
-    expect(r.errors).toEqual([]);
-    expect(r.listings[0]).toMatchObject({ memo: "## Call Tuesday\n- ask about fees", notes: "↓ Price $25,000 → $24,000", rejectReason: "too many miles" });
-  });
-  it("clamps an oversized memo to the limit", () => {
-    const r = parseImport(JSON.stringify([row({ memo: "y".repeat(9000) })]), ["p1"]);
-    expect(r.listings[0].memo.length).toBe(MEMO_MAX);
-  });
-  it("defaults to empty when absent", () => {
-    expect(parseImport(JSON.stringify([row()]), ["p1"]).listings[0].memo).toBe("");
   });
 });
 

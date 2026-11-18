@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { loadDemo, DEMO_EVENT } from "./demoRuntime";
 import { buildDemoSnapshot, reviewableNotes } from "./demo.js";
-import { supabase } from "./supabaseClient";
+import { authHeaders } from "./apiAuth";
 import { startTutorial } from "./tutorial.js";
 
 // Demo mode chrome (/?demo): waits for the published snapshot, then shows the
@@ -98,7 +98,7 @@ export function WelcomeModal({ onClose, first }) {
 
         <h3 style={D.h3}>How this app uses Supabase</h3>
         <ul style={{ margin: "0 0 12px", paddingLeft: 18, fontSize: 13, color: "#c8c8d0" }}>
-          <li style={li}><b>Auth:</b> invite-only magic link or one-time code, plus an allowlist table.</li>
+          <li style={li}><b>Auth:</b> invite-only magic link (tapped or pasted), plus an allowlist table.</li>
           <li style={li}><b>Data:</b> one JSON document per user in Postgres, guarded by RLS, with trigger-based backups.</li>
           <li style={li}><b>Key vault:</b> users' API keys, encrypted in a table only server functions can read.</li>
         </ul>
@@ -130,9 +130,7 @@ export function DemoPublishModal({ data, candidates, onClose }) {
   async function publish() {
     setBusy(true); setMsg("");
     try {
-      var s = await supabase.auth.getSession();
-      var token = s.data && s.data.session ? s.data.session.access_token : "";
-      var res = await fetch("/api/snapshots", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + token }, body: JSON.stringify({ demo: buildDemoSnapshot(full, { keep: keep }) }) });
+      var res = await fetch("/api/snapshots", { method: "POST", headers: await authHeaders(), body: JSON.stringify({ demo: buildDemoSnapshot(full, { keep: keep }) }) });
       var j = await res.json().catch(function () { return {}; });
       if (!res.ok) throw new Error(j.error || "HTTP " + res.status);
       setMsg("Published — open " + window.location.origin + "/?demo=live to see it.");

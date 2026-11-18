@@ -33,7 +33,7 @@ describe("AuthGate does not hang when getSession() stalls", () => {
   });
 });
 
-describe("sign-in: tap the link, paste it, or type a code", () => {
+describe("sign-in: tap the link or paste it", () => {
   const LINK = "https://proj.supabase.co/auth/v1/verify?token=abc123hash&type=magiclink&redirect_to=https://app";
   function setup(result) {
     const calls = { otp: [], verify: [], setSession: [] };
@@ -101,16 +101,32 @@ describe("sign-in: tap the link, paste it, or type a code", () => {
     await flush();
     expect(calls.otp.length).toBe(0);
     expect(calls.verify[0].token_hash).toBe("abc123hash");
-    expect(screen.queryByLabelText("Sign-in code")).toBeNull(); // a code needs the email it was sent to
   });
-  it("still takes a typed code when the email has one", async () => {
-    const calls = setup();
+  it("offers no one-time-code box (sign-in is by link only)", async () => {
+    setup();
     await sendTo("me@x.com");
-    const codeBox = screen.getByLabelText("Sign-in code");
-    fireEvent.change(codeBox, { target: { value: "12 34-56" } });
-    expect(codeBox.value).toBe("123456");
-    fireEvent.click(screen.getByText("Sign in with code"));
-    await flush();
-    expect(calls.verify[0]).toEqual({ email: "me@x.com", token: "123456", type: "email" });
+    expect(screen.queryByLabelText("Sign-in code")).toBeNull();
+    expect(screen.queryByText("Sign in with code")).toBeNull();
+  });
+});
+
+describe("AuthGate hands its one /api/me answer to the app", () => {
+  it("passes the answer to function children, with a single /api/me call", async () => {
+    const me = { authorized: true, isAdmin: true, anthropicKey: { configured: true, valid: true, last4: "abcd" }, marketcheckKeys: [{ id: 1, label: "main", last4: "wxyz" }] };
+    global.fetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => me }));
+    supabaseMock = mkSupabase(async () => ({ data: { session: { access_token: "t", user: { id: "u1", email: "x@y.z" } } } }));
+    let got = null;
+    render(<AuthGate>{(m) => { got = m; return <div>APPBODY</div>; }}</AuthGate>);
+    await screen.findByText("APPBODY");
+    expect(got).toEqual(me);
+    expect(global.fetch.mock.calls.filter((c) => String(c[0]) === "/api/me").length).toBe(1);
+  });
+  it("fails open with an empty answer when /api/me errors", async () => {
+    global.fetch = vi.fn(async () => { throw new Error("offline"); });
+    supabaseMock = mkSupabase(async () => ({ data: { session: { access_token: "t", user: { id: "u1", email: "x@y.z" } } } }));
+    let got = null;
+    render(<AuthGate>{(m) => { got = m; return <div>APPBODY</div>; }}</AuthGate>);
+    await screen.findByText("APPBODY");
+    expect(got).toEqual({});
   });
 });

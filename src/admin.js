@@ -1,13 +1,7 @@
 // Client for /api/me (identity + admin flag) and the admin-only allowlist
-// management endpoint (/api/allowlist). Same session-token pattern as sync.js.
+// management endpoint (/api/allowlist).
 
-import { supabase } from "./supabaseClient";
-
-async function authHeaders() {
-  const { data } = await supabase.auth.getSession();
-  const token = data && data.session ? data.session.access_token : "";
-  return { "Content-Type": "application/json", Authorization: token ? "Bearer " + token : "" };
-}
+import { authHeaders } from "./apiAuth";
 
 // { authorized, email, isAdmin, anthropicKey }. Returns {} on any error.
 export async function getMe() {

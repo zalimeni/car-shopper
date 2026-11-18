@@ -14,6 +14,7 @@
 
 import { useState, useEffect } from "react";
 import { supabase } from "./supabaseClient";
+import { authHeaders } from "./apiAuth";
 import { DEMO } from "./demoRuntime";
 import { PHOTO_BUCKET } from "./photoKey.js";
 
@@ -98,12 +99,6 @@ export function useStoredPhoto(key) {
   return url;
 }
 
-async function authHeaders() {
-  var r = await supabase.auth.getSession();
-  var s = r && r.data && r.data.session;
-  return s && s.access_token ? { "Content-Type": "application/json", Authorization: "Bearer " + s.access_token } : null;
-}
-
 // The signed-in user's id (for import validation of photoKey), or null.
 export async function currentUid() {
   try {
@@ -118,7 +113,7 @@ export async function copyPhotos(items) {
   if (DEMO || !items || !items.length) return null;
   try {
     var h = await authHeaders();
-    if (!h) return null;
+    if (!h.Authorization) return null;
     var res = await fetch("/api/snapshots", { method: "POST", headers: h, body: JSON.stringify({ photos: items }) });
     if (!res.ok) return null;
     return await res.json();

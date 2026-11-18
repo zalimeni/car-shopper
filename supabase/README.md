@@ -251,20 +251,19 @@ the next tick picks it up. To pause the dispatcher:
 
 iOS gives a Home Screen web app its own storage, separate from Safari, and email
 links always open in Safari — so tapping the sign-in link signs Safari in and
-leaves the Home Screen app signed out. Two ways around it, both on the sign-in
+leaves the Home Screen app signed out. The way around it is on the sign-in
 screen:
 
 - **Paste the link (works as is):** in Mail, long-press the sign-in link → **Copy
   Link**, then paste it into the app ("Paste link"). The app verifies the link's
   one-time token itself (`verifyOtp({ token_hash })` — `src/authLink.js`). Don't
   open the link first: that uses it up. No Supabase changes needed.
-- **Type a code (optional):** needs the "Magic Link" email template to include
-  `{{ .Token }}` — and Supabase only allows editing templates once the project
-  uses **custom SMTP** (Authentication → SMTP; e.g. Gmail with an app password,
-  or Resend). Then paste the body of
-  [`templates/magic_link.html`](templates/magic_link.html) into Authentication →
-  Emails → Magic Link. Code length follows Authentication → Providers → Email →
-  Email OTP length (default 6; the app accepts 6–10 digits).
+
+The app has no typed-code sign-in (that would need the email template to carry
+`{{ .Token }}`, and Supabase only allows editing templates with **custom
+SMTP**, which isn't set up). If custom SMTP is ever added,
+[`templates/magic_link.html`](templates/magic_link.html) is an optional branded
+Magic Link body with the paste tip (Authentication → Emails → Magic Link).
 
 ## Postgres version
 

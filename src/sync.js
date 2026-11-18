@@ -9,7 +9,7 @@
 //   - reconcile():     pure function, lives in src/reconcile.js (shared with
 //                      the server-side scheduled sync) and re-exported here.
 
-import { supabase } from "./supabaseClient";
+import { authHeaders } from "./apiAuth";
 import { DEMO, demoPostStep, demoPriceComps } from "./demoRuntime";
 import { runSync } from "./syncPlan.js";
 export { reconcile } from "./reconcile.js";
@@ -34,12 +34,10 @@ export async function postStep(step, opts, filters) {
   if (DEMO) return demoPostStep(step);
   const f = filters || {};
   const qs = opts && opts.mock ? "?mock=1" : "";
-  const { data: sess } = await supabase.auth.getSession();
-  const token = sess && sess.session ? sess.session.access_token : "";
   const p = step.profile;
   const res = await fetch("/api/marketcheck" + qs, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: token ? "Bearer " + token : "" },
+    headers: await authHeaders(),
     body: JSON.stringify({
       kind: step.kind,
       profile: p ? { id: p.id, name: p.name, params: p.params } : undefined,
@@ -72,14 +70,9 @@ export async function postStep(step, opts, filters) {
 // against tracked inventory) — this is a read-only, on-demand widen.
 export async function fetchPriceComps(query, hubs, spentKeys) {
   if (DEMO) return demoPriceComps(query);
-  const { data: sess } = await supabase.auth.getSession();
-  const token = sess && sess.session ? sess.session.access_token : "";
   const res = await fetch("/api/pricecomps", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: token ? "Bearer " + token : "",
-    },
+    headers: await authHeaders(),
     body: JSON.stringify({
       query: query || {},
       hubs: Array.isArray(hubs) ? hubs : [],
@@ -103,14 +96,9 @@ export async function fetchPriceComps(query, hubs, spentKeys) {
 // Debug helper: POST /api/marketcheck?raw=1 and return the raw MarketCheck
 // response + normalized sample. Wired to window.__rawSync for console use.
 export async function fetchRawSample(profiles, hubs, vin) { // hubs: [] = nationwide
-  const { data: sess } = await supabase.auth.getSession();
-  const token = sess && sess.session ? sess.session.access_token : "";
   const res = await fetch("/api/marketcheck?raw=1", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: token ? "Bearer " + token : "",
-    },
+    headers: await authHeaders(),
     body: JSON.stringify({
       profiles: (profiles || []).map(function (p) { return { id: p.id, name: p.name, params: p.params }; }),
       hubs: hubs || [],
