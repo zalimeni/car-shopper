@@ -10,8 +10,8 @@ aggregator, scores listings against weighted criteria (optionally with AI using
 the user's own Anthropic key), and keeps a watchlist with price/availability
 tracking. Budget, home base, and freeform categories are configurable
 (one car or several); a setup wizard handles first-run. Access is allowlisted;
-sign-in is invite-only; the default config is opinionated (the owner's two-car ≤$40K Durham-based hybrid/EV
-search) but fully editable.
+sign-in is invite-only; a new account starts blank (no profiles, $30K budget,
+Boston home base, three starter rules) and the setup wizard takes it from there.
 
 It is a small, pragmatic app — not a framework. Favor simple, surgical changes
 over architecture.
@@ -113,7 +113,7 @@ There is **no generated source** in `src/` or `api/` — it's all authored by ha
 See `docs/listing-pipeline.md` for the full design. In short:
 
 - **State model:** the whole app state (`profiles`, `criteria`, `globalReqs`,
-  `listings`, `candidates`, `settings` {budget, taxRate, tagline, homeBase, saltMode, …}, `skipped`,
+  `listings`, `candidates`, `settings` {budget, tagline, homeBase, saltMode, …}, `skipped`,
   `scoreModel`, `autoScore`, `onboarded`, `version`, `lastSynced`) is one JSONB
   blob per user in `app_state.data`. `storage.js` reads/writes it; `App.jsx`
   holds it in `data` and saves via `save()` / `saveRecalc()` / `patchListings()`.
@@ -173,7 +173,7 @@ See `docs/listing-pipeline.md` for the full design. In short:
   /api/marketcheck` per step (proxy holding `MARKETCHECK_API_KEY`) → MarketCheck
   `/v2/search/car/active`, **nationwide, one search per active profile**, salt-belt
   states excluded via `state=` (or flagged — Settings) → `normalize()` →
-  `reconcile()`. New VINs become **candidates** (human-approved, same as Import);
+  `reconcile()`. New VINs become **candidates** (human-approved);
   known VINs get price-change notes + `lastSeen`; a watchlist VIN the direct VIN
   lookup can't find is stamped `goneAt`. Manual only — the **↻ Sync** button on
   the Results tab (a full refresh of every active profile) — plus the optional
@@ -195,13 +195,13 @@ See `docs/listing-pipeline.md` for the full design. In short:
   `buildUrl()` + the fixture, then bump `API_VERSION`.
 
 `App.jsx` is large but navigable; in order: constants/defaults (incl.
-`DEFAULT_SETTINGS`, `roleColor`, `RoleBadge`) → utilities (`calcRem`, `applyScore`)
-→ import validation → `dedupInsert`/`migrate`/`freshData` → `App` component
+`DEFAULT_SETTINGS`, `roleColor`, `RoleBadge`) → utilities (`budgetDiff`, `needsCheck`, `applyScore`)
+→ profile import → `dedupInsert`/`migrate`/`freshData` → `App` component
 (state + callbacks) → `DashView`/`BG` → `Wizard` → `SettingsCard`/`ProfilesTab`/
 `ProfEd` → `CriteriaTab` → `HelpTab` → `ResultsTab` → `SyncStatus`/`AiPanel` →
 `AiBox`/`TitleNote`/`Thumb` → `CandCard` → `LForm` → `LCard` → the `S` style
-object. (The old manual `QueriesTab`/`SOURCES` and the two-car `PairCalc` were
-removed.)
+object. (The old manual `QueriesTab`/`SOURCES`, the two-car `PairCalc` and the
+listings JSON Import/Export were removed — Backups cover restore.)
 
 ## Commands
 
@@ -405,9 +405,9 @@ admin: admin endpoints need aal2).
   (idempotent). CI validates it; merge to `main` applies it.
 - **New env var:** document it in `.env.example`; set it in Vercel for the right
   environment (and `VITE_`-prefix only if it's safe for the browser).
-- **New default profile / criterion:** edit `DEFAULT_PROFILES` /
-  `DEFAULT_CRITERIA` near the top of `App.jsx` (and bump `VERSION` + add a
-  `migrate()` step if the blob shape changes).
+- **New default criterion / starter rule:** edit `DEFAULT_CRITERIA` /
+  `DEFAULT_REQS` near the top of `App.jsx` (new accounts start with no
+  profiles; bump `VERSION` + add a `migrate()` step if the blob shape changes).
 
 ## Merging
 

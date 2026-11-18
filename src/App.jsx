@@ -26,8 +26,8 @@ import { addTag, removeTag, allTags, hasTag, TAG_MAX } from "./tags";
 import { baseColorOf, colorHideReason, colorChoices, COMMON_COLORS } from "./colors";
 import { summarize, ingestSnaps, recordSyncCalls, syncsLeft, gaugeTone, dedupeKeyEntries, spentKeyIds, FREE_PLAN_CALLS, parseMcTime } from "./quota";
 import { loadLocations, searchLocations, hubFromZip } from "./locations";
-import { useStoredPhoto, signPhotoKeys, copyPhotos, removePhotos, currentUid, missing as photoMissing } from "./photos";
-import { photoTodo, applyPhotoResults, isPhotoKey } from "./photoKey";
+import { useStoredPhoto, signPhotoKeys, copyPhotos, removePhotos, missing as photoMissing } from "./photos";
+import { photoTodo, applyPhotoResults } from "./photoKey";
 
 var AUTO_SCORE_MAX = 20; // skip auto-score above this many items (avoid burning credits)
 
@@ -39,40 +39,14 @@ var STALE_MC_DAYS = 3; // flag a listing MarketCheck itself last confirmed this 
 // offered for one-click archiving (manual by design; MarketCheck sometimes has
 // data gaps, so nothing is archived without the user's click).
 var UNSEEN_SOLD_DAYS = 14;
-var BUDGET = 40000; // default budget; per-user override in data.settings.budget
-var TAX = 0.07;
+var BUDGET = 30000; // default budget; per-user override in data.settings.budget
 
-// Starter global requirements (fed to AI scoring). Broad rules first; the
-// color/taste preferences (gold, then the soft prefer-not-black) come last.
+// Starter global requirements (fed to AI scoring) for a new account or a reset.
 // Salt-belt rust is handled by the "location & salt exposure" scoring criterion.
 var DEFAULT_REQS = [
   { id: "clean-title", text: "Clean title (no salvage, rebuilt, or branded)", active: true },
   { id: "no-accidents", text: "No accident history", active: true },
   { id: "no-mech", text: "No significant mechanical issues", active: true },
-  { id: "no-gold", text: "No gold exterior color", active: true },
-  { id: "no-black-pref", text: "Prefer not black exterior (soft preference)", active: true },
-];
-
-var DEFAULT_PROFILES = [
-  { id: "rav4-hybrid", name: "RAV4 Hybrid", role: "SUV", active: true,
-    params: { make: "Toyota", model: "RAV4", powertrain: "Hybrid", years: "2019-2022", trims: "XLE, XSE", maxPrice: 25000, maxMiles: 90000,
-      mustHave: "AWD, hybrid", niceToHave: "Weather Pkg, CPO, wireless CarPlay (2022)", dealbreakers: "" } },
-  { id: "rav4-prime", name: "RAV4 Prime", role: "SUV", active: true,
-    params: { make: "Toyota", model: "RAV4", powertrain: "PHEV", years: "2021-2022", trims: "SE, XSE", maxPrice: 28000, maxMiles: 90000,
-      mustHave: "AWD, PHEV", niceToHave: "Premium pkg, Weather pkg, CPO", dealbreakers: "" } },
-  { id: "bolt-euv", name: "Bolt EUV", role: "Commuter", active: true,
-    params: { make: "Chevrolet", model: "Bolt EUV", years: "2022-2023", trims: "LT, Premier", maxPrice: 19000, maxMiles: 70000,
-      mustHave: "Post-recall battery replacement documented", niceToHave: "Sun & Sound pkg, Super Cruise", dealbreakers: "No battery recall docs" } },
-  { id: "bolt-ev", name: "Bolt EV", role: "Commuter", active: true,
-    params: { make: "Chevrolet", model: "Bolt EV", years: "2021-2023", trims: "LT, Premier", maxPrice: 16000, maxMiles: 70000,
-      mustHave: "Post-recall battery replacement documented", niceToHave: "DC fast charge, Driver Confidence II", dealbreakers: "No battery recall docs" } },
-  { id: "volt", name: "Volt", role: "Commuter", active: true,
-    params: { make: "Chevrolet", model: "Volt", years: "2016, 2018", trims: "LT w/ DC-II, Premier", maxPrice: 14000, maxMiles: 90000,
-      mustHave: "Gen 2 (2016+), BECM extended warranty", niceToHave: "Heated seats, adaptive cruise", dealbreakers: "2017 or 2019 model year" } },
-  { id: "outback", name: "Outback", role: "SUV", active: true,
-    params: { make: "Subaru", model: "Outback", years: "2020-2022", trims: "Premium, Limited, Base", preferTrims: ["Premium", "Limited", "Base"],
-      excludeTrims: ["Touring XT", "Limited XT", "Onyx Edition XT", "Outback Wilderness", "2.4 Premier XT"], maxPrice: 25000, maxMiles: 100000,
-      mustHave: "AWD (standard); non-turbo 2.5L; rear-passenger safety (IIHS Acceptable rear)", niceToHave: "Premium or Limited trim, moonroof, heated seats, power driver seat", dealbreakers: "Turbo XT / Onyx Edition XT / Wilderness (reliability); open CVT recall WRK-22 or brake-bolt recall WUL-97" } },
 ];
 
 var DEFAULT_CRITERIA = [
@@ -86,17 +60,16 @@ var DEFAULT_CRITERIA = [
   { id: "deal", name: "Deal rating", weight: 10 },
 ];
 
-// The owner's home base (the default; Settings changes it).
-var HOME_BASE = { n: "Durham, NC", z: "27701", lat: 35.994, lon: -78.8986 };
+// The default home base (Boston 02108, as public/locations.txt has it); the setup
+// wizard and Settings change it.
+var HOME_BASE = { n: "Boston, MA", z: "02108", lat: 42.358, lon: -71.068 };
 
-// Per-user settings (synced in data.settings). Defaults preserve the original
-// two-car, Durham-based setup; the setup wizard and the Settings card edit them.
-// There's no single/multi-car "mode" — one-car shopping is just the case where
-// only one car type (role) is active, and the pairing widgets follow from that.
+// Per-user settings (synced in data.settings). Generic defaults for a new account;
+// the setup wizard and the Settings card edit them. One car or several is just
+// how many profiles are active — there's no mode.
 var DEFAULT_SETTINGS = {
   budget: BUDGET,
-  taxRate: TAX,
-  tagline: "2-car · Durham · ≤$40K",
+  tagline: "Car search",
   franchiseOnly: false, // when true, sync targets franchise dealers only (excludes independent)
   // Where the buyer lives: distance flags (drive vs. ship), the "location" score,
   // and Price Check's live comps are all measured from here. Searches themselves
@@ -128,39 +101,31 @@ function planOpts(data) {
 }
 
 // ── Utility ──
-// Pre-tax budget left after buying a car at pre-tax price p.
-function calcRem(p, budget, tax) {
-  if (budget == null) budget = BUDGET;
-  if (tax == null) tax = TAX;
-  return Math.round((budget - p * (1 + tax)) / (1 + tax));
+// A price against the budget: "$2,500 under budget" / "$1,200 over budget".
+function budgetDiff(p, budget) {
+  var d = Math.round((budget || 0) - (p || 0));
+  return "$" + Math.abs(d).toLocaleString() + (d >= 0 ? " under" : " over") + " budget";
 }
 
-// Stable-ish color for a freeform role label (SUV/Commuter keep their originals).
+// Stable-ish color for a freeform role label.
 var ROLE_PALETTE = ["#1a5c3a", "#1a3c5c", "#5c1a3c", "#3c5c1a", "#5c3c1a", "#3c1a5c", "#1a5c5c"];
 function roleColor(role) {
   if (!role) return "#444";
-  if (role === "SUV") return "#1a5c3a";
-  if (role === "Commuter") return "#1a3c5c";
   var h = 0;
   for (var i = 0; i < role.length; i++) h = (h * 31 + role.charCodeAt(i)) >>> 0;
   return ROLE_PALETTE[h % ROLE_PALETTE.length];
 }
-// Distinct role labels among active profiles (drives dynamic grouping/filtering).
-function activeRoles(data) {
-  var seen = [];
-  (data.profiles || []).forEach(function (p) {
-    if (p.active && p.role && seen.indexOf(p.role) === -1) seen.push(p.role);
-  });
-  return seen;
-}
-// Role chip; renders nothing for an empty/unknown role (single-car setups).
+// Role chip; renders nothing for an empty role (single-car setups).
 function RoleBadge({ role, extra }) {
-  if (!role || role === "?") return null;
+  if (!role) return null;
   return (<span style={Object.assign({}, S.role, { background: roleColor(role) }, extra || {})}>{role}</span>);
 }
 function isSalt(st) { return isSaltState(st); } // salt-belt list: src/regions.js
 function daysSince(d) { if (!d) return Infinity; return Math.floor((new Date() - new Date(d)) / 864e5); }
 function today() { return new Date().toISOString().split("T")[0]; }
+// Only hand-added listings (+ Add — no `source`) need a manual "still available?"
+// check: every sync re-confirms synced ones (lastSeen, and goneAt once gone).
+function needsCheck(l) { return !!l && !l.source && l.status === "watch" && daysSince(l.lastChecked) >= STALE_DAYS; }
 function calcScore(scores, crit) {
   var tw = 0, w = 0;
   for (var i = 0; i < crit.length; i++) {
@@ -240,140 +205,12 @@ function safeHttpUrl(u) {
   return /^https?:\/\//i.test(u) ? u : "";
 }
 
-// ── Import Validation ──
-var REQUIRED_FIELDS = ["vehicle", "year", "price", "profileId"];
-var VALID_STATUSES = ["watch", "rejected", "sold"];
-var VALID_DEALER_TYPES = ["CPO", "franchise", "independent", "private"];
 // Display label for a dealer type ("CPO" stays initialism; others capitalized).
 function dealerLabel(d) { return d === "CPO" ? "CPO" : (d || "").charAt(0).toUpperCase() + (d || "").slice(1); }
 // Certified Pre-Owned: its own boolean now, but tolerate listings synced before
 // that field existed (they carry the legacy dealerType === "CPO").
 function isCpo(l) { return !!(l && (l.cpo === true || l.dealerType === "CPO")); }
 var DEALER_CPO = "__cpo__"; // synthetic dealer-filter value: certified only (cross-cuts dealer type)
-
-function validateListing(obj, index, profileIds) {
-  var errors = [];
-  var prefix = "Listing " + (index + 1) + ": ";
-  if (typeof obj !== "object" || obj === null) return [prefix + "not an object"];
-  REQUIRED_FIELDS.forEach(function (f) {
-    if (!obj[f] && obj[f] !== 0) errors.push(prefix + "missing required field '" + f + "'");
-  });
-  if (obj.profileId && profileIds.indexOf(obj.profileId) === -1) {
-    errors.push(prefix + "unknown profileId '" + obj.profileId + "' — valid IDs: " + profileIds.join(", "));
-  }
-  // Model years run ahead of the calendar (next year's models arrive mid-year).
-  var maxYear = new Date().getFullYear() + 1;
-  if (obj.year && (isNaN(Number(obj.year)) || Number(obj.year) < 1990 || Number(obj.year) > maxYear)) {
-    errors.push(prefix + "year " + obj.year + " looks wrong (expected 1990-" + maxYear + ")");
-  }
-  if (obj.price && (isNaN(Number(obj.price)) || Number(obj.price) <= 0)) {
-    errors.push(prefix + "price must be a positive number");
-  }
-  if (obj.mileage && isNaN(Number(obj.mileage))) {
-    errors.push(prefix + "mileage must be a number");
-  }
-  if (obj.status && VALID_STATUSES.indexOf(obj.status) === -1) {
-    errors.push(prefix + "invalid status '" + obj.status + "' — use: " + VALID_STATUSES.join(", "));
-  }
-  if (obj.dealerType && VALID_DEALER_TYPES.indexOf(obj.dealerType) === -1) {
-    errors.push(prefix + "invalid dealerType '" + obj.dealerType + "' — use: " + VALID_DEALER_TYPES.join(", "));
-  }
-  if (obj.scores && typeof obj.scores === "object") {
-    Object.keys(obj.scores).forEach(function (k) {
-      var v = obj.scores[k];
-      if (typeof v !== "number" || v < 1 || v > 10) errors.push(prefix + "score '" + k + "' must be 1-10, got " + v);
-    });
-  }
-  return errors;
-}
-
-// uid: the signed-in user's id — an imported photoKey is kept only when it's a
-// path in their own photo folder for that car's VIN (else the backfill re-copies).
-export function parseImport(text, profileIds, uid) {
-  var result = { listings: [], errors: [], warnings: [] };
-  var parsed;
-  try {
-    var trimmed = text.trim();
-    if (trimmed.charAt(0) === "[") {
-      parsed = JSON.parse(trimmed);
-    } else if (trimmed.charAt(0) === "{") {
-      parsed = [JSON.parse(trimmed)];
-    } else {
-      result.errors.push("Input must be JSON: an array [...] or single object {...}");
-      return result;
-    }
-  } catch (e) {
-    result.errors.push("Invalid JSON: " + e.message);
-    return result;
-  }
-  if (!Array.isArray(parsed)) {
-    result.errors.push("Expected an array of listings");
-    return result;
-  }
-  if (parsed.length === 0) {
-    result.errors.push("Array is empty — no listings to import");
-    return result;
-  }
-  if (parsed.length > 50) {
-    result.warnings.push("Large import (" + parsed.length + " listings). Processing first 50.");
-    parsed = parsed.slice(0, 50);
-  }
-  parsed.forEach(function (obj, i) {
-    var errs = validateListing(obj, i, profileIds);
-    if (errs.length > 0) {
-      result.errors = result.errors.concat(errs);
-    } else {
-      var clean = {
-        vehicle: String(obj.vehicle || ""),
-        year: Number(obj.year),
-        trim: String(obj.trim || ""),
-        price: Number(obj.price),
-        mileage: Number(obj.mileage || 0),
-        profileId: String(obj.profileId),
-        dealer: String(obj.dealer || ""),
-        dealerType: VALID_DEALER_TYPES.indexOf(obj.dealerType) > -1 ? obj.dealerType : "franchise",
-        location: String(obj.location || ""),
-        state: String(obj.state || ""),
-        color: String(obj.color || ""),
-        vin: String(obj.vin || ""),
-        link: safeHttpUrl(obj.link),
-        dealRating: String(obj.dealRating || ""),
-        notes: String(obj.notes || ""),
-        memo: clampMemo(obj.memo), // free-form markdown notes (separate from `notes`, which sync writes to)
-        status: VALID_STATUSES.indexOf(obj.status) > -1 ? obj.status : "watch",
-        scores: obj.scores && typeof obj.scores === "object" ? obj.scores : {},
-        rejectReason: String(obj.rejectReason || ""),
-        // Optional extras so an Export → Import backup round-trip is lossless:
-        // photo/CPO/Carfax facts, AI results, and the sync bookkeeping dates.
-        photo: safeHttpUrl(obj.photo),
-        photoKey: isPhotoKey(obj.photoKey, uid, obj.vin) ? String(obj.photoKey) : undefined,
-        cpo: obj.cpo === true,
-        carfax_1_owner: typeof obj.carfax_1_owner === "boolean" ? obj.carfax_1_owner : null,
-        carfax_clean_title: typeof obj.carfax_clean_title === "boolean" ? obj.carfax_clean_title : null,
-        dom: obj.dom != null && !isNaN(Number(obj.dom)) ? Number(obj.dom) : null,
-        distMi: obj.distMi != null && !isNaN(Number(obj.distMi)) ? Number(obj.distMi) : null,
-        fees: obj.fees > 0 ? Number(obj.fees) : null,
-        dLat: obj.dLat != null && !isNaN(Number(obj.dLat)) ? Number(obj.dLat) : null,
-        dLon: obj.dLon != null && !isNaN(Number(obj.dLon)) ? Number(obj.dLon) : null,
-        mcSeen: typeof obj.mcSeen === "string" ? obj.mcSeen.slice(0, 10) : null,
-        priceHistory: Array.isArray(obj.priceHistory) ? obj.priceHistory : undefined,
-        source: obj.source ? String(obj.source) : undefined,
-        addedDate: obj.addedDate ? String(obj.addedDate) : undefined,
-        lastSeen: obj.lastSeen ? String(obj.lastSeen) : undefined,
-        lastChecked: obj.lastChecked ? String(obj.lastChecked) : undefined,
-        aiSummary: obj.aiSummary ? String(obj.aiSummary) : "",
-        aiRationales: obj.aiRationales && typeof obj.aiRationales === "object" ? obj.aiRationales : {},
-        scoredAt: obj.scoredAt ? String(obj.scoredAt) : undefined,
-        scoreHash: obj.scoreHash ? String(obj.scoreHash) : undefined,
-      };
-      result.listings.push(clean);
-    }
-  });
-  if (result.listings.length > 0 && result.errors.length > 0) {
-    result.warnings.push(result.listings.length + " valid, " + result.errors.length + " error(s) — only valid listings shown for review.");
-  }
-  return result;
-}
 
 // ── Profile import (paste JSON array of profiles) ──
 function slug(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""); }
@@ -447,16 +284,15 @@ function candHideReason(c, p) {
 }
 
 // ── Dedup: VIN match keeps lower price ──
+// Returns `existing` itself when the car is already there at the same or a lower
+// price (callers say so instead of adding nothing silently).
 function dedupInsert(existing, newL) {
   if (!newL.vin) return existing.concat(newL);
   var idx = existing.findIndex(function (l) { return l.vin && l.vin === newL.vin; });
   if (idx === -1) return existing.concat(newL);
   if (newL.price < existing[idx].price) {
     var updated = existing.slice();
-    updated[idx] = Object.assign({}, newL, {
-      id: existing[idx].id, addedDate: existing[idx].addedDate,
-      notes: ((newL.notes || "") + " [Dedup: was $" + existing[idx].price.toLocaleString() + " at " + existing[idx].dealer + "]").trim()
-    });
+    updated[idx] = Object.assign({}, newL, { id: existing[idx].id, addedDate: existing[idx].addedDate });
     return updated;
   }
   return existing;
@@ -529,13 +365,13 @@ export function migrate(data) {
   return data;
 }
 
-// Pristine app state for a brand-new user or a reset. `blank` drops the
-// owner's opinionated starter profiles/requirements (used by "start fresh").
-function freshData(blank) {
+// Pristine app state for a brand-new user or a reset: no profiles (Profiles →
+// + Add builds them) and the starter requirements.
+function freshData() {
   return {
-    profiles: blank ? [] : DEFAULT_PROFILES,
+    profiles: [],
     criteria: DEFAULT_CRITERIA,
-    globalReqs: blank ? [] : DEFAULT_REQS,
+    globalReqs: DEFAULT_REQS,
     listings: [],
     candidates: [],
     settings: Object.assign({}, DEFAULT_SETTINGS),
@@ -639,8 +475,6 @@ export default function App() {
   var [saving, setSaving] = useState(false);
   var [edListing, setEdListing] = useState(null);
   var [candidates, setCandidates] = useState([]); // restored from data.candidates on load
-  var [importText, setImportText] = useState("");
-  var [importResult, setImportResult] = useState(null);
   // Results' profile filter: "active" (default — the active profiles), "all", or one profile id.
   var [filterProf, setFilterProf] = useState(function () { var h = tabFromHash(); return (h && h.prof) || "active"; });
   var init = useRef(false);
@@ -692,7 +526,6 @@ export default function App() {
     return writeQ.current;
   }, [applyRemote]);
 
-  var [exportJson, setExportJson] = useState("");
   var [exportMsg, setExportMsg] = useState("");
   // Backups panel (footer): automatic server-side snapshots of the whole blob.
   var [snapsOpen, setSnapsOpen] = useState(false);
@@ -779,7 +612,7 @@ export default function App() {
           if (rq.scheduled) setSyncMsg({ ok: true, text: "Background sync found " + rq.scheduled + " new candidate" + (rq.scheduled > 1 ? "s" : "") + " — review below." });
           if (d.version !== prevVersion) writeBack = true; // migration changed the shape
         } else {
-          d = freshData(false); // brand-new user: defaults + wizard (onboarded:false)
+          d = freshData(); // brand-new user: defaults + wizard (onboarded:false)
           revRef.current = 0;   // no row yet — first persist inserts at rev 1
           writeBack = true;
         }
@@ -857,8 +690,6 @@ export default function App() {
   // Watchlist cars keep a copy of their dealer photo in Supabase Storage
   // (listing.photoKey), so it outlives the dealer's link. Best-effort: a
   // failure leaves the card on the dealer URL and never blocks anything.
-  var uidRef = useRef(null);
-  useEffect(function () { if (!DEMO) currentUid().then(function (u) { uidRef.current = u; }); }, []);
   var copyListingPhotos = useCallback(async function (list, batches) {
     if (DEMO) return;
     var tried = {};
@@ -1199,17 +1030,28 @@ export default function App() {
     setTab("Results");
   }, [setTab]);
 
+  // A short-lived note at the bottom of the screen (e.g. an approve that added nothing).
+  var [notice, setNotice] = useState("");
+  var noticeTimer = useRef(null);
+  var flashNotice = useCallback(function (t) {
+    setNotice(t);
+    clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(function () { setNotice(""); }, 6000);
+  }, []);
+  useEffect(function () { return function () { clearTimeout(noticeTimer.current); }; }, []);
+
   var approveCand = useCallback(function (cand) {
     if (!data) return;
     var nl = Object.assign({}, cand, {
       id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
-      addedDate: cand.addedDate || today(), lastChecked: today(), _candidate: undefined, _dupe: undefined, _existingPrice: undefined, _cheaper: undefined
+      addedDate: cand.addedDate || today(), lastChecked: today(), _candidate: undefined
     });
     var newList = dedupInsert(data.listings, nl);
-    save(Object.assign({}, data, { listings: newList }));
     setCandidates(function (prev) { return prev.filter(function (c) { return c !== cand; }); });
+    if (newList === data.listings) { flashNotice("Already on your watchlist at the same or a lower price — nothing added."); return; }
+    save(Object.assign({}, data, { listings: newList }));
     copyListingPhotos([nl]); // keep a copy of its photo (best-effort, in the background)
-  }, [data, save, copyListingPhotos]);
+  }, [data, save, copyListingPhotos, flashNotice]);
 
   // Approve the candidates the Results view shows (its filters applied), or the
   // whole queue when called without a list. Hidden (trim/color) ones stay.
@@ -1218,29 +1060,32 @@ export default function App() {
     var profById = {};
     data.profiles.forEach(function (p) { profById[p.id] = p; });
     var newList = data.listings.slice();
-    var approved = [], added = [];
+    var approved = [], added = [], dupes = 0;
     (Array.isArray(only) ? only : candidates).forEach(function (cand) {
       var p = profById[cand.profileId];
       if (candHideReason(cand, p)) return; // leave trim/color-hidden candidates in the queue
       var nl = Object.assign({}, cand, {
         id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
-        addedDate: cand.addedDate || today(), lastChecked: today(), _candidate: undefined, _dupe: undefined, _existingPrice: undefined, _cheaper: undefined
+        addedDate: cand.addedDate || today(), lastChecked: today(), _candidate: undefined
       });
-      newList = dedupInsert(newList, nl);
+      var next = dedupInsert(newList, nl);
       approved.push(cand);
+      if (next === newList) { dupes++; return; }
+      newList = next;
       added.push(nl);
     });
     save(Object.assign({}, data, { listings: newList }));
     setCandidates(function (prev) { return prev.filter(function (c) { return approved.indexOf(c) === -1; }); });
     copyListingPhotos(added, Math.ceil(added.length / 6)); // their photos, a batch at a time
-  }, [data, candidates, save, copyListingPhotos]);
+    if (dupes) flashNotice(dupes + " already on your watchlist at the same or a lower price — not added again.");
+  }, [data, candidates, save, copyListingPhotos, flashNotice]);
 
   // Skip → move into the persisted skipped list (so it survives reload/sync and
   // can be restored), strip transient flags.
   var dismissCand = useCallback(function (cand) {
     setCandidates(function (prev) { return prev.filter(function (c) { return c !== cand; }); });
     if (!data) return;
-    var entry = Object.assign({}, cand, { _candidate: undefined, _dupe: undefined, _existingPrice: undefined, _cheaper: undefined, skippedAt: today() });
+    var entry = Object.assign({}, cand, { _candidate: undefined, skippedAt: today() });
     save(Object.assign({}, data, { skipped: (data.skipped || []).concat([entry]) }));
   }, [data, save]);
 
@@ -1319,40 +1164,22 @@ export default function App() {
     var nl = Object.assign({}, entry, {
       id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
       addedDate: today(), lastChecked: today(), status: "watch",
-      _candidate: undefined, _dupe: undefined, _existingPrice: undefined, _cheaper: undefined, skippedAt: undefined,
+      _candidate: undefined, skippedAt: undefined,
     });
+    var list = dedupInsert(data.listings, nl);
+    if (list === data.listings) flashNotice("Already on your watchlist at the same or a lower price — nothing added.");
     save(Object.assign({}, data, {
-      listings: dedupInsert(data.listings, nl),
+      listings: list,
       skipped: (data.skipped || []).filter(function (s) { return s !== entry; }),
     }));
-  }, [data, save]);
+  }, [data, save, flashNotice]);
 
-  // Skipped → drop permanently (still won't resurface on sync since the VIN
-  // would just re-enter as a fresh candidate; this only clears the record).
+  // Skipped → drop the record. That also forgets the skip: if a later sync still
+  // finds the car, it comes back as a new candidate.
   var purgeSkipped = useCallback(function (entry) {
     if (!data) return;
     save(Object.assign({}, data, { skipped: (data.skipped || []).filter(function (s) { return s !== entry; }) }));
   }, [data, save]);
-
-  var doImport = useCallback(function () {
-    if (!data || !importText.trim()) return;
-    var profileIds = data.profiles.map(function (p) { return p.id; });
-    var result = parseImport(importText, profileIds, uidRef.current);
-    if (result.listings.length > 0) {
-      var withScores = result.listings.map(function (l) {
-        return Object.assign({}, l, { compositeScore: calcScore(l.scores, data.criteria), _candidate: true });
-      });
-      // Mark dupes
-      withScores.forEach(function (v) {
-        if (v.vin) {
-          var existing = data.listings.find(function (el) { return el.vin && el.vin === v.vin; });
-          if (existing) { v._dupe = true; v._existingPrice = existing.price; v._cheaper = v.price < existing.price; }
-        }
-      });
-      setCandidates(withScores);
-    }
-    setImportResult(result);
-  }, [data, importText]);
 
   var addListing = useCallback(function (l) {
     if (!data) return;
@@ -1360,8 +1187,10 @@ export default function App() {
       id: Date.now().toString(), addedDate: today(), lastChecked: today(), vin: l.vin || "",
       compositeScore: calcScore(l.scores, data.criteria)
     });
-    save(Object.assign({}, data, { listings: dedupInsert(data.listings, nl) }));
-  }, [data, save]);
+    var list = dedupInsert(data.listings, nl);
+    if (list === data.listings) { flashNotice("That VIN is already on your watchlist at the same or a lower price — nothing added."); return; }
+    save(Object.assign({}, data, { listings: list }));
+  }, [data, save, flashNotice]);
 
   var updListing = useCallback(function (id, u) {
     if (!data) return;
@@ -1422,11 +1251,6 @@ export default function App() {
     if (!data) return;
     save(Object.assign({}, data, { listings: data.listings.map(function (l) { return l.reviewPending ? Object.assign({}, l, { reviewPending: false }) : l; }) }));
   }, [data, save]);
-  var markAllChk = useCallback(function () {
-    if (!data) return;
-    var t = today();
-    save(Object.assign({}, data, { listings: data.listings.map(function (l) { return l.status === "watch" ? Object.assign({}, l, { lastChecked: t }) : l; }) }));
-  }, [data, save]);
 
   // Synced watch listings that are gone — confirmed by the sync's VIN lookup
   // (goneAt), or unseen for UNSEEN_SOLD_DAYS+ — offered for one-click archiving to
@@ -1449,7 +1273,7 @@ export default function App() {
   var [confirmReset, setConfirmReset] = useState(false);
   var reset = useCallback(async function () {
     if (!confirmReset) { setConfirmReset(true); return; }
-    await save(freshData(false)); // keep opinionated starters; re-runs the wizard
+    await save(freshData()); // re-runs the wizard
     setCandidates([]);
     setConfirmReset(false);
   }, [save, confirmReset]);
@@ -1465,7 +1289,7 @@ export default function App() {
   if (!data.onboarded) return (<Wizard data={data} onComplete={function (nd) { save(nd); }} />);
 
   var watch = data.listings.filter(function (l) { return l.status === "watch"; });
-  var staleN = watch.filter(function (l) { return daysSince(l.lastChecked) >= STALE_DAYS; }).length;
+  var staleN = watch.filter(needsCheck).length;
   var rej = data.listings.filter(function (l) { return l.status === "rejected"; });
   var sold = data.listings.filter(function (l) { return l.status === "sold"; });
 
@@ -1523,7 +1347,7 @@ export default function App() {
       <main>
         {tab === "Dashboard" && (
           <DashView data={data} watch={watch} rej={rej} sold={sold}
-            staleN={staleN} setTab={setTab} markAllChk={markAllChk} viewProfile={viewProfile} />
+            staleN={staleN} setTab={setTab} viewProfile={viewProfile} />
         )}
         {tab === "Profiles" && <ProfilesTab data={data} save={save} keyOk={keyStatus.valid} scoreModel={scoreModel} refreshFacets={refreshProfileFacets} />}
         {tab === "Criteria" && <CriteriaTab data={data} saveRecalc={saveRecalc} save={save} />}
@@ -1534,7 +1358,6 @@ export default function App() {
             candidates={candidates} approveCand={approveCand}
             approveAll={approveAll} dismissCand={dismissCand} excludeTrim={excludeTrim} showTrim={showTrim} showColor={showColor}
             skipped={data.skipped || []} restoreSkipped={restoreSkipped} watchSkipped={watchSkipped} purgeSkipped={purgeSkipped}
-            importText={importText} setImportText={setImportText} doImport={doImport} importResult={importResult} setImportResult={setImportResult}
             filterProf={filterProf} setFilterProf={setFilterProf}
             doSync={doSync} syncing={syncing} syncMsg={syncMsg} lastSynced={data.lastSynced}
             unseenCount={data.listings.filter(isUnseenOld).length} archiveUnseen={archiveUnseen}
@@ -1551,13 +1374,6 @@ export default function App() {
       </main>
       <footer style={S.footer}>
         <div style={{ display: "flex", justifyContent: "center", gap: 12, alignItems: "center" }}>
-          <button onClick={function () {
-            if (data) {
-              var json = JSON.stringify(data.listings || [], null, 2);
-              setExportJson(json);
-              setTab("Results");
-            }
-          }} style={Object.assign({}, S.resetBtn, { color: "#6b9edd" })}>Export Listings</button>
           <button onClick={function () {
             if (!data) return;
             var r = buildPriceHistoryCsv(data, candidates);
@@ -1580,16 +1396,6 @@ export default function App() {
           <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, fontSize: 12, color: "#8ab4f8", textAlign: "left" }}>
             <span>{exportMsg}</span>
             <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { setExportMsg(""); }}>Dismiss</button>
-          </div>
-        )}
-        {exportJson && (
-          <div style={{ marginTop: 8, padding: 10, background: "#161820", borderRadius: 6, border: "1px solid #1e2028", textAlign: "left", maxHeight: 150, overflowY: "auto" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-              <span style={{ fontSize: 11, color: "#6b6b76" }}>Listings JSON (copy this to back up)</span>
-              <button style={Object.assign({}, S.smBtn, { color: "#888" })} onClick={function () { setExportJson(""); }}>Close</button>
-            </div>
-            <textarea readOnly value={exportJson} style={Object.assign({}, S.ta, { width: "100%", minHeight: 80, fontSize: 10, boxSizing: "border-box" })}
-              onClick={function (e) { e.target.select(); }} />
           </div>
         )}
         {snapsOpen && (
@@ -1617,6 +1423,12 @@ export default function App() {
           <div style={S.undoBar}>
             <span style={{ fontSize: 12, color: "#c8c8d0" }}>Deleted {undoInfo.listing.year} {undoInfo.listing.vehicle}</span>
             <button style={Object.assign({}, S.smBtn, { fontWeight: 600 })} onClick={undoDelete}>Undo</button>
+          </div>
+        )}
+        {notice && !undoInfo && (
+          <div style={S.undoBar} role="status">
+            <span style={{ fontSize: 12, color: "#c8c8d0" }}>{notice}</span>
+            <button style={S.smBtn} onClick={function () { setNotice(""); }}>OK</button>
           </div>
         )}
         {(rawBusy || rawDebug) && (
@@ -1877,7 +1689,7 @@ export function QuotaModal({ data, summary, onClose }) {
   );
 }
 
-function DashView({ data, watch, rej, sold, staleN, setTab, markAllChk, viewProfile }) {
+function DashView({ data, watch, rej, sold, staleN, setTab, viewProfile }) {
   var act = data.profiles.filter(function (p) { return p.active; });
   var settings = getSettings(data);
 
@@ -1910,17 +1722,16 @@ function DashView({ data, watch, rej, sold, staleN, setTab, markAllChk, viewProf
 
       {staleN > 0 && (
         <div style={S.stale}>
-          <div style={S.staleT}>⏰ <strong>{staleN}</strong> listing{staleN > 1 ? "s" : ""} not checked in {STALE_DAYS}+ days</div>
+          <div style={S.staleT}>⏰ <strong>{staleN}</strong> hand-added listing{staleN > 1 ? "s" : ""} not checked in {STALE_DAYS}+ days</div>
           <div style={{ display: "flex", gap: 8 }}>
             <button style={S.secBtn} onClick={function () { setTab("Results"); }}>Review</button>
-            <button style={S.smBtn} onClick={markAllChk}>Mark all fresh</button>
           </div>
         </div>
       )}
 
       <div style={S.card}>
         <h3 style={S.cardH}>Watchlist by Profile</h3>
-        <p style={S.help}>Tap to view filtered watchlist. Import JSON on the Results tab.</p>
+        <p style={S.help}>Tap to view filtered watchlist. New matches come from ↻ Sync on the Results tab.</p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
           {act.map(function (pr) {
             var n = countsByProf[pr.id] || 0;
@@ -1942,7 +1753,7 @@ function DashView({ data, watch, rej, sold, staleN, setTab, markAllChk, viewProf
         {watch.length ? (
           <div>
             {topByRole.map(function (g) {
-              return (<BG key={g.role || "_"} label={g.role ? "Best " + g.role : "Top picks"} items={g.items} budget={settings.budget} tax={settings.taxRate} />);
+              return (<BG key={g.role || "_"} label={g.role ? "Best " + g.role : "Top picks"} items={g.items} budget={settings.budget} />);
             })}
           </div>
         ) : (<p style={S.empty}>No listings yet.</p>)}
@@ -1963,7 +1774,7 @@ function DashView({ data, watch, rej, sold, staleN, setTab, markAllChk, viewProf
   );
 }
 
-function BG({ label, items, budget, tax }) {
+function BG({ label, items, budget }) {
   return (
     <div style={{ marginBottom: 12 }}>
       <div style={S.budL}>{label}</div>
@@ -1971,7 +1782,7 @@ function BG({ label, items, budget, tax }) {
         return (
           <div key={l.id} style={S.budR}>
             <span>{l.year} {l.vehicle} — ${(l.price || 0).toLocaleString()}</span>
-            {budget ? <span style={S.budRem}>→ ${calcRem(l.price, budget, tax).toLocaleString()} left</span> : null}
+            {budget ? <span style={S.budRem}>{budgetDiff(l.price, budget)}</span> : null}
           </div>
         );
       })}
@@ -2117,7 +1928,7 @@ export function SettingsCard({ data, save }) {
             <input type="checkbox" checked={franchiseOnly} onChange={function (e) { setFranchiseOnly(e.target.checked); }} />
             Franchise dealers only <span style={{ color: "#6b6b76" }}>— excludes independent dealers from sync results</span>
           </label>
-          <p style={S.help}>Budget powers the "budget left" math. Franchise-only applies to future syncs; listings already saved from independent dealers stay until you remove them.</p>
+          <p style={S.help}>Cards show each car's price against the budget. Franchise-only applies to future syncs; listings already saved from independent dealers stay until you remove them.</p>
           <button style={Object.assign({}, S.priBtn, { marginTop: 6 })} onClick={saveAll}>Save settings</button>
         </div>
       )}
@@ -3061,12 +2872,11 @@ function Wizard({ data, onComplete }) {
   var [budget, setBudget] = useState(String(s.budget || ""));
   var [home, setHome] = useState(s.homeBase || null);
   var [keepProfiles, setKeepProfiles] = useState(true);
-  var startReqs = (data.globalReqs && data.globalReqs.length) ? data.globalReqs : DEFAULT_REQS;
-  var [reqs, setReqs] = useState(startReqs.map(function (r) { return Object.assign({}, r); }));
+  var [reqs, setReqs] = useState((data.globalReqs || []).map(function (r) { return Object.assign({}, r); }));
 
   function toggleReq(id) { setReqs(function (prev) { return prev.map(function (r) { return r.id === id ? Object.assign({}, r, { active: !r.active }) : r; }); }); }
 
-  var starterProfiles = data.profiles || [];
+  var starterProfiles = data.profiles || []; // empty for a new account; a re-run has the user's own
 
   function finish() {
     if (home && home.lat == null) Promise.resolve().then(loadLocations).catch(function () { return null; }).then(finishWith);
@@ -3106,14 +2916,14 @@ function Wizard({ data, onComplete }) {
           {step === 0 && (
             <div>
               <p style={lbl}>This app tracks used-car listings from dealer inventory nationwide, scores them against your criteria (optionally with AI), and keeps a watchlist with price-change and still-available tracking.</p>
-              <p style={lbl}>A few quick questions to tailor it to you. <span style={b}>Everything here is editable later</span> — budget and home base on the Settings tab, cars and rules on the Profiles tab — and the starter cars and rules below are opinionated defaults (a Durham-based, two-car, mostly hybrid/EV search) you can keep, change, or clear.</p>
+              <p style={lbl}>A few quick questions to tailor it to you. <span style={b}>Everything here is editable later</span> — budget and home base on the Settings tab, cars and rules on the Profiles tab — and the starter rules below are just common-sense defaults you can keep, change, or clear.</p>
             </div>
           )}
           {step === 1 && (
             <div>
               <p style={lbl}>What's your total budget, and where do you live? Searches are <span style={b}>nationwide</span>; your home base is where distances are measured from, so far-off cars get flagged "ship or fly".</p>
               <div style={S.grid2}>
-                <div style={S.field}><label style={S.lbl}>Total budget ($)</label><input style={S.inp} type="number" value={budget} onChange={function (e) { setBudget(e.target.value); }} placeholder="40000" /></div>
+                <div style={S.field}><label style={S.lbl}>Total budget ($)</label><input style={S.inp} type="number" value={budget} onChange={function (e) { setBudget(e.target.value); }} placeholder="30000" /></div>
               </div>
               <div style={{ marginTop: 10 }}>
                 <label style={S.lbl}>Home base</label>
@@ -3124,15 +2934,21 @@ function Wizard({ data, onComplete }) {
           {step === 2 && (
             <div>
               <p style={lbl}>You can shop for one car or several. Each "profile" is one vehicle you're hunting (make/model/years/price). Profiles can have an optional <span style={b}>category</span> (e.g. "SUV", "Daily") to group your watchlist — single-car shoppers can ignore it.</p>
-              <p style={lbl}>The starter set (your current profiles): <span style={b}>{starterProfiles.map(function (p) { return p.name; }).join(", ") || "none"}</span>.</p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <button style={Object.assign({}, S.secBtn, keepProfiles ? { borderColor: "#2563eb", color: "#fff" } : {})} onClick={function () { setKeepProfiles(true); }}>
-                  <Check on={keepProfiles} />Keep the {starterProfiles.length} starter profile{starterProfiles.length === 1 ? "" : "s"} (edit later)
-                </button>
-                <button style={Object.assign({}, S.secBtn, !keepProfiles ? { borderColor: "#2563eb", color: "#fff" } : {})} onClick={function () { setKeepProfiles(false); }}>
-                  <Check on={!keepProfiles} />Start blank — I'll add my own
-                </button>
-              </div>
+              {starterProfiles.length ? (
+                <div>
+                  <p style={lbl}>Your current profiles: <span style={b}>{starterProfiles.map(function (p) { return p.name; }).join(", ")}</span>.</p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <button style={Object.assign({}, S.secBtn, keepProfiles ? { borderColor: "#2563eb", color: "#fff" } : {})} onClick={function () { setKeepProfiles(true); }}>
+                      <Check on={keepProfiles} />Keep my {starterProfiles.length} profile{starterProfiles.length === 1 ? "" : "s"}
+                    </button>
+                    <button style={Object.assign({}, S.secBtn, !keepProfiles ? { borderColor: "#2563eb", color: "#fff" } : {})} onClick={function () { setKeepProfiles(false); }}>
+                      <Check on={!keepProfiles} />Clear them — I'll start over
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p style={lbl}>After setup, add your first car on the <span style={b}>Profiles</span> tab with <span style={b}>+ Add</span> — a short guided step that looks at what's on the market for it and suggests a price and mileage cap.</p>
+              )}
             </div>
           )}
           {step === 3 && (
@@ -3153,7 +2969,7 @@ function Wizard({ data, onComplete }) {
               <p style={lbl}>All set. Here's the summary:</p>
               <p style={lbl}>• Budget: <span style={b}>${(parseInt(budget) || 0).toLocaleString()}</span><br />
                 • Home base: <span style={b}>{home ? (home.n || home.z) : "not set"}</span><br />
-                • Profiles: <span style={b}>{keepProfiles ? starterProfiles.length + " starter" : "starting blank"}</span><br />
+                • Profiles: <span style={b}>{keepProfiles && starterProfiles.length ? starterProfiles.length + " kept" : "none yet — add one on the Profiles tab"}</span><br />
                 • Active rules: <span style={b}>{reqs.filter(function (r) { return r.active; }).length}</span></p>
               <p style={lbl}>To enable AI scoring, add your Anthropic API key in Settings afterward.</p>
             </div>
@@ -3906,7 +3722,7 @@ function HelpTab() {
 
       <div style={S.card}>
         <h3 style={S.cardH}>Tabs</h3>
-        <p style={item}><span style={b}>Dashboard</span> — at-a-glance counts, top picks per category, and a heads-up when watched listings are due for a re-check.</p>
+        <p style={item}><span style={b}>Dashboard</span> — at-a-glance counts, top picks per category, and a heads-up when listings you added by hand are due for a re-check.</p>
         <p style={item}><span style={b}>Profiles</span> — add/edit/enable the vehicles you're searching for. Each active profile is one nationwide search on sync; its card shows how many cars it matches.</p>
         <p style={item}><span style={b}>Criteria</span> — the weighted factors (price, mileage, condition, etc.) behind each listing's composite score. Editing weights re-scores everything automatically.</p>
         <p style={item}><span style={b}>Results</span> — sync, review candidates, and manage your watchlist. This is where you'll spend most of your time.</p>
@@ -3926,7 +3742,7 @@ function HelpTab() {
         <h3 style={S.cardH}>For review vs. your watchlist</h3>
         <p style={li}>The Results tab keeps "needs a look" separate from "saved": <span style={b}>Candidates</span> (brand-new matches, full cards) and <span style={b}>Updated — review</span> (saved listings whose price changed this sync, shown as compact cards with a link) sit up top. Your <span style={b}>Watchlist</span> below is the stuff you've already saved and reviewed.</p>
         <p style={item}><span style={b}>✓ Add to Watchlist</span> (or <span style={b}>Approve All</span>) moves a candidate to the watchlist; <span style={b}>Skip</span> sets it aside (collapsible <span style={b}>Skipped</span> list; won't reappear on future syncs, and is never auto-scored). On an Updated card, <span style={b}>✓ Reviewed</span> returns it to the watchlist; <span style={b}>Reject</span> moves it to Rejected.</p>
-        <p style={li}>From Skipped you can <span style={b}>Restore to queue</span>, send straight to <span style={b}>Watchlist</span>, or <span style={b}>Remove</span> the record.</p>
+        <p style={li}>From Skipped you can <span style={b}>Restore to queue</span>, send straight to <span style={b}>Watchlist</span>, or <span style={b}>Remove</span> the record. Removing also forgets the skip, so a car that's still for sale comes back as a candidate on a later sync.</p>
         <p style={item}><span style={b}>Trims &amp; drivetrains</span> (Profiles tab → Edit): chips for the trims this profile's matches actually come in (MarketCheck's full trim names, like "Limited XT" or "SEL Convenience HEV AWD"), with counts — measured with the colors, at no extra cost. Tap a trim to ★ prefer it (a floor for AI scoring — richer trims still count as a plus), tap again to hide it, again to reset. When a profile's cars come in more than one drivetrain, those get chips too (MarketCheck calls AWD "4WD"). Hiding happens on your device, so a trim nobody has seen yet still shows. Hidden candidates land under <span style={b}>Hidden by your … filters</span> — tap <span style={b}>🚫 Exclude trim</span> on a candidate to hide its trim, or <span style={b}>✓ Show this trim</span> in the hidden list to bring it back.</p>
       </div>
 
@@ -3952,20 +3768,20 @@ function HelpTab() {
         <p style={item}><span style={b}>Notes</span> — every listing card has <span style={b}>📝 Add notes</span> for free-form notes in Markdown (headings, <span style={b}>**bold**</span>, lists, <span style={b}>- [ ]</span> checklists, links), up to 4,000 characters — about a page. They're separate from the rejection reason and from the price-change log sync keeps. AI scoring reads them as first-hand information about that car (a test drive, a dealer call) whenever it next scores that listing. Editing notes never triggers or flags a re-score — use ✨ Re-score on the card when a note matters.</p>
         <p style={item}><span style={b}>Colors</span> — each profile's editor lists the colors its matches actually come in, with counts (measured when you save the profile with new search filters — one MarketCheck call — and kept current by every full refresh at no extra cost). Tap a color to hide those cars; "Include cars with no color listed" (on by default) keeps listings MarketCheck has no color for. Hiding happens on your device, so a color you didn't expect still shows up. When a listing has no color, sync looks it up from the car's VIN (its factory build data — one MarketCheck call per car, at most {DECODE_MAX} a sync; the answer is kept for 90 days, so a car is normally looked up once); those colors are marked ⓥ. Hidden candidates sit under "Hidden by your trim, drivetrain or color filters", one tap to show them again. Settings sets which colors new profiles start out hiding.</p>
         <p style={item}><span style={b}>Tags</span> — tap <span style={b}>+ tag</span> on a watchlist card to label it however you like ("called dealer", "test drive booked", "waiting on Carfax"). Tags you've used before are suggested, so spellings stay consistent. Filter by tag on Results and Compare (or "No tags" to see what's untouched). AI scoring sees them too; like notes, editing tags never flags a re-score.</p>
-        <p style={item}><span style={b}>Statuses</span>: Watchlist (active), Rejected (with a reason, restorable), and <span style={b}>Sold</span> (no longer available — archived, restorable). Stale watched listings surface under "Needs check" — confirm with <span style={b}>Still avail</span>.</p>
+        <p style={item}><span style={b}>Statuses</span>: Watchlist (active), Rejected (with a reason, restorable), and <span style={b}>Sold</span> (no longer available — archived, restorable). Synced cars are re-confirmed by every sync ("Last seen in sync"). Cars you added by hand with <span style={b}>+ Add</span> aren't, so after {STALE_DAYS} days they move under "Needs check" — check the dealer, then tap <span style={b}>Still avail</span> (or Sold).</p>
+        <p style={item}><span style={b}>Budget</span>: each card says how far its asking price is under or over your budget (Settings) — before tax and fees.</p>
         <p style={item}><span style={b}>Title note</span>: "✓ Carfax clean title" means confirmed; "ⓘ Title not Carfax-confirmed" just means the dealer didn't state it (verify yourself) — it's not a salvage flag and doesn't affect the score.</p>
       </div>
 
       <div style={S.card}>
         <h3 style={S.cardH}>Setup, backup &amp; reset</h3>
-        <p style={item}><span style={b}>Setup wizard</span> (footer) re-runs the guided setup (budget, home base, profiles, rules). Listings are kept; finishing it replaces the budget, home base, tagline and rules (and the profiles, if you start blank). Budget, home base, salt-belt handling, and tagline also live on the <span style={b}>Settings</span> tab.</p>
-        <p style={item}><span style={b}>Export Listings</span> (footer) dumps your listings as JSON to copy and back up. <span style={b}>Import</span> (Results) accepts the same shape.</p>
+        <p style={item}><span style={b}>Setup wizard</span> (footer) re-runs the guided setup (budget, home base, profiles, rules). Listings are kept; finishing it replaces the budget, home base, tagline and rules (and clears the profiles, if you choose to). Budget, home base, salt-belt handling, and tagline also live on the <span style={b}>Settings</span> tab.</p>
         <p style={item}><span style={b}>Export prices (CSV)</span> (footer) downloads every recorded price observation across <span style={b}>all</span> listings — watchlist, rejected, sold, skipped, and candidates — one row per price/date, with year/trim/mileage/dealer-type/CPO/status. Built for offline pricing analysis (e.g. uploading to Claude to reason about model/trim/mileage pricing, including private listings you're evaluating elsewhere).</p>
         <p style={item}><span style={b}>Demo</span> — <span style={b}>/?demo</span> (or "Try the demo" on the sign-in screen) opens a public demo with no sign-in, over a curated, anonymized slice of the owner's data (bundled with the app): edits stay in that tab, everything that would call MarketCheck or Claude is simulated and paced like the real call — ↻ Sync, ✨ Score (modeled on similar cars already scored), the wizard's Explore and suggestions, a profile's AI price baseline, and the Price tab's live market and AI verdict — while a pretend MarketCheck quota counts down. No real call is ever made; Reset in the banner starts over. Admins can also publish their current data with <span style={b}>Publish demo</span> (footer; keys removed, unchecked notes and typed reject reasons cleared) — that copy opens at <span style={b}>/?demo=live</span>.</p>
         <p style={item}><span style={b}>Keys</span> — your Anthropic key and MarketCheck keys (Settings tab) are stored encrypted on the server and never sent back to the browser; only labels and the last 4 characters show. Keys saved by an older version (inside your synced settings) move there on their own the next time you open the app.</p>
         <p style={item}><span style={b}>Access</span> — the app is invite-only: there's no sign-up. Admins invite people from the <span style={b}>Admin</span> tab, and set there who else is an admin and whose account gets the daily background sync.</p>
         <p style={item}><span style={b}>Backups</span> (footer) lists automatic server-side snapshots of your whole app state (up to 30, at most one per hour of activity) — restore any of them in two taps; the pre-restore state is snapshotted too, so a restore is undoable.</p>
-        <p style={li}>Your data syncs to your account, so signing in elsewhere loads the same watchlist. With the app open on two devices, a save on one shows up on the other within seconds (it reloads and says so). <span style={b}>Reset All Data</span> (footer) replaces your data with the starter profiles and rules and restarts the wizard (your Anthropic key and the automatic backups are kept).</p>
+        <p style={li}>Your data syncs to your account, so signing in elsewhere loads the same watchlist. With the app open on two devices, a save on one shows up on the other within seconds (it reloads and says so). <span style={b}>Reset All Data</span> (footer) starts over with no profiles or listings and the starter rules, and restarts the wizard (your Anthropic key and the automatic backups are kept).</p>
       </div>
     </div>
   );
@@ -3976,11 +3792,9 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   ackReview, ackAllReviews,
   candidates, approveCand, approveAll, dismissCand, excludeTrim, showTrim, showColor,
   skipped, restoreSkipped, watchSkipped, purgeSkipped,
-  importText, setImportText, doImport, importResult, setImportResult,
   filterProf, setFilterProf, doSync, syncing, syncMsg, lastSynced, unseenCount, archiveUnseen,
   keyStatus, autoScore, setAutoScore, scoreBusy, scoreMsg, scoreItems, scoringActive, scoreModel, setScoreModel, goSettings, mcKeys }) {
   var [showAdd, setShowAdd] = useState(false);
-  var [showImport, setShowImport] = useState(false);
   var [filterRole, setFilterRole] = useState("all");
   var [filterDealer, setFilterDealer] = useState("all");
   var [filterTag, setFilterTag] = useState("all");
@@ -4008,7 +3822,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
       if (filterRole !== "all") {
         var pr = data.profiles.find(function (p) { return p.id === l.profileId; });
         if (pr && pr.role !== filterRole) return false;
-        if (!pr && filterRole !== "?") return false;
+        if (!pr) return false;
       }
       if (filterDealer === DEALER_CPO) { if (!isCpo(l)) return false; }
       else if (filterDealer !== "all" && (l.dealerType || "") !== filterDealer) return false;
@@ -4023,8 +3837,8 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
   // review, separate from the rest of the watchlist, until acknowledged.
   var updatedW = applyFilter(watchRaw.filter(function (l) { return l.reviewPending; })).slice().sort(sortFn);
   var watchFiltered = applyFilter(watchRaw.filter(function (l) { return !l.reviewPending; })).slice().sort(sortFn);
-  var staleW = watchFiltered.filter(function (l) { return daysSince(l.lastChecked) >= STALE_DAYS; });
-  var freshW = watchFiltered.filter(function (l) { return daysSince(l.lastChecked) < STALE_DAYS; });
+  var staleW = watchFiltered.filter(needsCheck);
+  var freshW = watchFiltered.filter(function (l) { return !needsCheck(l); });
   var rejL = applyFilter(data.listings.filter(function (l) { return l.status === "rejected"; })).slice().sort(sortFn);
   var soldL = applyFilter(data.listings.filter(function (l) { return l.status === "sold"; })).slice().sort(sortFn);
 
@@ -4084,8 +3898,7 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
         <h2 style={S.secT}>Listings</h2>
         <div style={{ display: "flex", gap: 6 }}>
           <button data-tour="sync" style={Object.assign({}, S.secBtn, syncing ? { opacity: 0.6 } : {})} disabled={syncing} onClick={function () { var w = DEMO ? null : syncWarning(data, null, mcKeys); if (!w || window.confirm(w)) doSync(); }}>{syncing ? "Syncing…" : "↻ Sync"}</button>
-          <button style={S.secBtn} onClick={function () { setShowImport(!showImport); setShowAdd(false); }}>{showImport ? "Close" : "Import"}</button>
-          <button style={S.priBtn} onClick={function () { setShowAdd(!showAdd); setShowImport(false); setEdListing(null); }}>{showAdd ? "Cancel" : "+ Add"}</button>
+          <button style={S.priBtn} onClick={function () { setShowAdd(!showAdd); setEdListing(null); }}>{showAdd ? "Cancel" : "+ Add"}</button>
         </div>
       </div>
 
@@ -4253,39 +4066,6 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
         </div>
       )}
 
-      {/* Import */}
-      {showImport && (
-        <div style={S.card}>
-          <h3 style={S.cardH}>Import from Claude</h3>
-          <p style={S.help}>Paste JSON from a Claude chat session. Array of listing objects. Required: vehicle, year, price, profileId.</p>
-          <p style={S.help}>profileIds: {data.profiles.map(function (p) { return p.id; }).join(", ")}</p>
-          <textarea style={Object.assign({}, S.ta, { width: "100%", minHeight: 100, marginTop: 8, boxSizing: "border-box" })} value={importText}
-            onChange={function (e) { setImportText(e.target.value); }} placeholder={'[\n  {"vehicle":"RAV4 Hybrid XLE","year":2021,"price":23000,"profileId":"rav4-hybrid",...}\n]'} />
-          <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
-            <button style={S.priBtn} onClick={doImport}>Validate & Preview</button>
-            {importResult && importResult.errors.length === 0 && importResult.listings.length > 0 && (
-              <span style={{ fontSize: 12, color: "#2d8659" }}>✓ {importResult.listings.length} valid — review candidates above</span>
-            )}
-          </div>
-          {importResult && importResult.errors.length > 0 && (
-            <div style={{ marginTop: 8, padding: 10, background: "#1a1012", borderRadius: 6, border: "1px solid #3d1818" }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: "#c44", marginBottom: 4 }}>Validation Errors ({importResult.errors.length})</div>
-              {importResult.errors.slice(0, 10).map(function (e, i) {
-                return (<div key={i} style={{ fontSize: 11, color: "#e88", padding: "2px 0" }}>• {e}</div>);
-              })}
-              {importResult.errors.length > 10 && <div style={{ fontSize: 11, color: "#888" }}>...and {importResult.errors.length - 10} more</div>}
-            </div>
-          )}
-          {importResult && importResult.warnings.length > 0 && (
-            <div style={{ marginTop: 6 }}>
-              {importResult.warnings.map(function (w, i) {
-                return (<div key={i} style={{ fontSize: 11, color: "#e8c96a" }}>⚠ {w}</div>);
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
       {showAdd && <LForm profiles={data.profiles} criteria={data.criteria} onSave={function (l) { addListing(l); setShowAdd(false); }} />}
 
       {staleW.length > 0 && (
@@ -4331,8 +4111,8 @@ function ResultsTab({ data, addListing, updListing, delListing, edListing, setEd
         </div>
       )}
 
-      {!data.listings.length && !candidates.length && !showAdd && !showImport && (
-        <div style={S.card}><p style={S.empty}>No listings yet. Use Import above, or + Add to enter one manually.</p></div>
+      {!data.listings.length && !candidates.length && !showAdd && (
+        <div style={S.card}><p style={S.empty}>No listings yet. Tap ↻ Sync to pull matches for your active profiles, or + Add to enter one by hand.</p></div>
       )}
     </div>
   );
@@ -4774,11 +4554,6 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
           {cand.trim && <span style={S.trimB}>{cand.trim}</span>}
           {isCpo(cand) && <span style={S.cpoB}>✓ CPO</span>}
           {prof && <RoleBadge role={prof.role} extra={{ marginLeft: 6 }} />}
-          {cand._dupe && (
-            <span style={{ fontSize: 10, color: cand._cheaper ? "#2d8659" : "#888", marginLeft: 6 }}>
-              {cand._cheaper ? "↓ cheaper than existing ($" + cand._existingPrice.toLocaleString() + ")" : "≥ existing ($" + cand._existingPrice.toLocaleString() + ")"}
-            </span>
-          )}
         </div>
         {cand.compositeScore > 0 && <span style={{ fontSize: 18, fontWeight: 700, color: scoreColor }}>{cand.compositeScore}</span>}
       </div>
@@ -4791,7 +4566,6 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
         <DistBadge l={cand} data={data} />
         <FreshBadge l={cand} />
         {cand.dom != null && <span title="Days listed at this dealer (current listing)">{cand.dom}d listed</span>}
-        {cand.dealRating && <span>Deal: {cand.dealRating}</span>}
         <TitleNote listing={cand} />
       </div>
       {cand.notes && <div style={{ fontSize: 12, color: "#6b6b76", fontStyle: "italic", marginBottom: 6 }}>{cand.notes}</div>}
@@ -4810,7 +4584,7 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
       {(function () {
         var st = getSettings(data);
         if (!st.budget) return null;
-        return (<div style={{ fontSize: 12, color: "#6b9edd", marginBottom: 8 }}>Budget left if bought: <strong>${calcRem(cand.price, st.budget, st.taxRate).toLocaleString()}</strong></div>);
+        return (<div style={{ fontSize: 12, color: "#6b9edd", marginBottom: 8 }}>{budgetDiff(cand.price, st.budget)}</div>);
       })()}
       <AiBox listing={cand} criteria={data.criteria} />
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -4830,7 +4604,7 @@ function CandCard({ cand, onApprove, onDismiss, data, onScore, scoreBusy, keyOk,
 function LForm({ profiles, criteria, onSave, initial }) {
   var [f, setF] = useState(initial || {
     profileId: (profiles[0] || {}).id || "", vehicle: "", year: "", trim: "", price: "", mileage: "", dealer: "", dealerType: "franchise",
-    location: "", state: "", color: "", vin: "", link: "", dealRating: "", notes: "", status: "watch", scores: {}, rejectReason: ""
+    location: "", state: "", color: "", vin: "", link: "", notes: "", status: "watch", scores: {}, rejectReason: ""
   });
   function set(k, v) { setF(function (prev) { return Object.assign({}, prev, { [k]: v }); }); }
   var valid = f.vehicle && f.year && f.price;
@@ -4844,10 +4618,10 @@ function LForm({ profiles, criteria, onSave, initial }) {
       <div style={S.grid2}>
         <div style={S.field}><label style={S.lbl}>Profile</label>
           <select style={S.inp} value={f.profileId} onChange={function (e) { set("profileId", e.target.value); }}>
-            {profiles.map(function (p) { return (<option key={p.id} value={p.id}>{p.name} ({p.role})</option>); })}
+            {profiles.map(function (p) { return (<option key={p.id} value={p.id}>{p.name}{p.role ? " (" + p.role + ")" : ""}</option>); })}
           </select></div>
         {[["vehicle", "Vehicle *"], ["year", "Year *"], ["trim", "Trim"], ["price", "Price *"], ["mileage", "Mileage"], ["dealer", "Dealer"],
-          ["location", "City"], ["state", "State"], ["color", "Color"], ["vin", "VIN"], ["dealRating", "Deal"]
+          ["location", "City"], ["state", "State"], ["color", "Color"], ["vin", "VIN"]
         ].map(function (pair) {
           return (<div key={pair[0]} style={S.field}><label style={S.lbl}>{pair[1]}</label><input style={S.inp} value={f[pair[0]] || ""} onChange={function (e) { set(pair[0], e.target.value); }} /></div>);
         })}
@@ -4954,7 +4728,7 @@ function ListingModal({ listing, ctx, onClose }) {
   }, [onClose]);
   var l = listing;
   var prof = (ctx.data.profiles || []).find(function (p) { return p.id === l.profileId; }) || null;
-  var props = cardProps(l, ctx, daysSince(l.lastChecked) >= STALE_DAYS, scoreIsStale(l, scoreInputHash(ctx.data, prof)));
+  var props = cardProps(l, ctx, needsCheck(l), scoreIsStale(l, scoreInputHash(ctx.data, prof)));
   delete props.key;
   return (
     <div onMouseDown={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.62)", zIndex: 200, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "6vh 12px 12px", overflowY: "auto" }}>
@@ -4974,7 +4748,6 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
   var prof = data.profiles.find(function (p) { return p.id === l.profileId; });
   var profRole = prof ? prof.role : "";
   var st = getSettings(data);
-  var rem = calcRem(l.price || 0, st.budget, st.taxRate);
   var salt = isSalt(l.state);
   var age = daysSince(l.lastChecked);
   var [showReject, setShowReject] = useState(false);
@@ -5007,7 +4780,6 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
         <DistBadge l={l} data={data} />
         <FreshBadge l={l} />
         {l.dom != null && <span title="Days listed at this dealer (current listing)">{l.dom}d listed</span>}
-        {l.dealRating && <span>Deal: {l.dealRating}</span>}
         {l.vin && <span style={{ fontFamily: "monospace", fontSize: 11 }}>VIN: …{l.vin.slice(-6)}</span>}
         <TitleNote listing={l} />
       </div>
@@ -5028,8 +4800,8 @@ function LCard({ listing, data, editing, onEdit, onUpd, onStatus, onDel, onChk, 
           </a>
         );
       })()}
-      {st.budget ? <div style={{ fontSize: 12, color: "#6b9edd", marginBottom: 4 }}>Budget left if bought: <strong>${rem.toLocaleString()}</strong></div> : null}
-      {l.lastChecked && <div style={{ fontSize: 11, color: "#555" }}>Checked: {l.lastChecked}</div>}
+      {st.budget ? <div style={{ fontSize: 12, color: "#6b9edd", marginBottom: 4 }}>{budgetDiff(l.price, st.budget)}</div> : null}
+      {!l.source && l.lastChecked && <div style={{ fontSize: 11, color: "#555" }}>Checked: {l.lastChecked}</div>}
       {l.source === "marketcheck" && l.lastSeen && (function () {
         // Don't cry "may be sold" over a single missed/partial sync (the free
         // MarketCheck tier often returns partial pages). Only warn once it's been
@@ -5112,17 +4884,12 @@ var S = {
   secBtn: { background: "#1e2028", color: "#c8c8d0", border: "1px solid #2a2d38", borderRadius: 6, padding: "8px 16px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" },
   smBtn: { background: "none", border: "none", color: "#6b9edd", fontSize: 12, cursor: "pointer", padding: "4px 8px", fontFamily: "inherit" },
   searchBtn: { background: "#1a2038", color: "#8ab4f8", border: "1px solid #2a3058", borderRadius: 6, padding: "6px 12px", fontSize: 12, cursor: "pointer", fontFamily: "inherit" },
-  acts: { display: "flex", gap: 8, flexWrap: "wrap" },
   help: { fontSize: 12, color: "#6b6b76", lineHeight: 1.5, margin: "6px 0" },
   empty: { fontSize: 13, color: "#555", textAlign: "center", padding: "16px 0" },
-  pill: { display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: "1px solid #1e2028", flexWrap: "wrap" },
-  pillN: { fontWeight: 500, color: "#e4e4e7", fontSize: 14 },
-  pillD: { fontSize: 12, color: "#6b6b76" },
   role: { fontSize: 10, fontWeight: 600, color: "#fff", padding: "2px 8px", borderRadius: 4, textTransform: "uppercase", letterSpacing: "0.05em" },
   profH: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 },
   profHL: { display: "flex", alignItems: "center", gap: 8 },
   profA: { display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" },
-  inlIn: { background: "#1a1c22", border: "1px solid #2a2d38", borderRadius: 4, color: "#e4e4e7", padding: "4px 8px", fontSize: 14, fontFamily: "inherit" },
   grid2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 8 },
   field: { display: "flex", flexDirection: "column", gap: 3 },
   lbl: { fontSize: 11, color: "#6b6b76", textTransform: "uppercase", letterSpacing: "0.04em" },
