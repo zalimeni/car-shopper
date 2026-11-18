@@ -216,7 +216,7 @@ function SignIn() {
   // On success onAuthStateChange swaps this screen for the app.
   async function signInWithLink(text) {
     const parsed = parseSignInLink(text);
-    if (!parsed) { setError("That doesn't look like the sign-in link from the email. In Mail, long-press the link and choose Copy Link."); setStatus("error"); return; }
+    if (!parsed) { setError("That doesn't look like the sign-in link from the email. Copy the link itself (on a phone, press and hold it, then Copy Link; on a computer, right-click it, then Copy Link)."); setStatus("error"); return; }
     if (parsed.error) { setError("This sign-in link can only be used in the browser that requested it. Send a new email from here."); setStatus("error"); return; }
     setStatus("verifying");
     setError("");
@@ -247,8 +247,8 @@ function SignIn() {
             <p style={S.sent}>
               {email ? <span>We emailed <strong>{email}</strong> a sign-in link. </span> : null}
               {standalone
-                ? (email ? "Don't tap it — that signs in Safari, not this app. " : "") + "In Mail, long-press the sign-in link, choose Copy Link, and paste it here:"
-                : (email ? "Tap it to sign in, or copy it (long-press → Copy Link) and paste it here:" : "In your sign-in email, long-press the link, choose Copy Link, and paste it here:")}
+                ? (email ? "Don't open it — it would sign in your browser, not this installed app. " : "") + "Copy the sign-in link from the email (press and hold it, then Copy Link) and paste it here:"
+                : (email ? "Open it to sign in, or copy the link and paste it here:" : "Copy the link from your sign-in email and paste it here:")}
             </p>
             <form onSubmit={(e) => { e.preventDefault(); signInWithLink(link); }}>
               <input
@@ -317,7 +317,7 @@ export function isNoAccount(err) {
   return code === "otp_disabled" || code === "signup_disabled" || code === "user_not_found" || /signups? not allowed|user not found/i.test(msg);
 }
 
-// Running as an installed Home Screen web app (not a Safari tab)?
+// Running as an installed web app (not a browser tab)?
 function isStandalone() {
   try {
     return window.navigator.standalone === true || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);

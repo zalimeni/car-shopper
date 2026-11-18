@@ -83,7 +83,7 @@ describe("sign-in: tap the link or paste it", () => {
     const box = await sendTo("me@x.com");
     fireEvent.change(box, { target: { value: "hello" } });
     fireEvent.click(screen.getByText("Sign in with link"));
-    expect(await screen.findByText(/long-press the link and choose Copy Link/)).toBeTruthy();
+    expect(await screen.findByText(/Copy the link itself/)).toBeTruthy();
     expect(calls.verify.length).toBe(0);
   });
   it("a used or expired link explains that opening it uses it up", async () => {
