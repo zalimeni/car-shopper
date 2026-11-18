@@ -23,7 +23,7 @@ const data = {
     { vin: "B", year: 2021, vehicle: "Toyota RAV4", trim: "LE", mileage: 45000, price: 22500, status: "rejected", rejectReason: "miles", profileId: "p1" },
     { vin: "C", year: 2020, vehicle: "Toyota RAV4", trim: "XLE", mileage: 52000, price: 21000, status: "sold", profileId: "p1" },
   ],
-  skipped: [], pendingCandidates: [],
+  skipped: [],
 };
 
 describe("PriceCheckTab renders + runs without crashing", () => {

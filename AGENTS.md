@@ -31,9 +31,8 @@ over architecture.
   both called only from `api/`. Keys never reach the browser: the user's own
   keys live encrypted in `user_api_keys` (`api/_keys.js` is the only place that
   decrypts them), the shared `MARKETCHECK_API_KEY` in the server env. The
-  browser sees labels + last 4 only. (Blobs from before the vault may still
-  hold `settings.marketcheckKeys`; the app, the cron and a backup restore move
-  them into the vault and drop the blob's copy.)
+  browser sees labels + last 4 only. (Only the demo keeps a pretend key in
+  `settings.marketcheckKeys`.)
 - **Deploy:** Vercel (`vercel.json`). CI for DB migrations via GitHub Actions.
 - Node version: **24** (`.nvmrc`, `package.json` engines, CI).
 
@@ -56,7 +55,7 @@ over architecture.
 | `src/mfa.js` | Two-factor (TOTP) client: pure `assurance(session)` / `needsStepUp` (aal from the session's own JWT + `user.factors` — no network), `qrSrc`; wrappers over `supabase.auth.mfa.*` (`listTotp`, `startEnroll`, `confirmEnroll`, `removeFactor`, `verifyStepUp` — tries each app). UI: `MfaCard` (Settings) in `App.jsx`. Pure parts tested. |
 | `src/main.jsx`, `src/index.css` | Entry point + global styles. |
 | `src/locations.js` | Home-base picker logic: parse/search `public/locations.txt` (city or ZIP suggestions with coordinates). Pure, tested. |
-| `src/syncPlan.js` | **What a sync does and costs.** Per active profile: a full refresh (due after 3 days, an edit, or a manual Sync) or a new-listings pass; then a VIN lookup of watchlist cars the searches didn't return (the only "gone" signal); then a NeoVIN VIN decode for cars with no color (≤10 a sync; answers remembered in `settings.mcColors` for 90 days, newest 1,000). `planSync`, `runSync` (orchestration with an injected step runner — shared by the browser and the scheduled sync), `estimateCost` (incl. the decodes: `colorDecodes`), `nextProfileMeta` (`settings.mcProfiles`). Pure, tested. |
+| `src/syncPlan.js` | **What a sync does and costs.** Per active profile: a full refresh (due after 3 days, an edit, or a manual Sync) or a new-listings pass; then a VIN lookup of watchlist cars the searches didn't return (the only thing that stamps `goneAt`; the 14-day unseen archive offer is the other, click-only, signal); then a NeoVIN VIN decode for cars with no color (≤10 a sync; answers remembered in `settings.mcColors` for 90 days, newest 1,000). `planSync`, `runSync` (orchestration with an injected step runner — shared by the browser and the scheduled sync), `estimateCost` (incl. the decodes: `colorDecodes`), `nextProfileMeta` (`settings.mcProfiles`). Pure, tested. |
 | `src/queryPlan.js` | Profile field → MarketCheck value helpers (`mapPowertrain`, `parseYears`). Profiles are no longer merged: nationwide, merging widens filters. |
 | `src/regions.js` | Salt-belt states and the `state=` list a search sends (salt belt excluded, or every state when flagging). Pure. |
 | `src/airports.js`, `src/travel.js` | Major-airport list + `travelFacts`: miles from the home base ("ship or fly" past 500), nearest airport ("fly-in friendly" within 50 mi), salt-belt flag. Flags only — never filters. Used by cards and AI scoring. Pure, tested. |
@@ -76,8 +75,8 @@ over architecture.
 | `api/allowlist.js`, `src/admin.js` | Admin tab (admins only, `allowed_emails.is_admin`): list / add / remove emails, send an invite (the only way to get an account), toggle Admin / Daily sync per row. |
 | `api/me.js` | Allowlist + admin + key-status check for the UI (key metadata only). |
 | `api/_scoring.js` | Scoring prompt/schema/coercion + model allowlist (`resolveScoreModel`, over `src/scoreModels.js`). |
-| `api/_crypto.js` | AES-256-GCM for the key vault: v2 = HKDF key + AAD `<user_id>:<provider>`, `v2:` prefix; reads legacy v1. The HKDF salt keeps the old name (`car-shopper/…`) — changing it orphans every stored key. Tested. |
-| `api/_keys.js` | The key vault (`user_api_keys`): the only module that decrypts. `getAnthropicKey`, `getMarketcheckKeys`, `keyMeta`, add/rename/reorder/remove, `importBlobKeys`, `reencryptLegacy` (cron). Tested. |
+| `api/_crypto.js` | AES-256-GCM for the key vault: v2 = HKDF key + AAD `<user_id>:<provider>`, `v2:` prefix (the old v1 format is no longer read). The HKDF salt keeps the old name (`car-shopper/…`) — changing it orphans every stored key. Tested. |
+| `api/_keys.js` | The key vault (`user_api_keys`): the only module that decrypts. `getAnthropicKey`, `getMarketcheckKeys`, `keyMeta`, add/rename/reorder/remove. Tested. |
 | `api/_supabaseAdmin.js` | Service-role (`SUPABASE_SECRET_KEY`) client for the server-only tables; also the server's one copy of the project URL + publishable key. |
 | `api/keys.js` | `/api/keys`: validate / store (encrypted) / remove the Anthropic key; add / rename / reorder / remove MarketCheck keys. Answers with metadata only. |
 | `api/snapshots.js`, `src/snapshots.js` | List/restore the automatic app-state backups (`app_state_history`); admins also publish the demo snapshot here (`POST { demo }`), and it copies listing photos (`POST { photos }` — see the next row). |
@@ -85,7 +84,7 @@ over architecture.
 | `api/ai.js`, `api/_ai.js` | **Every AI feature, one function.** `POST { task }`: `score` (batch listing scoring), `price` (Price Check's fair-price verdict), `baseline` (a profile's AI price baseline), `suggest` (the profile wizard's AI step); `GET ?task=prompt` returns the default scoring prompt. `baseline` runs on the user's scoring model (allowlisted); `price`/`suggest` on Sonnet. `_ai.js`: `loadAnthropicKey(userId)` (reads the vaulted key via `api/_keys.js`, which does the decrypting), the streamed call, refusal / token-limit / rejected-key handling. Prompts + schemas: `_scoring.js` (score, baseline), `_pricecheck.js`, `_suggest.js`. |
 | `src/priceCheck.js`, `src/priceExport.js` | Price tab's local-comps math (pure, 0 API calls) and the price-history CSV export. Pure, tested. |
 | `src/geo.js`, `src/tableSort.js` | Straight-line distance to the home base; shared sortable-table helpers (Compare, Price comps). Pure, tested. |
-| `api/cron-sync.js` | Scheduled background sync (`CRON_SECRET`-gated; accounts with `allowed_emails.scheduled_sync`). `POST { email }` syncs one account — sent per account by the database dispatcher (pg_cron + pg_net, `dispatch_scheduled_sync()`, every 15 min, URL + secret in Supabase Vault). The daily Vercel Cron run (no target) does the keepalive + the vault's v1 → v2 re-encryption sweep + the orphan-photo sweep (`sweepOrphanPhotos`, `api/_photos.js`), and syncs due accounts itself only while the dispatcher isn't set up (`scheduled_sync_dispatcher_ready()`). Stamps `allowed_emails.last_scheduled_sync` on attempt + `last_scheduled_sync_result`. Tested. |
+| `api/cron-sync.js` | Scheduled background sync (`CRON_SECRET`-gated; accounts with `allowed_emails.scheduled_sync`). `POST { email }` syncs one account — sent per account by the database dispatcher (pg_cron + pg_net, `dispatch_scheduled_sync()`, every 15 min, URL + secret in Supabase Vault). The daily Vercel Cron run (no target) does the keepalive + the orphan-photo sweep (`sweepOrphanPhotos`, `api/_photos.js`), and syncs due accounts itself only while the dispatcher isn't set up (`scheduled_sync_dispatcher_ready()`). Stamps `allowed_emails.last_scheduled_sync` on attempt + `last_scheduled_sync_result`. Tested. |
 | `api/_suggest.js` | The wizard's optional AI step (`api/ai.js` task `suggest`): must-haves / dealbreakers / years to avoid / trim notes from the vehicle + Explore's market snapshot. Prompt, schema, `coerceSuggestion` (tested). |
 | `supabase/migrations/*.sql` | DB schema: `app_state` + RLS, allowlist, Anthropic-key vault, backup history + trigger, `rev`, demo snapshot, grant/RLS tightening, the `listing-photos` bucket + its `storage.objects` policies, the pg_cron/pg_net scheduled-sync dispatcher, two-factor enforcement (`mfa_ok()`, restrictive aal2 policies, `my_access_mfa()`). |
 | `supabase/tests/*.test.sql`, `supabase/config.toml` | pgTAP tests (`supabase test db`): RLS, grants and `save_app_state()` (`rls.test.sql`); allowlist flags, `my_access()`, the key vault, backup scrubbing (`access.test.sql`); the scheduled-sync dispatcher (`scheduled_sync.test.sql`); the photo bucket's policies (`storage.test.sql`); two-factor: `mfa_ok()`, the restrictive aal2 policies, `my_access_mfa()` (`mfa.test.sql`, claims carry `aal`); run as `anon`/`authenticated`; CLI config (Postgres 17). |
@@ -127,7 +126,8 @@ See `docs/listing-pipeline.md` for the full design. In short:
   sync and Backups restore write with the service role and bump `rev`, so open
   sessions pick those up too.
   There is no per-listing table. Bump `VERSION` + add a `migrate()` step when the
-  blob shape changes (see the v6 `settings` migration).
+  blob shape changes (see the v11 listing-shape step). Steps before v8 were
+  retired; an older blob runs the kept steps + the defaults tail.
   **Photos** are the one thing outside the blob: a copy of each watchlist car's
   dealer photo in Storage (`listing.photoKey`; the server writes with the
   service role, users read/delete only their own folder via RLS). The blob is

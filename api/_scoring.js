@@ -108,16 +108,13 @@ function listingFacts(l, homeBase) {
   add("Dealer", l.dealer);
   add("Dealer type", l.dealerType);
   // CPO is a strong positive — manufacturer-backed inspection + extended
-  // warranty. Surface it explicitly (l.dealerType === "CPO" handles listings
-  // synced before cpo became its own field).
-  if (l.cpo === true || l.dealerType === "CPO") f.push("Certified Pre-Owned (CPO): Yes — manufacturer-backed inspection & extended warranty");
+  // warranty. Surface it explicitly.
+  if (l.cpo === true) f.push("Certified Pre-Owned (CPO): Yes — manufacturer-backed inspection & extended warranty");
   add("Dealer location", [l.location, l.state].filter(Boolean).join(", "));
   // Travel, computed from the dealer's coordinates (src/travel.js) so the model
   // needn't guess from a city name. Straight-line; the drive is usually 20-30% longer.
   const t = travelFacts(l, homeBase);
   add("Straight-line distance from the buyer's HOME BASE", t.homeMi != null ? t.homeMi + " mi (driving is typically 20-30% longer)" + (t.farFromHome ? " — over " + DRIVE_MAX_MI + " mi, so likely shipped or flown to rather than driven" : "") : null);
-  // Listings synced before dealer coordinates: the radius from an old search location.
-  if (t.homeMi == null) add("Distance from the search area it was found in (NOT from home)", l.distMi != null ? l.distMi + " mi" : null);
   add("Nearest major airport to the dealer", t.airport ? t.airport.code + ", " + t.airport.mi + " mi" + (t.airport.near ? " (within " + AIRPORT_NEAR_MI + " mi — easy to fly in)" : "") : null);
   if (t.salt) f.push("Dealer is in a salt-belt state (" + l.state + ") — higher underbody-rust risk unless the car lived elsewhere");
   // The buyer's own progress labels ("called dealer", "test drive booked") —

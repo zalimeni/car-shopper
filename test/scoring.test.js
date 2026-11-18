@@ -57,7 +57,7 @@ describe("buildScoreSchema", () => {
 describe("buildUserPrompt", () => {
   const listing = {
     year: 2021, vehicle: "Toyota RAV4", trim: "XLE", price: 24000, mileage: 38000,
-    dealer: "Best Toyota", dealerType: "CPO", location: "Boston", state: "MA", color: "Blue",
+    dealer: "Best Toyota", dealerType: "franchise", cpo: true, location: "Boston", state: "MA", color: "Blue",
     msrp: 32000, carfax_1_owner: true, carfax_clean_title: true, price_change_percent: -3,
   };
   const ctx = {
@@ -78,6 +78,7 @@ describe("buildUserPrompt", () => {
     expect(p).toContain("Carfax: 1-owner confirmed");
     expect(p).toContain("MSRP: $32,000");
     expect(p).toContain("-3%");
+    expect(p).toContain("Certified Pre-Owned (CPO): Yes");
   });
   it("includes the profile and only active requirements", () => {
     expect(p).toContain("Must have: AWD");
@@ -139,7 +140,7 @@ describe("higher trims are upside, not a penalty", () => {
 // whichever travel hub found it, so a KY dealer 20 mi from a KY hub read as
 // "20 mi away" to a buyer living in Durham NC.
 describe("home base anchors the location criterion", () => {
-  const listing = { year: 2021, vehicle: "Toyota RAV4", price: 24000, location: "Louisville", state: "KY", distMi: 22 };
+  const listing = { year: 2021, vehicle: "Toyota RAV4", price: 24000, location: "Louisville", state: "KY" };
   const crit = [{ id: "location", name: "Location & salt exposure", weight: 10 }];
   const withHome = buildUserPrompt(listing, { criteria: crit, homeBase: { n: "Durham NC", z: "27701" } });
 
@@ -151,8 +152,8 @@ describe("home base anchors the location criterion", () => {
     expect(withHome).toContain("Searches are nationwide");
     expect(withHome).toContain("near a major airport");
   });
-  it("labels the search-radius distance so it can't read as distance from home", () => {
-    expect(withHome).toContain("Distance from the search area it was found in (NOT from home): 22 mi");
+  it("never states a search-radius distance (only distance from home)", () => {
+    expect(withHome).not.toContain("Distance from the search area");
     expect(withHome).not.toContain("Distance from buyer's search location");
   });
   it("still surfaces the dealer's own city/state to reason from", () => {
@@ -171,10 +172,10 @@ describe("home base anchors the location criterion", () => {
 describe("computed distance and fees reach the scorer", () => {
   const home = { n: "Durham, NC", z: "27701", lat: 35.997, lon: -78.897 };
   const crit = [{ id: "location", name: "Location", weight: 10 }];
-  const car = { year: 2024, vehicle: "Hyundai Tucson", price: 25988, fees: 695, location: "Sheffield", state: "AL", distMi: 40, dLat: 34.772847, dLon: -87.669898 };
+  const car = { year: 2024, vehicle: "Hyundai Tucson", price: 25988, fees: 695, location: "Sheffield", state: "AL", dLat: 34.772847, dLon: -87.669898 };
   const withHome = buildUserPrompt(car, { criteria: crit, homeBase: home });
 
-  it("states a real straight-line distance from home (and drops a legacy search-area radius then)", () => {
+  it("states a real straight-line distance from home", () => {
     expect(withHome).toMatch(/Straight-line distance from the buyer's HOME BASE: \d{3} mi/);
     expect(withHome).not.toContain("Distance from the search area");
   });
@@ -187,7 +188,7 @@ describe("computed distance and fees reach the scorer", () => {
     expect(withHome).toContain("use the \"Straight-line distance from the buyer's HOME BASE\" figure");
   });
   it("omits the figure (and falls back to city/state) when coordinates are missing", () => {
-    expect(buildUserPrompt({ year: 2024, price: 1, distMi: 40 }, { criteria: crit, homeBase: home })).not.toContain("Straight-line distance from the buyer's HOME BASE:");
+    expect(buildUserPrompt({ year: 2024, price: 1 }, { criteria: crit, homeBase: home })).not.toContain("Straight-line distance from the buyer's HOME BASE:");
     expect(buildUserPrompt(car, { criteria: crit, homeBase: { n: "Durham", z: "27701" } })).not.toContain("Straight-line distance from the buyer's HOME BASE:");
   });
   it("shows the price as before-fees so the fee isn't mistaken for price", () => {

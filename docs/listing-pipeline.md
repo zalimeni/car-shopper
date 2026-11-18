@@ -99,8 +99,10 @@ sync) does as little as it can:
           than <days since the profile's last search> + 1 ago. Usually one call.
    2. Watchlist VINs (status watch, from MarketCheck) that step 1 didn't return →
       vin=<up to 50, comma-separated> lookups. A VIN the lookup doesn't return
-      either is no longer listed: the ONLY way a car is marked gone (goneAt), so
-      it's never a guess from a search that simply didn't include it.
+      either is no longer listed: the only thing that stamps a car gone (goneAt),
+      so that's never a guess from a search that simply didn't include it. (The
+      Results banner also offers to archive a watched car not seen in a sync for
+      14+ days — `UNSEEN_SOLD_DAYS` in App.jsx — but only on the user's click.)
    3. Cars with no color in their listing (often marketplace-relayed) → NeoVIN, the
       VIN decoder (/v2/decode/car/neovin/{vin}/specs; free plan, one call per VIN,
       no batch form): its factory exterior color fills color/baseColor (marked
@@ -232,17 +234,18 @@ The reconciler depends only on this mapping, so API drift is contained here.
 | `vin`          | `vin`                                    | dedup key |
 | `vehicle`      | `build.make` + `build.model`             | e.g. "Toyota RAV4 Hybrid" |
 | `year`         | `build.year`                             | |
-| `trim`         | `build.trim`                             | |
+| `trim`         | `build.version`, else `build.trim`       | version is the fuller variant ("Hybrid LE AWD"); MarketCheck's "-" means none |
 | `price`        | `price`                                  | |
 | `mileage`      | `miles`                                  | |
 | `dealer`       | `dealer.name`                            | |
-| `dealerType`   | `seller_type`/`dealer.dealer_type`       | map → CPO/franchise/independent |
+| `dealerType`   | `dealer.dealer_type`/`seller_type`       | map → franchise/independent/private |
+| `cpo`          | `is_certified`                           | its own boolean — a CPO car still has a dealer type |
 | `location`     | `dealer.city`                            | |
 | `state`        | `dealer.state`                           | drives salt-belt 🧂 flag |
 | `link`         | `vdp_url`                                | the listing URL |
 | `profileId`    | (the profile that generated the query)   | assigned by us, not MarketCheck |
 | `color`        | `exterior_color`                         | |
-| `status`       | `"candidate"` on first discovery         | see §6 |
+| `status`       | (set by reconcile)                       | `"watch"` on a new car, which waits in the review queue — see §6 |
 
 Profile → query mapping: `make`, `model`, `year` (exact-year list), `powertrain_type`,
 `price_range`, `miles_range` come straight from `profile.params`; no location
@@ -253,33 +256,39 @@ Profile → query mapping: `make`, `model`, `year` (exact-year list), `powertrai
 
 Per sync run, build a set of discovered VINs and compare to stored listings:
 
-- **New VIN** (not in store) → append with `status: "candidate"`, `addedDate`,
-  `lastChecked = today`. Awaits human approval (existing candidate UI).
+- **New VIN** (not in store) → returned as a candidate with `status: "watch"`,
+  `addedDate`/`lastSeen`/`lastChecked = today`, empty scores and a one-point
+  `priceHistory`. It joins the review queue (`data.candidates`) and awaits
+  human approval (`CandCard`); approving keeps it as a `watch` listing.
 - **Known VIN, price changed** → update `price`, append a note
-  (`"Price: $X → $Y on <date>"`), refresh `lastChecked`. Keep its status
-  (watch/candidate) and `compositeScore` (recomputed).
-- **Known VIN, unchanged** → refresh `lastChecked` only.
+  (`"↓ Price $X → $Y (<date>)"`), add to `priceHistory`, set `reviewPending` +
+  `lastChange`, refresh `lastSeen`/`lastChecked`. Status is kept.
+- **Known VIN, unchanged** → refresh `lastSeen`/`lastChecked` (and the drifting
+  market facts: `dom`, `fees`, dealer coordinates, `mcSeen`).
 - **Watched VIN the VIN lookup confirms gone** (`goneVins`) → **non-destructive
   flag only**: `goneAt` is stamped and the Results banner offers to archive it to
   Sold (restorable). A car a search merely didn't return (a new-listings pass, or
-  it left the filters) is untouched — only the direct lookup says gone. Manual
+  it left the filters) is untouched — only the direct lookup stamps `goneAt`.
+  (Separately, the same banner offers a watched car unseen for 14+ days.) Manual
   listings (no `source: "marketcheck"`) are never touched by reconcile.
 
-Reuses the existing `dedupInsert` (lowest-price-wins on VIN) and `daysSince`
-staleness logic. Provenance: tag pipeline-created listings with
-`source: "marketcheck"` so manual entries are left untouched.
+`reconcile()` (src/reconcile.js) is pure and import-free, shared by the browser
+and the scheduled sync. Within one sync, the lowest real price wins for a VIN
+seen twice. Provenance: pipeline-created listings carry
+`source: "marketcheck"`, so manual entries are left untouched.
 
 ## 7. Data model decision
 
 **Keep the single JSON-blob model (`app_state.data`) for v1.** Reconcile does a
-read-modify-write of the blob and reuses all current array logic (`dedupInsert`,
-`daysSince`, `calcScore`). Minimal additions:
+read-modify-write of the blob. Minimal additions:
 
-- **No new persisted "candidate" status.** New VINs flow into the existing
-  in-memory candidate queue — the same review path as Import (`CandCard`,
-  `approveCand`/`approveAll`). Unreviewed matches aren't persisted; a full
-  refresh re-surfaces anything still on the market. Only *approved* listings are
-  written (as `watch`).
+- **No separate "candidate" status.** New VINs flow into the review queue — the
+  same review path as Import (`CandCard`, `approveCand`/`approveAll`). The queue
+  is persisted in the blob as `data.candidates` (the newest 300, saved ~1 s
+  after it changes, so it follows you across devices); on load, cars since
+  approved or skipped are pruned (`restoreQueue`). The scheduled sync appends to
+  it too (flagged `fromScheduled`). Approved cars move to `listings` (as
+  `watch`); skipped ones to `skipped`.
 - New fields on synced listings: `source: "marketcheck"`, `lastSeen` (date last
   present in a sync), `goneAt`, and `dom` (days at this dealer). `lastSynced` on
   the root blob drives the "you synced recently" cost warning.
@@ -330,7 +339,8 @@ first active profile's full refresh, or a VIN lookup — raw rows beside
 1. ~~Confirm MarketCheck auth, params, schema and limits~~ — done, see §2.
 2. ~~Auto-purge aggressiveness — mark `sold` after one absent run, or require two
    consecutive misses to avoid flapping on transient inventory gaps?~~ — neither:
-   a car is marked gone only when a direct VIN lookup can't find it (§3).
+   a car is stamped gone only when a direct VIN lookup can't find it (§3); a
+   car unseen for 14+ days is offered for archiving, never archived on its own.
 3. (Follow-up §4a) Email provider for update alerts — Resend vs. Postmark vs.
    Supabase's built-in — and what threshold triggers a send (any new candidate?
    price drop ≥ X%?).

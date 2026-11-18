@@ -17,11 +17,10 @@ const keysApi = vi.hoisted(() => ({
 }));
 vi.mock("../src/keys", async (orig) => Object.assign({}, await orig(), {
   addMarketcheckKey: keysApi.add, reorderMarketcheckKeys: keysApi.reorder, removeMarketcheckKey: keysApi.remove,
-  listMarketcheckKeys: async () => [], importMarketcheckKeys: async () => [], renameMarketcheckKey: async () => [],
+  listMarketcheckKeys: async () => [], renameMarketcheckKey: async () => [],
 }));
 
 const { SettingsCard, McKeysCard } = await import("../src/App.jsx");
-const { legacyBlobKeys } = await import("../src/keys.js");
 
 const base = () => ({ profiles: [], listings: [], settings: { budget: 40000, tagline: "t", homeBase: { n: "Durham, NC", z: "27701", lat: 36, lon: -78.9 } } });
 // Saving loads the location index first (to fill missing coordinates), so it's async.
@@ -62,11 +61,6 @@ describe("MarketCheck keys live in the vault", () => {
   it("the settings card no longer saves keys into the blob", async () => {
     const saved = await saveAndGet(base());
     expect(saved.marketcheckKeys).toBeUndefined();
-  });
-  it("legacyBlobKeys reads an old blob's keys in order, skipping blanks", () => {
-    expect(legacyBlobKeys({ marketcheckKeys: [{ key: "K1", label: "one" }, "K2", { key: " " }, null] })).toEqual([{ key: "K1", label: "one" }, { key: "K2", label: "" }]);
-    expect(legacyBlobKeys({})).toEqual([]);
-    expect(legacyBlobKeys(undefined)).toEqual([]);
   });
 });
 

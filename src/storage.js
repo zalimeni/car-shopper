@@ -7,7 +7,8 @@
 // set() takes the expected rev; the save_app_state() database function writes
 // only if the stored rev still matches, otherwise the caller gets { conflict }
 // with the stored state so it can reload instead of clobbering what another
-// device wrote. A null expected rev writes unconditionally.
+// device wrote. With no row yet, rev 0 inserts one at rev 1 (a null rev never
+// overwrites an existing row).
 
 import { supabase } from "./supabaseClient";
 import { DEMO, loadDemo } from "./demoRuntime";

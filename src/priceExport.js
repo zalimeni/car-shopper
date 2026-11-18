@@ -13,8 +13,6 @@ export function csvCell(v) {
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 
-function isCpo(l) { return !!(l && (l.cpo === true || l.dealerType === "CPO")); }
-
 // Gather every real observed listing across all buckets, deduped by VIN (first
 // bucket wins, so a tracked listing's fuller history beats a one-shot candidate).
 export function collectObserved(data, candidates) {
@@ -31,7 +29,6 @@ export function collectObserved(data, candidates) {
   add(data.listings, null);                 // watch / rejected / sold
   add(data.skipped, "skipped");
   add(candidates, "candidate");
-  add(data.pendingCandidates, "candidate"); // cron-parked, not yet drained
   return out;
 }
 
@@ -53,7 +50,7 @@ export function buildPriceHistoryCsv(data, candidates) {
       trim: l.trim || "",
       mileage: l.mileage != null ? l.mileage : "",
       dealer_type: l.dealerType || "",
-      cpo: isCpo(l) ? "yes" : "",
+      cpo: l.cpo === true ? "yes" : "",
       status: o.status,
       reject_reason: o.status === "rejected" ? (l.rejectReason || "") : "",
       state: l.state || "",
