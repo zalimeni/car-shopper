@@ -1,12 +1,10 @@
-<!-- Supabase Dashboard → Authentication → Emails → "Magic Link" template (body).
-     Hosted projects don't read this file: paste it there (editing templates needs
-     custom SMTP — without it, pasting the link into the app works instead). It keeps the link (works in
-     any browser tab) and adds the one-time code, which is what signs in an iPhone
-     Home Screen web app — email links always open in Safari, whose storage the Home
-     Screen app doesn't share. -->
+<!-- Optional: a Tirekicker-branded body for Supabase Dashboard → Authentication →
+     Emails → "Magic Link". Hosted projects don't read this file, and editing
+     templates needs custom SMTP — the default template works as is. It adds the
+     Home Screen tip: email links always open in Safari, whose storage the Home
+     Screen web app doesn't share, so there you copy the link and paste it into
+     the app instead of tapping it. -->
 <h2>Sign in to Tirekicker</h2>
-<p>Your sign-in code:</p>
-<p style="font-size:28px;font-weight:600;letter-spacing:6px;font-family:monospace">{{ .Token }}</p>
-<p>Type it into the app — this is the way to sign in from a Home Screen bookmark.</p>
-<p>Or, in a browser, <a href="{{ .ConfirmationURL }}">tap here to sign in</a>.</p>
-<p style="color:#888;font-size:12px">The code and link expire soon and work once. If you didn't ask to sign in, ignore this email.</p>
+<p><a href="{{ .ConfirmationURL }}">Tap here to sign in</a>.</p>
+<p>Using the app from your Home Screen? Don't tap: long-press the link, choose Copy Link, and paste it into the app.</p>
+<p style="color:#888;font-size:12px">The link expires soon and works once. If you didn't ask to sign in, ignore this email.</p>

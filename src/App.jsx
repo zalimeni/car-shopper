@@ -631,7 +631,7 @@ function downloadText(filename, text, mime) {
   setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
 }
 
-export default function App() {
+export default function App({ me }) {
   var [data, setData] = useState(null);
   var [loading, setLoading] = useState(true);
   var [loadError, setLoadError] = useState(false); // init read failed/timed out — recoverable via reload
@@ -898,13 +898,23 @@ export default function App() {
   var mcVaultRef = useRef(null);
   mcVaultRef.current = mcVault;
 
+  // Admin flag + key metadata. Signed in, AuthGate hands over its one /api/me
+  // answer (`me`; {} when that check failed open — then no admin, no key, and
+  // the MarketCheck list stays unknown). Without it (demo, bare renders) ask.
   useEffect(function () {
+    if (me) {
+      setIsAdmin(!!me.isAdmin);
+      setKeyStatus(me.anthropicKey || { configured: false, valid: false, last4: "" });
+      setKeyLoaded(true);
+      if (!DEMO && Array.isArray(me.marketcheckKeys)) setMcVault(me.marketcheckKeys);
+      return;
+    }
     var cancelled = false;
     getKeyStatus().then(function (s) { if (!cancelled) { setKeyStatus(s); setKeyLoaded(true); } });
     getMe().then(function (m) { if (!cancelled && m && m.isAdmin) setIsAdmin(true); });
     if (!DEMO) listMarketcheckKeys().then(function (l) { if (!cancelled && l) setMcVault(l); });
     return function () { cancelled = true; };
-  }, []);
+  }, [me]);
 
   // One-time move: MarketCheck keys saved before the vault sit in the synced
   // settings. Hand them to the server, and drop the blob's copy only once the

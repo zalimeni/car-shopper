@@ -100,9 +100,8 @@ are rows in the `allowed_emails` table (the Admin tab), not env vars.
 
 The app is gated by **Supabase email auth** and is **invite-only**: there is no
 sign-up. An admin adds an email in the Admin tab and sends an invite; the
-invitee then signs in by tapping the magic link, pasting it into the app (how
-an iPhone Home Screen web app signs in), or typing its one-time code (needs
-custom SMTP — see `supabase/README.md`). The app never asks Supabase to create
+invitee then signs in by tapping the magic link or pasting it into the app (how
+an iPhone Home Screen web app signs in — see `supabase/README.md`). The app never asks Supabase to create
 an account (`shouldCreateUser: false`), and the project has sign-ups turned
 off, so an unknown email gets "invite-only" back.
 
