@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Build the demo fixture (public/demo/snapshot.json) from an export of the
-// owner's data: a demo snapshot ({ data, pool } — e.g. the public demo row) or a
-// raw app-state blob.
+// owner's app state: the raw blob (`app_state.data`), or a row/array wrapping it
+// ({ data: blob } or [{ data: blob }]).
 //
 //   node scripts/demo-fixture/build.mjs <export.json> [--out public/demo/snapshot.json] [--photos photos.json] [--skip-photos dead.json]
 //
@@ -12,7 +12,7 @@
 // data (no names, VINs, dealers or free text), so the script itself is safe to
 // commit:
 //  - keeps 4 profiles (3 active) and picks ~35 cars by rule: watchlist, sold,
-//    rejected, review queue, the demo-sync pool, skipped;
+//    rejected, review queue, the demo-sync pool (newest queued cars), skipped;
 //  - synthesizes identities: VIN serials (valid check digit, real make/model
 //    prefix), fictional dealer names, no dealer links, dealer coordinates at the
 //    city's center, and replaces each dealer's name wherever AI text mentions it;
@@ -43,10 +43,9 @@ const deadPhotos = new Set(opt("--skip-photos") ? JSON.parse(fs.readFileSync(opt
 
 let raw = JSON.parse(fs.readFileSync(inPath, "utf8"));
 if (Array.isArray(raw)) raw = raw[0];
-if (raw && raw.data && raw.data.data) raw = raw.data; // a demo_snapshot row
-const src = raw.data && raw.pool ? raw : { data: raw, pool: [], exportedAt: new Date().toISOString() };
-const D = src.data;
-const exportedAt = src.exportedAt || new Date().toISOString();
+if (raw && raw.data && !raw.listings) raw = raw.data; // an app_state row
+const D = raw;
+const exportedAt = new Date().toISOString();
 const DAY = 86400000;
 const iso = (ms) => new Date(ms).toISOString().slice(0, 10);
 const nowMs = Date.parse(exportedAt);
@@ -86,7 +85,6 @@ const tag = (l, from) => Object.assign({}, l, { _from: from });
 const all = [].concat(
   (D.listings || []).map((l) => tag(l, l.status)),
   (D.candidates || []).map((l) => tag(l, "queued")),
-  (src.pool || []).map((l) => tag(l, "pool")),
   (D.skipped || []).map((l) => tag(l, "skipped")),
 ).filter((l) => pid.has(l.profileId) && l.vin && l.photo && !deadPhotos.has(l.photo) && l.price > 0);
 const used = new Set();
@@ -106,7 +104,7 @@ function take(profileId, froms, n, sort) {
 const newest = (a, b) => String(b.addedDate || "").localeCompare(String(a.addedDate || ""));
 // Like take(), topping up from any other car of the profile when the preferred
 // statuses run short (e.g. too few usable photos).
-const ANY = ["watch", "queued", "pool", "skipped", "rejected", "sold"];
+const ANY = ["watch", "queued", "skipped", "rejected", "sold"];
 function takeN(profileId, froms, n, sort) {
   const got = take(profileId, froms, n, sort);
   return got.length < n ? got.concat(take(profileId, ANY, n - got.length, sort)) : got;
@@ -116,7 +114,7 @@ Object.assign(sel, {
   watch: [...takeN("tucson-hybrid", ["watch"], 4), ...takeN("bolt-ev", ["watch"], 1), ...takeN("subaru-outback", ["rejected", "skipped"], 3)],
   sold: [...takeN("tucson-hybrid", ["sold"], 1), ...takeN("bolt-ev", ["sold"], 1)],
   queued: [...takeN("tucson-hybrid", ["queued"], 3, newest), ...takeN("subaru-outback", ["skipped"], 2), ...takeN("bolt-ev", ["skipped", "sold", "rejected"], 1)],
-  pool: [...takeN("tucson-hybrid", ["pool", "queued"], 4), ...takeN("subaru-outback", ["skipped"], 3), ...takeN("bolt-ev", ["pool", "skipped", "sold", "rejected"], 2)],
+  pool: [...takeN("tucson-hybrid", ["queued"], 4), ...takeN("subaru-outback", ["skipped"], 3), ...takeN("bolt-ev", ["skipped", "sold", "rejected"], 2)],
 });
 mustShow = false;
 Object.assign(sel, {
@@ -260,9 +258,9 @@ const settings = {
 };
 
 const fixture = {
-  demoVersion: 1, exportedAt,
+  exportedAt,
   data: {
-    version: D.version, onboarded: true, autoScore: false, scoreModel: D.scoreModel,
+    version: D.version, onboarded: true, scoreModel: D.scoreModel,
     profiles, criteria: D.criteria, globalReqs: D.globalReqs || [],
     listings, candidates, skipped, settings, lastSynced: new Date(nowMs - 3 * 3600000).toISOString(),
   },

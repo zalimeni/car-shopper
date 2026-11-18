@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 import { STEPS, stepsFor, stepText, runsAction, placeCard, looksDone } from "../src/tutorial.js";
 
 describe("tutorial steps", () => {
@@ -7,7 +9,8 @@ describe("tutorial steps", () => {
     expect(stepsFor(true).map((s) => s.id)).not.toContain("done");
     expect(stepsFor(false).map((s) => s.id)).toContain("done");
     expect(stepsFor(false).map((s) => s.id)).not.toContain("done-demo");
-    expect(stepsFor(true).length).toBe(18);
+    expect(stepsFor(true).length).toBe(STEPS.length - STEPS.filter((s) => s.signedInOnly).length);
+    expect(stepsFor(false).length).toBe(STEPS.length - STEPS.filter((s) => s.demoOnly).length);
   });
   it("costly actions run only in the demo; signed in they just explain", () => {
     var sync = STEPS.find((s) => s.id === "sync");
@@ -16,9 +19,25 @@ describe("tutorial steps", () => {
     expect(stepText(sync, false)).toMatch(/won't run it for you/);
     expect(runsAction(STEPS[1], true)).toBe(false);
   });
-  it("every target is unique-ish and ids are unique", () => {
+  it("step ids are unique", () => {
     var ids = STEPS.map((s) => s.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+  it("every step's target is a data-tour attribute in the app (a missing one silently skips its step)", () => {
+    // data-tour="x", or the string(s) inside data-tour={cond ? "x" : undefined}
+    var src = ["App.jsx", "Demo.jsx"].map((f) => fs.readFileSync(path.join(__dirname, "..", "src", f), "utf8")).join("\n");
+    var tags = new Set();
+    for (const m of src.matchAll(/data-tour=(?:"([\w-]+)"|\{([^}]*)\})/g)) {
+      if (m[1]) tags.add(m[1]);
+      else for (const q of m[2].matchAll(/"([\w-]+)"/g)) tags.add(q[1]);
+    }
+    var missing = STEPS.filter((s) => s.target && !tags.has(s.target)).map((s) => s.id + " → " + s.target);
+    expect(missing).toEqual([]);
+  });
+  it("signed in, the queue step doesn't promise a background sync found something", () => {
+    var c = STEPS.find((s) => s.id === "candidates");
+    expect(stepText(c, true)).toMatch(/while you were away/);
+    expect(stepText(c, false)).not.toMatch(/while you were away/);
   });
 });
 

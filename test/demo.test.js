@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { demoScore, demoCount, demoMarketComps, demoPriceAssessment, demoBaseline, demoSuggestion, sameModel, statsOf, isDemoUrl, buildDemoSnapshot, reviewableNotes, autoNotes, userNotes, shiftDateStr, shiftDates, daysSince, prepareDemo, simulateSync, scoreFieldsOf } from "../src/demo.js";
+import { demoScore, demoCount, demoMarketComps, demoPriceAssessment, demoBaseline, demoSuggestion, sameModel, statsOf, isDemoUrl, shiftDateStr, shiftDates, daysSince, prepareDemo, simulateSync, scoreFieldsOf } from "../src/demo.js";
 import { reconcile } from "../src/reconcile.js";
 
 var car = function (id, o) {
@@ -11,60 +11,9 @@ describe("isDemoUrl", () => {
     expect(isDemoUrl("?demo")).toBe(true);
     expect(isDemoUrl("?x=1&demo=1")).toBe(true);
     expect(isDemoUrl("?demo=true")).toBe(true);
+    expect(isDemoUrl("?demo=live")).toBe(true); // old links: the same fixture
     expect(isDemoUrl("?demos")).toBe(false);
     expect(isDemoUrl("")).toBe(false);
-  });
-});
-
-describe("notes", () => {
-  it("splits sync's price notes from the owner's words", () => {
-    var n = "Call Tues · ↓ Price $21,000 → $20,000 (2026-10-02) · ask about tires";
-    expect(autoNotes(n)).toBe("↓ Price $21,000 → $20,000 (2026-10-02)");
-    expect(userNotes(n)).toBe("Call Tues · ask about tires");
-  });
-  it("lists every car with a memo or own notes, once", () => {
-    var d = { listings: [car("a", { memo: "loved it" }), car("b", { notes: "↑ Price $1 → $2 (2026-10-01)" })], candidates: [car("c", { notes: "dealer is slow" })], skipped: [car("a")] };
-    expect(reviewableNotes(d).map((x) => x.key)).toEqual(["a", "c"]);
-  });
-  it("lists typed reject reasons, but not the app's own", () => {
-    var d = { listings: [car("r1", { status: "rejected", rejectReason: "dealer was rude" }), car("r2", { status: "rejected", rejectReason: "Reviewed update" }), car("r3", { status: "rejected", rejectReason: "No reason given" })] };
-    expect(reviewableNotes(d)).toEqual([{ key: "r1", name: expect.any(String), memo: "", notes: "", reason: "dealer was rude" }]);
-  });
-  it("clears an unkept typed reject reason, keeps a kept one", () => {
-    var d = { listings: [car("r1", { status: "rejected", rejectReason: "dealer was rude" }), car("r2", { status: "rejected", rejectReason: "too many miles" }), car("r3", { status: "rejected", rejectReason: "Reviewed update" })] };
-    var out = buildDemoSnapshot(d, { keep: { r2: true } }).data.listings;
-    expect(out.map((l) => l.rejectReason)).toEqual(["No reason given", "too many miles", "Reviewed update"]);
-  });
-});
-
-describe("buildDemoSnapshot", () => {
-  var data = {
-    version: 9, autoScore: true,
-    settings: { marketcheckKeys: [{ key: "secret" }], mcQuota: { k: 1 }, mcApi: { v: 1 }, homeBase: { n: "Durham, NC" }, budget: 40000 },
-    listings: [car("a", { memo: "private", notes: "mine · ↓ Price $21,000 → $20,000 (2026-10-02)" }), car("b", { memo: "keep me" })],
-    candidates: [car("c1", { addedDate: "2026-10-20", _candidate: true, fromScheduled: true }), car("c2", { addedDate: "2026-10-25", scoredAt: "2026-10-25T10:00:00Z", scores: { price: 8 } }), car("c3", { addedDate: "2026-10-28" })],
-  };
-  var s = buildDemoSnapshot(data, { keep: { b: true }, now: new Date("2026-11-01T12:00:00Z"), poolMax: 2 });
-  it("drops secrets and turns auto-score off", () => {
-    expect(s.data.settings).toEqual({ homeBase: { n: "Durham, NC" }, budget: 40000 });
-    expect(s.data.autoScore).toBe(false);
-    expect(JSON.stringify(s)).not.toContain("secret");
-  });
-  it("clears unkept notes but keeps price notes", () => {
-    expect(s.data.listings[0].memo).toBe("");
-    expect(s.data.listings[0].notes).toBe("↓ Price $21,000 → $20,000 (2026-10-02)");
-    expect(s.data.listings[1].memo).toBe("keep me");
-  });
-  it("holds back the newest queued cars, scored first", () => {
-    expect(s.pool.map((c) => c.id)).toEqual(["c2", "c3"]);
-    expect(s.data.candidates.map((c) => c.id)).toEqual(["c1"]);
-    expect(s.data.candidates[0]._candidate).toBeUndefined();
-    expect(s.data.candidates[0].fromScheduled).toBeUndefined();
-    expect(s.exportedAt).toBe("2026-11-01T12:00:00.000Z");
-  });
-  it("leaves the input alone", () => {
-    expect(data.settings.marketcheckKeys.length).toBe(1);
-    expect(data.listings[0].memo).toBe("private");
   });
 });
 

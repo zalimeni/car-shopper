@@ -30,11 +30,10 @@ Dashboard → SQL editor. The migrations are idempotent, so re-running is safe.
   before every delete). Server-only.
 - `20260713223000_app_state_rev.sql` — the `rev` counter for compare-and-swap
   writes (`save_app_state()`).
-- `20261107120000_demo_snapshot.sql` — the one-row public demo snapshot
-  (anyone can read it; only the service role writes it).
+- `20261107120000_demo_snapshot.sql` — a one-row public demo table, since
+  dropped (`20261118163000_drop_demo_snapshot.sql`).
 - `20261107190000_tighten_grants_and_rls.sql` — revokes the default
-  anon/authenticated grants on the server-only tables, keeps SELECT only on
-  `demo_snapshot`, and wraps the `app_state` policies' `auth.uid()` /
+  anon/authenticated grants on the server-only tables and wraps the `app_state` policies' `auth.uid()` /
   `is_allowed()` calls in `(select …)` (the Performance Advisor's
   `auth_rls_initplan` lint). `is_allowed()` now ignores letter case.
 - `20261111120000_access_and_key_vault.sql` — `allowed_emails` gets `is_admin`
@@ -52,6 +51,8 @@ Dashboard → SQL editor. The migrations are idempotent, so re-running is safe.
   role. No Dashboard step is needed: the migration creates the bucket. Storage
   objects don't cascade when a user is deleted — the sweep removes the folder
   of any user with no `app_state` row (it runs only when `CRON_SECRET` is set).
+- `20261118163000_drop_demo_snapshot.sql` — drops the public demo table: the
+  demo (`/?demo`) runs only on the anonymized fixture bundled with the app.
 
 ## Access: invite-only, allowlisted
 
@@ -83,7 +84,7 @@ authentication** (Supabase Auth MFA, TOTP only; phone MFA is a paid add-on).
 After that, every email sign-in also asks for a 6-digit code, and an
 email-only (aal1) session is refused by the API (`api/_auth.js`, 401
 `mfa_required`) and by RLS (`20261118150000_mfa_aal2.sql`). It's opt-in for
-users and **required for admins**: the Admin tab and Publish demo need an
+users and **required for admins**: the Admin tab needs an
 aal2 session, so an admin sets up an app before using them.
 
 One-time Dashboard check: **Authentication → Multi-Factor (MFA)** — make sure
@@ -166,8 +167,7 @@ existing database is safe.
   and `authenticated` roles (with JWT claims set the way PostgREST sets them),
   they check that each user sees only their own row, the scheduled-sync dispatcher
   is scheduled, locked away from clients and a no-op without its Vault secrets, a user not on the
-  allowlist sees nothing, the server-only tables refuse both roles, the demo
-  snapshot is read-only, `save_app_state()` does its compare-and-swap, and
+  allowlist sees nothing, the server-only tables refuse both roles, `save_app_state()` does its compare-and-swap, and
   `app_state` is published to Realtime. Run it locally the same way (needs
   Docker):
 

@@ -17,7 +17,7 @@ export function repPrice(l) {
 }
 
 // l.vehicle is "Make Model" (e.g. "Toyota RAV4"); require both tokens present.
-function matchesModel(l, make, model) {
+export function matchesModel(l, make, model) {
   var v = String(l.vehicle || "").toLowerCase();
   var mk = String(make || "").toLowerCase().trim();
   var md = String(model || "").toLowerCase().trim();
@@ -28,7 +28,7 @@ function matchesModel(l, make, model) {
 }
 
 // Percentile (linear-interpolated) over a sorted numeric array.
-function percentile(sorted, p) {
+export function percentile(sorted, p) {
   if (!sorted.length) return null;
   var idx = (sorted.length - 1) * p, lo = Math.floor(idx), hi = Math.ceil(idx);
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);

@@ -1,7 +1,7 @@
 # Demo fixture
 
-`/?demo` runs the app over `public/demo/snapshot.json` (the demo-snapshot shape:
-`{ demoVersion, exportedAt, data, pool }`) with thumbnails in `public/demo/cars/`.
+`/?demo` runs the app over `public/demo/snapshot.json` (`{ exportedAt, data,
+pool }`: an app-state blob plus the cars the demo's ↻ Sync "finds") with thumbnails in `public/demo/cars/`.
 These scripts rebuild both from an export of the owner's data.
 
 **Nothing from the owner's data goes into git except what the build writes.**
@@ -17,8 +17,8 @@ replaces everything that identifies a car, a dealer or the owner:
 
 ## Rebuild
 
-1. Get an export: the published demo row (`/rest/v1/demo_snapshot?id=eq.1`, public)
-   or an app-state blob. Keep it **outside** the repo.
+1. Get an export of the app-state blob (e.g. a Backups row's `data`, or
+   `app_state.data` from the Supabase Dashboard). Keep it **outside** the repo.
 2. Build the fixture (prints counts and any leftover real VIN / dealer name):
    ```bash
    node scripts/demo-fixture/build.mjs /path/to/export.json --out public/demo/snapshot.json
