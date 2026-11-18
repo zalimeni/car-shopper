@@ -49,8 +49,11 @@ describe("demo mode", () => {
     const welcome = await screen.findByRole("dialog", { name: "Welcome" }, { timeout: 4000 });
     expect(within(welcome).getByText("How this app uses Supabase")).toBeTruthy();
     expect(within(welcome).getByText("— Michael")).toBeTruthy();
-    fireEvent.click(within(welcome).getByText("Explore on my own"));
+    // Escape just closes it (no tutorial), same as "Explore on my own".
+    fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Welcome" })).toBeNull();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(screen.queryByRole("dialog", { name: /^Tutorial/ })).toBeNull();
     expect(localStorage.getItem("cs-demo-welcomed")).toBe("1");
     expect(screen.getByText("Demo · not saved")).toBeTruthy();
 
