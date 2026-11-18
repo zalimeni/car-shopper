@@ -9,7 +9,7 @@
 //   - reconcile():     pure function, lives in src/reconcile.js (shared with
 //                      the server-side scheduled sync) and re-exported here.
 
-import { supabase } from "./supabaseClient";
+import { authHeaders } from "./apiAuth";
 import { DEMO, demoPostStep, demoPriceComps } from "./demoRuntime";
 import { runSync } from "./syncPlan.js";
 export { reconcile } from "./reconcile.js";
@@ -33,12 +33,10 @@ export async function fetchListings(steps, tracked, filters, onProgress) {
 export async function postStep(step, filters) {
   if (DEMO) return demoPostStep(step);
   const f = filters || {};
-  const { data: sess } = await supabase.auth.getSession();
-  const token = sess && sess.session ? sess.session.access_token : "";
   const p = step.profile;
   const res = await fetch("/api/marketcheck", {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: token ? "Bearer " + token : "" },
+    headers: await authHeaders(),
     body: JSON.stringify({
       kind: step.kind,
       profile: p ? { id: p.id, name: p.name, params: p.params } : undefined,
@@ -72,14 +70,9 @@ export async function postStep(step, filters) {
 // step of /api/marketcheck (a radius search around one location, the home base).
 export async function fetchPriceComps(query, hub, spentKeys) {
   if (DEMO) return demoPriceComps(query);
-  const { data: sess } = await supabase.auth.getSession();
-  const token = sess && sess.session ? sess.session.access_token : "";
   const res = await fetch("/api/marketcheck", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: token ? "Bearer " + token : "",
-    },
+    headers: await authHeaders(),
     body: JSON.stringify({
       kind: "local",
       query: query || {},
@@ -108,14 +101,9 @@ export async function fetchPriceComps(query, hub, spentKeys) {
 // apiInfo, calls) for the quota gauge. filters: { excludeSalt, franchiseOnly, spentKeys }
 export async function fetchRawSample(profile, vin, filters) {
   const f = filters || {};
-  const { data: sess } = await supabase.auth.getSession();
-  const token = sess && sess.session ? sess.session.access_token : "";
   const res = await fetch("/api/marketcheck?raw=1", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: token ? "Bearer " + token : "",
-    },
+    headers: await authHeaders(),
     body: JSON.stringify({
       profile: profile ? { id: profile.id, name: profile.name, params: profile.params } : undefined,
       vin: vin || undefined,

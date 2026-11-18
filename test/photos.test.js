@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { photoKeyFor, isPhotoKey, photoVin, photoTodo, applyPhotoResults, referencedPhotoKeys, PHOTO_BATCH, PHOTO_MAX_BYTES } from "../src/photoKey.js";
 import { isPrivateAddress, checkPhotoUrl, guardedLookup, sniffImage, fetchImage, storePhotos, sweepOrphanPhotos, SWEEP_GRACE_MS } from "../api/_photos.js";
-import { parseImport } from "../src/App.jsx";
 
 const UID = "0f8fad5b-d9cb-469f-a165-70867728950e";
 const OTHER = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
@@ -27,14 +26,6 @@ describe("photo keys", () => {
     expect(isPhotoKey(UID + "/../" + VIN + ".jpg", UID)).toBe(false);
     expect(isPhotoKey(k, null, VIN)).toBe(false);
     expect(isPhotoKey("", UID)).toBe(false);
-  });
-  it("import keeps a photoKey only in the importer's own folder", () => {
-    const row = (x) => Object.assign({ vehicle: "Civic", year: 2020, price: 20000, profileId: "p1", vin: VIN, photo: "https://x.example/a.jpg" }, x);
-    const k = UID + "/" + VIN + ".jpg";
-    expect(parseImport(JSON.stringify([row({ photoKey: k })]), ["p1"], UID).listings[0].photoKey).toBe(k);
-    expect(parseImport(JSON.stringify([row({ photoKey: k })]), ["p1"], OTHER).listings[0].photoKey).toBeUndefined();
-    expect(parseImport(JSON.stringify([row({ photoKey: k })]), ["p1"]).listings[0].photoKey).toBeUndefined();
-    expect(parseImport(JSON.stringify([row({ photoKey: OTHER + "/" + VIN + ".jpg" })]), ["p1"], UID).listings[0].photoKey).toBeUndefined();
   });
 });
 

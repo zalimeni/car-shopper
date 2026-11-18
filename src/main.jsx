@@ -15,7 +15,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
       <DemoShell><App /></DemoShell>
     ) : (
       <AuthGate>
-        <App />
+        {(me) => <App me={me} />}
       </AuthGate>
     )}
   </React.StrictMode>

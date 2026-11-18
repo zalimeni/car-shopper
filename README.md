@@ -19,8 +19,8 @@ data live in Supabase.
   an optional daily scheduled sync.
 - **Watchlist** — approve candidates to a scored, sortable watchlist with
   VIN dedup (lowest price wins), salt-belt flagging (🧂), photo thumbnails,
-  reject-with-reason, staleness ("needs check") tracking, and a non-scoring
-  Carfax title note.
+  reject-with-reason, a "needs check" reminder for cars you added by hand, and a
+  non-scoring Carfax title note.
 - **AI scoring (optional)** — bring your own Anthropic API key (stored
   encrypted server-side, never shown again) to score listings 1–10 per
   criterion with rationales and an overall summary. Pick the model
@@ -35,7 +35,7 @@ data live in Supabase.
 - **Demo mode** — `/?demo` runs the app with no sign-in over a scrubbed,
   read-only copy of the owner's data.
 
-The default setup matches the search that I built this app to assist with, but the setup wizard and Settings allow you to customize everything to your own search.
+A new account starts blank — a $30,000 budget, a Boston home base and a few common-sense rules — and the setup wizard, Profiles and Settings make it your own search.
 
 ## Tabs
 
@@ -48,7 +48,7 @@ The default setup matches the search that I built this app to assist with, but t
 - **Criteria** — weighted scoring criteria; editing a weight recalculates every
   composite score.
 - **Results** — sync, review candidates (approve / skip → restorable Skipped
-  list), the watchlist, AI-scoring controls, and validated JSON import/export.
+  list), the watchlist, and AI-scoring controls.
 - **Compare** — a sortable side-by-side table of watchlist cars.
 - **Price** — Price Check (see above).
 - **Settings** — budget, home base, salt-belt handling, tagline, MarketCheck
@@ -100,9 +100,8 @@ are rows in the `allowed_emails` table (the Admin tab), not env vars.
 
 The app is gated by **Supabase email auth** and is **invite-only**: there is no
 sign-up. An admin adds an email in the Admin tab and sends an invite; the
-invitee then signs in by tapping the magic link, pasting it into the app (how
-an iPhone Home Screen web app signs in), or typing its one-time code (needs
-custom SMTP — see `supabase/README.md`). The app never asks Supabase to create
+invitee then signs in by tapping the magic link or pasting it into the app (how
+an iPhone Home Screen web app signs in — see `supabase/README.md`). The app never asks Supabase to create
 an account (`shouldCreateUser: false`), and the project has sign-ups turned
 off, so an unknown email gets "invite-only" back.
 
@@ -122,8 +121,7 @@ db` against the Supabase CLI's local database) sign in as different users
 
 Per-user state is a single JSON blob — one row per user in the `app_state`
 table (`src/storage.js` wraps it with an async `get/set`). Signing in
-with the same email on any device loads the same data. **Export Listings**
-(footer) gives a manual JSON backup; **Import** (Results) restores/seeds.
+with the same email on any device loads the same data.
 A DB trigger also keeps automatic rolling snapshots of the blob (up to 30 per
 user, at most one per hour of activity) in `app_state_history`; the footer
 **Backups** panel lists and restores them. Every save is one call to the

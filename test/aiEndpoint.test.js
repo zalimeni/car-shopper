@@ -80,6 +80,17 @@ describe("api/ai.js", () => {
     expect(sent[1]).toMatchObject({ max_tokens: 4000, thinking: { type: "between_tools" } });
   });
 
+  it("baseline: honors the requested scoring model, allowlisted", async () => {
+    var body = JSON.stringify({ refMileage: 40000, perThousandMi: 50, tiers: [], default: {} });
+    var profile = { params: { make: "Toyota", model: "RAV4" } };
+    nextReply = reply(body);
+    expect((await call("POST", { task: "baseline", profile: profile, listings: [], model: "claude-opus-5-5" })).code).toBe(200);
+    expect(sent[0].model).toBe("claude-opus-5-5");
+    nextReply = reply(body);
+    await call("POST", { task: "baseline", profile: profile, listings: [], model: "gpt-nope" });
+    expect(sent[1].model).toBe("claude-sonnet-5-5");
+  });
+
   it("score: per-listing results on the chosen model, no thinking param", async () => {
     nextReply = reply(JSON.stringify({ criteria: { price: { score: 8, rationale: "good" } }, summary: "solid" }));
     var r = await call("POST", { task: "score", listings: [{ vin: "V1" }], criteria: [{ id: "price", weight: 1 }], model: "claude-haiku-5-5" });
