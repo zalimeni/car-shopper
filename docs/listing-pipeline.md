@@ -187,8 +187,21 @@ sync (§4a), which runs the same plan server-side.
 
 Unattended refresh so new matches arrive without opening the app:
 
-- Vercel Cron (`vercel.json`, daily 10:00 UTC) → `/api/cron-sync`, gated by
-  `CRON_SECRET` (unset = off; the cron then only pings Supabase as a keepalive).
+- Driven from the database: a pg_cron job runs `dispatch_scheduled_sync()`
+  every 15 minutes; it picks up to two due accounts (Daily sync on, last
+  attempt ≥ 23 h 50 min ago, oldest first), stamps them
+  (`allowed_emails.last_scheduled_sync`) and POSTs `{ email }` to
+  `/api/cron-sync` with pg_net — one invocation, and one 60 s budget, per
+  account, about 24 h apart. URL and bearer secret come from Supabase Vault
+  (`cron_sync_url`, `cron_secret`; missing = the dispatcher does nothing).
+  Migration `20261118120000_pg_cron_scheduled_sync.sql`; setup in
+  `supabase/README.md`.
+- Vercel Cron (`vercel.json`, daily 10:00 UTC) → `/api/cron-sync` with no
+  target: keepalive + key-vault sweep; it syncs due accounts itself (one after
+  another, in one run) only while the dispatcher isn't set up. All of it is
+  gated by `CRON_SECRET` (unset = off; the cron then only pings Supabase).
+- Each run's outcome is written to `allowed_emails.last_scheduled_sync_result`
+  and shown under the email in the Admin tab.
 - Runs for the accounts marked **Daily sync** in the Admin tab
   (`allowed_emails.scheduled_sync`), loading/writing each row with
   `SUPABASE_SECRET_KEY` (no user session), compare-and-swap on `app_state.rev`

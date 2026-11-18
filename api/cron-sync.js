@@ -1,4 +1,19 @@
-// Daily maintenance cron (Vercel Cron — see "crons" in vercel.json).
+// The scheduled background sync + daily maintenance.
+//
+// Two callers, both sending `Authorization: Bearer $CRON_SECRET`:
+//  - The database dispatcher (pg_cron + pg_net — supabase/migrations/
+//    20261118120000_pg_cron_scheduled_sync.sql): POST { "email": "…" } (or
+//    ?email=…) syncs that one account, in its own invocation with its own time
+//    budget. Every 15 minutes it picks the accounts that are due, so the day's
+//    syncs are staggered instead of sharing one 60 s run.
+//  - Vercel Cron, daily with no target (see "crons" in vercel.json): the
+//    keepalive and the key-vault sweep. If the dispatcher is in charge
+//    (scheduled_sync_dispatcher_ready(): its job is scheduled and the Vault
+//    holds its URL + secret) that's all. Otherwise it is the fallback and syncs,
+//    one after another, the accounts not attempted in the last day.
+// Either way each account is stamped on attempt (allowed_emails.
+// last_scheduled_sync), so neither path syncs an account the other just did,
+// and the outcome goes in allowed_emails.last_scheduled_sync_result.
 //
 // Always: pings Supabase (keepalive) so a free-tier project doesn't auto-pause.
 // Optionally (when CRON_SECRET is set): runs the scheduled background sync.
@@ -12,9 +27,9 @@
 // device shows on next open. No AI scoring here — that stays a client-initiated
 // action against the user's own key/quota.
 //
-// Also, every run: re-encrypts any key-vault rows still in the legacy v1
-// format (api/_keys.js reencryptLegacy), and moves MarketCheck keys left in an
-// old app-state blob into the vault.
+// Also, every daily run: re-encrypts any key-vault rows still in the legacy v1
+// format (api/_keys.js reencryptLegacy); and each account's sync moves
+// MarketCheck keys left in its old app-state blob into the vault.
 //
 // Scheduled sync is OFF BY DEFAULT: the endpoint does nothing (a clean no-op)
 // unless CRON_SECRET (≥16 chars) is configured — so the daily Vercel cron can't
@@ -35,6 +50,40 @@ import { ingestSnaps, spentKeyIds } from "../src/quota.js";
 import { planSync, runSync, trackedVins, nextProfileMeta, mergeColorCache } from "../src/syncPlan.js";
 
 const QUEUE_MAX = 300; // the review queue's cap (same as the app's), so the blob stays bounded
+// The fallback path's "due": not attempted in the last 23 h 50 min (the
+// dispatcher's threshold too).
+export const DUE_MS = (23 * 60 + 50) * 60 * 1000;
+
+// The one account a request names (lower-cased), from a JSON body { email } or
+// ?email=…; "" for none (the daily run).
+export function targetEmail(req) {
+  let body = req && req.body;
+  if (typeof body === "string") { try { body = JSON.parse(body); } catch (e) { body = null; } }
+  let e = body && typeof body === "object" && typeof body.email === "string" ? body.email : "";
+  if (!e && req && req.query && typeof req.query.email === "string") e = req.query.email;
+  return e.trim().toLowerCase();
+}
+
+// Whether an allowed_emails row is due a sync on the fallback path.
+export function isDue(row, now) {
+  const t = row && row.last_scheduled_sync ? Date.parse(row.last_scheduled_sync) : NaN;
+  return !(t > (now || Date.now()) - DUE_MS);
+}
+
+// A one-line outcome for allowed_emails.last_scheduled_sync_result.
+export function resultText(out) {
+  let t;
+  if (!out) t = "skipped: no signed-up account for this email";
+  else if (out.error) t = "error: " + out.error;
+  else if (out.skipped) t = "skipped: " + out.skipped;
+  else {
+    const s = out.summary || {};
+    t = "ok: " + (out.parkedCandidates || 0) + " new to review" +
+      (s.priceUpdates ? ", " + s.priceUpdates + " price changes" : "") +
+      (out.queryErrors && out.queryErrors.length ? "; query errors: " + String(out.queryErrors[0]) : "");
+  }
+  return t.slice(0, 300);
+}
 
 export default async function handler(req, res) {
   const secret = process.env.CRON_SECRET || "";
@@ -69,11 +118,37 @@ export default async function handler(req, res) {
   // The shared key, used only for accounts with no MarketCheck keys of their own.
   const apiKey = process.env.MARKETCHECK_API_KEY || "";
 
-  const vault = await reencryptLegacy(db).catch(function (e) { return { error: e.message }; });
+  const target = targetEmail(req);
+  const nowMs = Date.now();
+  let vault = null;
 
-  const opted = await db.from("allowed_emails").select("email").eq("scheduled_sync", true);
+  // "*" so this still works before the bookkeeping columns' migration is applied.
+  const opted = await db.from("allowed_emails").select("*").eq("scheduled_sync", true);
   if (opted.error) { res.status(500).json({ error: "allowed_emails: " + opted.error.message }); return; }
-  const emails = (opted.data || []).map(function (r) { return String(r.email || "").toLowerCase(); }).filter(Boolean);
+  let due;
+  if (target) {
+    // One account (the dispatcher's request): only if Daily sync is still on.
+    due = (opted.data || []).filter(function (r) { return String(r.email || "").toLowerCase() === target; });
+    if (!due.length) { res.status(200).json({ ok: true, email: target, skipped: "Daily sync is not on for this account" }); return; }
+  } else {
+    vault = await reencryptLegacy(db).catch(function (e) { return { error: e.message }; });
+    const ready = await db.rpc("scheduled_sync_dispatcher_ready");
+    if (!ready.error && ready.data === true) {
+      res.status(200).json({ ok: true, dispatcher: true, message: "Syncs run per account from the database dispatcher; this run did maintenance only.", vault: vault });
+      return;
+    }
+    // Fallback: the dispatcher isn't set up, so sync whoever is due from here.
+    due = (opted.data || []).filter(function (r) { return isDue(r, nowMs); });
+  }
+  const emails = due.map(function (r) { return String(r.email || "").toLowerCase(); }).filter(Boolean);
+  // Stamp on attempt, before any work: a failing (or timed-out) account waits a
+  // day instead of being retried on every tick. Best-effort.
+  const stamp = new Date(nowMs).toISOString();
+  if (due.length) {
+    await db.from("allowed_emails").update({ last_scheduled_sync: stamp, last_scheduled_sync_result: "started" })
+      .in("email", due.map(function (r) { return r.email; }))
+      .then(null, function () {});
+  }
 
   // Resolve the target emails to auth users (few users; paging is a formality).
   const users = [];
@@ -178,5 +253,16 @@ export default async function handler(req, res) {
     }
   }
 
-  res.status(200).json({ ok: true, matchedUsers: users.length, report: report, vault: vault });
+  // Record each account's outcome (best-effort). One that only ran out of time
+  // here gets its previous stamp back, so it stays first in line.
+  const byEmail = {};
+  report.forEach(function (o) { byEmail[String(o.email || "").toLowerCase()] = o; });
+  for (const r of due) {
+    const o = byEmail[String(r.email || "").toLowerCase()];
+    const patch = { last_scheduled_sync_result: resultText(o) };
+    if (o && o.skipped === "out of time this run") patch.last_scheduled_sync = r.last_scheduled_sync || null;
+    await db.from("allowed_emails").update(patch).eq("email", r.email).then(null, function () {});
+  }
+
+  res.status(200).json({ ok: true, mode: target ? "account" : "fallback", matchedUsers: users.length, report: report, vault: vault });
 }

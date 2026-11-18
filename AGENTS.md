@@ -80,10 +80,10 @@ over architecture.
 | `api/pricecomps.js` | Price tab: live MarketCheck comps around the home base (a `local` step). |
 | `src/priceCheck.js`, `src/priceExport.js` | Price tab's local-comps math (pure, 0 API calls) and the price-history CSV export. Pure, tested. |
 | `src/geo.js`, `src/tableSort.js` | Straight-line distance to the home base; shared sortable-table helpers (Compare, Price comps). Pure, tested. |
-| `api/cron-sync.js` | Scheduled background sync (Vercel Cron; `CRON_SECRET`-gated; accounts with `allowed_emails.scheduled_sync`), plus the vault's v1 → v2 re-encryption sweep. |
+| `api/cron-sync.js` | Scheduled background sync (`CRON_SECRET`-gated; accounts with `allowed_emails.scheduled_sync`). `POST { email }` syncs one account — sent per account by the database dispatcher (pg_cron + pg_net, `dispatch_scheduled_sync()`, every 15 min, URL + secret in Supabase Vault). The daily Vercel Cron run (no target) does the keepalive + the vault's v1 → v2 re-encryption sweep, and syncs due accounts itself only while the dispatcher isn't set up (`scheduled_sync_dispatcher_ready()`). Stamps `allowed_emails.last_scheduled_sync` on attempt + `last_scheduled_sync_result`. Tested. |
 | `api/_suggest.js` | The wizard's optional AI step (`api/ai.js` task `suggest`): must-haves / dealbreakers / years to avoid / trim notes from the vehicle + Explore's market snapshot. Prompt, schema, `coerceSuggestion` (tested). |
-| `supabase/migrations/*.sql` | DB schema: `app_state` + RLS, allowlist, Anthropic-key vault, backup history + trigger, `rev`, demo snapshot, grant/RLS tightening. |
-| `supabase/tests/*.test.sql`, `supabase/config.toml` | pgTAP tests (`supabase test db`): RLS, grants and `save_app_state()` (`rls.test.sql`); allowlist flags, `my_access()`, the key vault, backup scrubbing (`access.test.sql`); run as `anon`/`authenticated`; CLI config (Postgres 17). |
+| `supabase/migrations/*.sql` | DB schema: `app_state` + RLS, allowlist, Anthropic-key vault, backup history + trigger, `rev`, demo snapshot, grant/RLS tightening, the pg_cron/pg_net scheduled-sync dispatcher. |
+| `supabase/tests/*.test.sql`, `supabase/config.toml` | pgTAP tests (`supabase test db`): RLS, grants and `save_app_state()` (`rls.test.sql`); allowlist flags, `my_access()`, the key vault, backup scrubbing (`access.test.sql`); the scheduled-sync dispatcher (`scheduled_sync.test.sql`); run as `anon`/`authenticated`; CLI config (Postgres 17). |
 | `supabase/templates/magic_link.html` | Magic Link email body with the one-time code (paste into the Dashboard; needs custom SMTP). |
 | `.github/workflows/migrations.yml` | Validate + apply migrations. |
 | `docs/listing-pipeline.md` | **Design doc** for the sync pipeline. Read for the "why". |
@@ -155,7 +155,11 @@ See `docs/listing-pipeline.md` for the full design. In short:
   known VINs get price-change notes + `lastSeen`; a watchlist VIN the direct VIN
   lookup can't find is stamped `goneAt`. Manual only — the **↻ Sync** button on
   the Results tab (a full refresh of every active profile) — plus the optional
-  daily scheduled sync (`api/cron-sync.js`, cheap path). No sync on app open.
+  daily scheduled sync (`api/cron-sync.js`, cheap path): pg_cron runs
+  `dispatch_scheduled_sync()` every 15 min, which POSTs one `/api/cron-sync`
+  request per due account (own 60 s budget, ~24 h apart, stamped on attempt);
+  the daily Vercel cron is the fallback while the Vault secrets aren't set
+  (`supabase/README.md`). No sync on app open.
 - **All MarketCheck-specific field/param names live in `buildUrl()` and
   `normalize()` in `api/marketcheck.js`** — if the API shape is wrong, that's the
   only place to change.
@@ -216,7 +220,7 @@ Defined/documented in `.env.example`. Summary:
 | `MARKETCHECK_API_KEY` | server only (optional) | Shared MarketCheck key — used only for accounts with no keys of their own in Settings; ignored entirely once a user has any (never a fallback). **Never** `VITE_`-prefixed. The MarketCheck host, radius, throttle and time budgets are constants in `api/marketcheck.js`. |
 | `SUPABASE_SECRET_KEY` | server only | Supabase Secret key (`sb_secret_…`); service-role access to the server-only tables (allowlist, key vault, backups). |
 | `KEY_ENCRYPTION_SECRET` | server only | ≥16 chars; the stored API keys' encryption secret (HKDF → AES-256-GCM). Rotating invalidates them. |
-| `CRON_SECRET` | server (optional) | ≥16 chars; authorizes the daily `/api/cron-sync` (Vercel Cron Bearer token). Unset = scheduled sync off. Which accounts it syncs is `allowed_emails.scheduled_sync`. |
+| `CRON_SECRET` | server (optional) | ≥16 chars; authorizes `/api/cron-sync` (the Bearer token from Vercel Cron and from the pg_cron dispatcher, which reads the same value from the Vault secret `cron_secret`). Unset = scheduled sync off. Which accounts it syncs is `allowed_emails.scheduled_sync`. |
 | `SUPABASE_DB_URL` | GitHub Actions secret | Session-pooler URL for CI `db push`. |
 
 That's all of them: who may use the app, who is an admin, and who gets the

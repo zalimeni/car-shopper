@@ -1,6 +1,7 @@
 // Admin-only management of the email allowlist (public.allowed_emails).
 //
-//   GET                                   — list { email, added_at, is_admin, scheduled_sync }
+//   GET                                   — list { email, added_at, is_admin, scheduled_sync,
+//                                           last_scheduled_sync, last_scheduled_sync_result }
 //   POST   { email, invite? }             — add to the allowlist; optionally send a
 //                                           Supabase invite email (the only way in:
 //                                           the project has sign-ups turned off)
@@ -26,7 +27,7 @@ export default async function handler(req, res) {
   if (!db) { res.status(500).json({ error: "Supabase secret key is not configured on the server" }); return; }
 
   if (req.method === "GET") {
-    const { data, error } = await db.from("allowed_emails").select("email,added_at,is_admin,scheduled_sync").order("added_at", { ascending: true });
+    const { data, error } = await db.from("allowed_emails").select("*").order("added_at", { ascending: true });
     if (error) { res.status(500).json({ error: error.message }); return; }
     res.status(200).json({ emails: data || [] });
     return;

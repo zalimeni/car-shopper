@@ -3066,7 +3066,7 @@ function AdminTab() {
     <div>
       <div style={S.secH}><h2 style={S.secT}>Allowlist</h2></div>
       <div style={S.card}>
-        <p style={S.help}>The app is invite-only: sign-ups are off, so people get in by an invite from here, and only emails on this list can use the app. Changes write the <code>allowed_emails</code> table and take effect immediately. <b>Admin</b> = this tab and Publish demo; <b>Daily sync</b> = the scheduled background sync runs for that account (spends its MarketCheck quota).</p>
+        <p style={S.help}>The app is invite-only: sign-ups are off, so people get in by an invite from here, and only emails on this list can use the app. Changes write the <code>allowed_emails</code> table and take effect immediately. <b>Admin</b> = this tab and Publish demo; <b>Daily sync</b> = the scheduled background sync runs for that account about once a day (spends its MarketCheck quota); under the email, its last run and outcome.</p>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
           <input style={Object.assign({}, S.inp, { flex: 1, minWidth: 180 })} type="email" autoComplete="off" placeholder="person@example.com"
             value={input} onChange={function (e) { setInput(e.target.value); }} onKeyDown={function (e) { if (e.key === "Enter") add(); }} />
@@ -3086,7 +3086,9 @@ function AdminTab() {
           : emails.map(function (row) {
               return (
                 <div key={row.email} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: "1px solid #1e2028" }}>
-                  <span style={{ flex: 1, fontSize: 13, color: "#c8c8d0" }}>{row.email}</span>
+                  <span style={{ flex: 1, fontSize: 13, color: "#c8c8d0" }}>{row.email}
+                    {row.scheduled_sync && row.last_scheduled_sync && <span style={{ display: "block", fontSize: 11, color: "#666" }}>Last sync {new Date(row.last_scheduled_sync).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}{row.last_scheduled_sync_result ? " — " + row.last_scheduled_sync_result : ""}</span>}
+                  </span>
                   {row.added_at && <span style={{ fontSize: 11, color: "#555" }}>{String(row.added_at).slice(0, 10)}</span>}
                   <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#8a8a96", cursor: "pointer" }}>
                     <input type="checkbox" checked={!!row.is_admin} disabled={busy} onChange={function (e) { flag(row.email, { is_admin: e.target.checked }); }} />Admin
