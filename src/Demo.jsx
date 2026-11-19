@@ -96,11 +96,12 @@ export function WelcomeModal({ onClose, first }) {
 
         <h3 style={D.h3}>How this app uses Supabase</h3>
         <ul style={{ margin: "0 0 12px", paddingLeft: 18, fontSize: 13, color: "#c8c8d0" }}>
-          <li style={li}><b>Auth:</b> invite-only magic link (tapped or pasted), an allowlist table, and optional two-factor codes from an authenticator app.</li>
+          <li style={li}><b>Auth:</b> invite-only magic link, an allowlist table, and optional MFA.</li>
           <li style={li}><b>Data:</b> one JSON document per user in Postgres, guarded by RLS, with trigger-based backups.</li>
+          <li style={li}><b>Realtime:</b> changes on one device show up on your others.</li>
           <li style={li}><b>Key vault:</b> users' API keys, encrypted in a table only server functions can read.</li>
           <li style={li}><b>Storage:</b> a private copy of each watchlist car's photo, so it stays after the dealer takes the listing down.</li>
-          <li style={li}><b>Scheduled sync:</b> pg_cron and pg_net run each user's daily sync from the database.</li>
+          <li style={li}><b>Scheduled sync:</b> <code style={D.code}>pg_cron</code> and <code style={D.code}>pg_net</code> run each user's daily sync from the database, with its secrets in Vault.</li>
         </ul>
         <p style={D.p}>Want access? If you know me, ask for an invite, or host your own copy.</p>
         <p style={Object.assign({}, D.p, { marginBottom: 4 })}>Enjoy!</p>
@@ -129,6 +130,7 @@ var D = {
   btn: { display: "inline-block", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, padding: "9px 16px", fontSize: 14, fontWeight: 500, cursor: "pointer", fontFamily: "inherit", textDecoration: "none" },
   small: { background: "none", border: "1px solid #2a2d38", borderRadius: 6, color: "#c8c8d0", fontSize: 12, padding: "5px 10px", cursor: "pointer", fontFamily: "inherit" },
   link: { color: "#6b9bf2", fontSize: 13 },
+  code: { fontFamily: "ui-monospace,SFMono-Regular,Menlo,monospace", fontSize: "0.95em" }, // a font list, not bare monospace, which browsers shrink
   toasts: { position: "fixed", left: 12, right: 12, bottom: 16, zIndex: 300, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, pointerEvents: "none" },
   toast: { maxWidth: 440, background: "#1f2433", border: "1px solid #34405e", color: "#e4e4e7", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontFamily: font, boxShadow: "0 8px 24px rgba(0,0,0,0.5)", lineHeight: 1.45 },
 };
