@@ -53,8 +53,12 @@ describe("demo mode", () => {
     expect(within(welcome).getByText("How this app uses Supabase")).toBeTruthy();
     expect(within(welcome).getByText("— Michael")).toBeTruthy();
     // Escape just closes it (no tutorial), same as "Explore on my own".
-    fireEvent.keyDown(window, { key: "Escape" });
-    expect(screen.queryByRole("dialog", { name: "Welcome" })).toBeNull();
+    // The modal opens after the snapshot loads (outside act), so its Escape listener can attach a
+    // moment after it renders; retry until it closes. A repeat Escape after that does nothing.
+    await waitFor(() => {
+      fireEvent.keyDown(window, { key: "Escape" });
+      expect(screen.queryByRole("dialog", { name: "Welcome" })).toBeNull();
+    });
     await new Promise((r) => setTimeout(r, 300));
     expect(screen.queryByRole("dialog", { name: /^Tutorial/ })).toBeNull();
     expect(localStorage.getItem("cs-demo-welcomed")).toBe("1");
