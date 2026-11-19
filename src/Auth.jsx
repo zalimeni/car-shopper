@@ -240,8 +240,11 @@ function SignIn() {
   return (
     <div style={S.center}>
       <div style={S.card}>
-        <h1 style={S.title}>Tirekicker</h1>
-        <p style={S.sub}>Sign in to load your synced data.</p>
+        <div style={S.brand}>
+          <img src="/favicon.svg" alt="" style={S.logo} />
+          <h1 style={S.title}>Tirekicker</h1>
+          <p style={S.sub}>Sign in to load your synced data.</p>
+        </div>
         {sent ? (
           <div>
             <p style={S.sent}>
@@ -347,6 +350,8 @@ const S = {
     width: "100%",
     maxWidth: 360,
   },
+  brand: { display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" },
+  logo: { width: 56, height: 56, marginBottom: 12 }, // public/favicon.svg, the app icon
   title: { fontSize: 20, fontWeight: 600, margin: 0, color: "#f0f0f3", letterSpacing: "-0.02em" },
   sub: { fontSize: 13, color: "#6b6b76", margin: "6px 0 16px" },
   input: {
