@@ -24,7 +24,7 @@ export function startTutorial() {
 
 export var STEPS = [
   { id: "intro", title: "Quick tutorial",
-    text: "A short tour of the app. Tap Next, or tap the highlighted control yourself. You can skip any time." },
+    text: "This will give you a short tour of the app. Tap Next, or tap the highlighted control yourself. You can skip any time." },
   { id: "profile", tab: "Profiles", target: "profile", title: "Profiles",
     text: "A profile is one car you're looking for: make, model, years, max price and mileage, plus must-haves and dealbreakers for the AI to check. The switch turns its search on or off." },
   { id: "add-profile", tab: "Profiles", target: "add-profile", title: "Add a profile",
