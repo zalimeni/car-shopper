@@ -1,14 +1,10 @@
 # Tirekicker
 
-Personal used-car search dashboard. It pulls dealer inventory for the vehicles
+Personal used-car search dashboard. Pulls dealer inventory for the vehicles
 you're hunting, tracks them on a scored watchlist (price changes, staleness,
 sold-detection), and can score each listing with AI against your own criteria.
 
-Frontend is React + Vite; a handful of Vercel serverless functions (`api/`)
-hold the secret keys and talk to MarketCheck and Anthropic. Auth and per-user
-data live in Supabase.
-
-> Vibe-coded with Claude, then cleaned up and deployed.
+Yes, it's vibe-engineered. It also works pretty good and does not expose your personal data to dealers!
 
 ## What it does
 
