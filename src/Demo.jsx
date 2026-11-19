@@ -98,7 +98,7 @@ export function WelcomeModal({ onClose, first }) {
         <ul style={{ margin: "0 0 12px", paddingLeft: 18, fontSize: 13, color: "#c8c8d0" }}>
           <li style={li}><b>Auth:</b> invite-only magic link, an allowlist table, and optional MFA.</li>
           <li style={li}><b>Data:</b> one JSON document per user in Postgres, guarded by RLS, with trigger-based backups.</li>
-          <li style={li}><b>Realtime:</b> changes on one device show up on your others.</li>
+          <li style={li}><b>Realtime:</b> changes on one device show up on others.</li>
           <li style={li}><b>Key vault:</b> users' API keys, encrypted in a table only server functions can read.</li>
           <li style={li}><b>Storage:</b> a private copy of each watchlist car's photo, so it stays after the dealer takes the listing down.</li>
           <li style={li}><b>Scheduled sync:</b> <code style={D.code}>pg_cron</code> and <code style={D.code}>pg_net</code> run each user's daily sync from the database, with its secrets in Vault.</li>
