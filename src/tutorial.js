@@ -24,7 +24,7 @@ export function startTutorial() {
 
 export var STEPS = [
   { id: "intro", title: "Quick tutorial",
-    text: "A short tour of the app. Tap Next, or tap the highlighted control yourself. You can skip any time." },
+    text: "This will give you a short tour of the app. Tap Next, or tap the highlighted control yourself. You can skip any time." },
   { id: "profile", tab: "Profiles", target: "profile", title: "Profiles",
     text: "A profile is one car you're looking for: make, model, years, max price and mileage, plus must-haves and dealbreakers for the AI to check. The switch turns its search on or off." },
   { id: "add-profile", tab: "Profiles", target: "add-profile", title: "Add a profile",
@@ -32,7 +32,7 @@ export var STEPS = [
   { id: "criteria", tab: "Criteria", target: "criteria", title: "Criteria",
     text: "Price, mileage, condition, location and more, each with a weight. Each listing gets a 1–10 score per criterion, and the weights combine them into one score." },
   { id: "candidates", tab: "Results", target: "candidates", title: "New listings",
-    text: "New listings show up here first, not on your watchlist. The daily sync found a couple while you were away.",
+    text: "New listings show up here first until you dismiss or add to your watchlist.\n\nThe demo simulates new results from a daily sync.",
     signedInText: "New listings show up here first, not on your watchlist, whether ↻ Sync or the daily sync found them. ✓ Add to Watchlist keeps one; Skip hides it." },
   { id: "sync", tab: "Results", target: "sync", action: "click", costly: true, title: "Sync",
     text: "↻ Sync runs one search per active profile. New cars show up for review, price changes are noted, and sold cars are flagged. Tap it, or tap Next to run it.",

@@ -36,8 +36,8 @@ describe("tutorial steps", () => {
   });
   it("signed in, the queue step doesn't promise a background sync found something", () => {
     var c = STEPS.find((s) => s.id === "candidates");
-    expect(stepText(c, true)).toMatch(/while you were away/);
-    expect(stepText(c, false)).not.toMatch(/while you were away/);
+    expect(stepText(c, true)).toMatch(/demo simulates/);
+    expect(stepText(c, false)).not.toMatch(/demo simulates/);
   });
 });
 
