@@ -91,7 +91,7 @@ export function WelcomeModal({ onClose, first }) {
     <div onMouseDown={dismiss} style={D.backdrop}>
       <div role="dialog" aria-modal="true" aria-label="Welcome" onMouseDown={function (e) { e.stopPropagation(); }} style={D.dialog}>
         <h2 style={D.h1}>👋 Welcome</h2>
-        <p style={D.p}>Thanks for checking out Tirekicker! I used it to buy an SUV in October 2026. It pulls dealer listings from MarketCheck, optionally scores cars with Claude against custom criteria, and tracks prices on a watchlist.</p>
+        <p style={D.p}>Thanks for checking out Tirekicker! I built and used it to buy an SUV in October 2026. It pulls dealer listings from MarketCheck, optionally scores cars with Claude against custom criteria, and tracks prices on a watchlist.</p>
         <p style={D.p}>The data comes from my real search, with dealers, VINs and photos anonymized. Edit anything you like: changes stay in your browser. <b>↻ Sync</b>, <b>✨ Score</b> and the other MarketCheck and AI features are simulated, so nothing is sent anywhere until you log in.</p>
 
         <h3 style={D.h3}>How this app uses Supabase</h3>
