@@ -219,7 +219,7 @@ export function Tutorial({ demo }) {
           )}
           <div style={{ fontSize: 11, color: "#6b9bf2", fontWeight: 600, letterSpacing: "0.04em", marginBottom: 4 }}>TUTORIAL · {shownAt} / {shownOf}</div>
           <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6, color: "#f0f0f3" }}>{step.title}</div>
-          <div style={{ fontSize: 13.5, color: "#c8c8d0", lineHeight: 1.55 }}>{stepText(step, demo)}</div>
+          <div style={{ fontSize: 13.5, color: "#c8c8d0", lineHeight: 1.55, whiteSpace: "pre-line" }}>{stepText(step, demo)}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
             <button onClick={close} style={T.link}>Skip</button>
             <span style={{ flex: 1 }} />
