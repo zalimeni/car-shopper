@@ -96,9 +96,11 @@ export function WelcomeModal({ onClose, first }) {
 
         <h3 style={D.h3}>How this app uses Supabase</h3>
         <ul style={{ margin: "0 0 12px", paddingLeft: 18, fontSize: 13, color: "#c8c8d0" }}>
-          <li style={li}><b>Auth:</b> invite-only magic link (tapped or pasted), plus an allowlist table.</li>
+          <li style={li}><b>Auth:</b> invite-only magic link (tapped or pasted), an allowlist table, and optional two-factor codes from an authenticator app.</li>
           <li style={li}><b>Data:</b> one JSON document per user in Postgres, guarded by RLS, with trigger-based backups.</li>
           <li style={li}><b>Key vault:</b> users' API keys, encrypted in a table only server functions can read.</li>
+          <li style={li}><b>Storage:</b> a private copy of each watchlist car's photo, so it stays after the dealer takes the listing down.</li>
+          <li style={li}><b>Scheduled sync:</b> pg_cron and pg_net run each user's daily sync from the database.</li>
         </ul>
         <p style={D.p}>Want access? If you know me, ask for an invite, or host your own copy.</p>
         <p style={Object.assign({}, D.p, { marginBottom: 4 })}>Enjoy!</p>
